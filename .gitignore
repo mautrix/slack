@@ -1,0 +1,5 @@
+config.yaml
+slack
+logs/
+mautrix-slack.db
+registration.yaml
