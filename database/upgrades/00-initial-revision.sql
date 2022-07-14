@@ -35,11 +35,22 @@ CREATE TABLE puppet (
 
 CREATE TABLE "user" (
 	mxid TEXT PRIMARY KEY,
-	id   TEXT UNIQUE,
 
-	management_room TEXT,
+	management_room TEXT
+);
 
-	token TEXT
+CREATE TABLE user_team (
+	mxid TEXT NOT NULL,
+
+	slack_email TEXT NOT NULL,
+	slack_id TEXT NOT NULL,
+
+	team_name TEXT NOT NULL,
+	team_id TEXT NOT NULL,
+
+	token TEXT,
+
+	PRIMARY KEY(mxid, slack_id, team_id)
 );
 
 CREATE TABLE message (

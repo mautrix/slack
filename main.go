@@ -49,7 +49,6 @@ type SlackBridge struct {
 	provisioning *ProvisioningAPI
 
 	usersByMXID map[id.UserID]*User
-	usersByID   map[string]*User
 	usersLock   sync.Mutex
 
 	managementRooms     map[id.RoomID]*User
@@ -137,7 +136,6 @@ func (br *SlackBridge) CreatePrivatePortal(id id.RoomID, user bridge.User, ghost
 func main() {
 	br := &SlackBridge{
 		usersByMXID: make(map[id.UserID]*User),
-		usersByID:   make(map[string]*User),
 
 		managementRooms: make(map[id.RoomID]*User),
 

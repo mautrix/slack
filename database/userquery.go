@@ -28,13 +28,14 @@ type UserQuery struct {
 
 func (uq *UserQuery) New() *User {
 	return &User{
-		db:  uq.db,
-		log: uq.log,
+		db:    uq.db,
+		log:   uq.log,
+		Teams: map[UserTeamKey]*UserTeam{},
 	}
 }
 
 func (uq *UserQuery) GetByMXID(userID id.UserID) *User {
-	query := `SELECT mxid, id, management_room, token FROM "user" WHERE mxid=$1`
+	query := `SELECT mxid, management_room FROM "user" WHERE mxid=$1`
 	row := uq.db.QueryRow(query, userID)
 	if row == nil {
 		return nil
@@ -43,9 +44,11 @@ func (uq *UserQuery) GetByMXID(userID id.UserID) *User {
 	return uq.New().Scan(row)
 }
 
-func (uq *UserQuery) GetByID(id string) *User {
-	query := `SELECT mxid, id, management_room, token FROM "user" WHERE id=$1`
-	row := uq.db.QueryRow(query, id)
+func (uq *UserQuery) GetBySlackID(user_id, domain_id string) *User {
+	query := `SELECT mxid, management_room FROM "user" u` +
+		` INNER JOIN user_token ud ON u.mxid = ud.mxid` +
+		` WHERE ud.user_id=$1 AND ud.domain_id=$2`
+	row := uq.db.QueryRow(query, user_id, domain_id)
 	if row == nil {
 		return nil
 	}
@@ -54,7 +57,7 @@ func (uq *UserQuery) GetByID(id string) *User {
 }
 
 func (uq *UserQuery) GetAll() []*User {
-	rows, err := uq.db.Query(`SELECT mxid, id, management_room, token FROM "user"`)
+	rows, err := uq.db.Query(`SELECT mxid, management_room FROM "user"`)
 	if err != nil || rows == nil {
 		return nil
 	}

@@ -31,6 +31,7 @@ type Database struct {
 	*dbutil.Database
 
 	User       *UserQuery
+	UserTeam   *UserTeamQuery
 	Portal     *PortalQuery
 	Puppet     *PuppetQuery
 	Message    *MessageQuery
@@ -45,6 +46,10 @@ func New(baseDB *dbutil.Database) *Database {
 	db.User = &UserQuery{
 		db:  db,
 		log: db.Log.Sub("User"),
+	}
+	db.UserTeam = &UserTeamQuery{
+		db:  db,
+		log: db.Log.Sub("UserTeam"),
 	}
 	db.Portal = &PortalQuery{
 		db:  db,

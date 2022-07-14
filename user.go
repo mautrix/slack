@@ -27,6 +27,7 @@ import (
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
 	"maunium.net/go/mautrix/id"
 
+	"github.com/mautrix/slack/auth"
 	"github.com/mautrix/slack/database"
 )
 
@@ -74,14 +75,15 @@ func (user *User) GetIDoublePuppet() bridge.DoublePuppet {
 }
 
 func (user *User) GetIGhost() bridge.Ghost {
-	if user.ID == "" {
-		return nil
-	}
-	p := user.bridge.GetPuppetByID(user.ID)
-	if p == nil {
-		return nil
-	}
-	return p
+	// if user.ID == "" {
+	// 	return nil
+	// }
+	// p := user.bridge.GetPuppetByID(user.ID)
+	// if p == nil {
+	// 	return nil
+	// }
+	// return p
+	return nil
 }
 
 var _ bridge.User = (*User)(nil)
@@ -103,9 +105,6 @@ func (br *SlackBridge) loadUser(dbUser *database.User, mxid *id.UserID) *User {
 
 	// We assume the usersLock was acquired by our caller.
 	br.usersByMXID[user.MXID] = user
-	if user.ID != "" {
-		br.usersByID[user.ID] = user
-	}
 
 	if user.ManagementRoom != "" {
 		// Lock the management rooms for our update
@@ -131,17 +130,17 @@ func (br *SlackBridge) GetUserByMXID(userID id.UserID) *User {
 	return user
 }
 
-func (br *SlackBridge) GetUserByID(id string) *User {
-	br.usersLock.Lock()
-	defer br.usersLock.Unlock()
+// func (br *SlackBridge) GetUserByID(user_id, domain_id string) *User {
+// 	br.usersLock.Lock()
+// 	defer br.usersLock.Unlock()
 
-	user, ok := br.usersByID[id]
-	if !ok {
-		return br.loadUser(br.DB.User.GetByID(id), nil)
-	}
+// 	user, ok := br.usersByID[id]
+// 	if !ok {
+// 		return br.loadUser(br.DB.User.GetBySlackID(user_id, domain_id), nil)
+// 	}
 
-	return user
-}
+// 	return user
+// }
 
 func (br *SlackBridge) NewUser(dbUser *database.User) *User {
 	user := &User{
@@ -221,28 +220,28 @@ func (user *User) tryAutomaticDoublePuppeting() {
 
 	user.log.Debugln("Checking if double puppeting needs to be enabled")
 
-	puppet := user.bridge.GetPuppetByID(user.ID)
-	if puppet.CustomMXID != "" {
-		user.log.Debugln("User already has double-puppeting enabled")
+	// puppet := user.bridge.GetPuppetByID(user.ID)
+	// if puppet.CustomMXID != "" {
+	// 	user.log.Debugln("User already has double-puppeting enabled")
 
-		return
-	}
+	// 	return
+	// }
 
-	accessToken, err := puppet.loginWithSharedSecret(user.MXID)
-	if err != nil {
-		user.log.Warnln("Failed to login with shared secret:", err)
+	// accessToken, err := puppet.loginWithSharedSecret(user.MXID)
+	// if err != nil {
+	// 	user.log.Warnln("Failed to login with shared secret:", err)
 
-		return
-	}
+	// 	return
+	// }
 
-	err = puppet.SwitchCustomMXID(accessToken, user.MXID)
-	if err != nil {
-		puppet.log.Warnln("Failed to switch to auto-logined custom puppet:", err)
+	// err = puppet.SwitchCustomMXID(accessToken, user.MXID)
+	// if err != nil {
+	// 	puppet.log.Warnln("Failed to switch to auto-logined custom puppet:", err)
 
-		return
-	}
+	// 	return
+	// }
 
-	user.log.Infoln("Successfully automatically enabled custom puppet")
+	// user.log.Infoln("Successfully automatically enabled custom puppet")
 }
 
 func (user *User) syncChatDoublePuppetDetails(portal *Portal, justCreated bool) {
@@ -258,67 +257,99 @@ func (user *User) syncChatDoublePuppetDetails(portal *Portal, justCreated bool) 
 	// TODO sync mute status
 }
 
-func (user *User) Login(token string) error {
-	user.Token = token
-	user.Update()
-	return user.Connect()
-}
-
-func (user *User) IsLoggedIn() bool {
-	user.Lock()
-	defer user.Unlock()
-
-	return user.Token != ""
-}
-
-func (user *User) Logout() error {
-	user.Lock()
-	defer user.Unlock()
-
-	if user.Client == nil {
-		return ErrNotLoggedIn
+func (user *User) LoginTeam(email, team, password string) error {
+	info, err := auth.Login(user.log, email, team, password)
+	if err != nil {
+		return err
 	}
 
-	puppet := user.bridge.GetPuppetByID(user.ID)
-	if puppet.CustomMXID != "" {
-		err := puppet.SwitchCustomMXID("", "")
-		if err != nil {
-			user.log.Warnln("Failed to logout-matrix while logging out of Discord:", err)
-		}
-	}
+	userteam := user.bridge.DB.UserTeam.New()
 
-	// TODO
-	// if err := user.Session.Close(); err != nil {
-	// 	return err
-	// }
+	userteam.Key.MXID = user.MXID
+	userteam.Key.SlackID = info.UserID
+	userteam.Key.TeamID = info.TeamID
+	userteam.SlackEmail = info.UserEmail
+	userteam.TeamName = info.TeamName
+	userteam.Token = info.Token
 
-	user.Client = nil
+	// We minimize the time we hold the lock because SyncTeams also needs the
+	// lock.
+	user.TeamsLock.Lock()
+	user.Teams[userteam.Key] = userteam
+	user.TeamsLock.Unlock()
 
-	user.Token = ""
-	user.Update()
+	user.User.SyncTeams()
+
+	user.log.Debugln("logged into %s successfully", info.TeamName)
 
 	return nil
 }
 
-func (user *User) Connected() bool {
-	user.Lock()
-	defer user.Unlock()
+// func (user *User) TokenLogin(token string) error {
+// 	user.Token = token
+// 	user.Update()
+// 	return user.Connect()
+// }
 
-	return user.Client != nil
+func (user *User) IsLoggedIn() bool {
+	return len(user.GetLoggedInTeams()) > 0
+}
+
+func (user *User) IsLoggedInTeam(email, team string) bool {
+	if user.TeamLoggedIn(email, team) {
+		user.log.Errorf("%s is already logged into team %s with %s", user.MXID, team, email)
+
+		return true
+	}
+
+	return false
+}
+
+func (user *User) LogoutTeam(email, team string) error {
+	userTeam := user.bridge.DB.UserTeam.GetBySlackTeam(user.MXID, email, team)
+	if userTeam == nil {
+		return ErrNotLoggedIn
+	}
+
+	// If this is the last slack team, also disconnect the double puppet.
+	if len(user.Teams) == 1 {
+		// puppet := user.bridge.GetPuppetByID(user.ID)
+		// var puppet Puppet
+		// if puppet.CustomMXID != "" {
+		// 	err := puppet.SwitchCustomMXID("", "")
+		// 	if err != nil {
+		// 		user.log.Warnln("Failed to logout-matrix while logging out of Slack:", err)
+		// 	}
+		// }
+	}
+
+	if userTeam.RTM != nil {
+		if err := userTeam.RTM.Disconnect(); err != nil {
+			return err
+		}
+	}
+
+	userTeam.Client = nil
+
+	user.TeamsLock.Lock()
+	delete(user.Teams, userTeam.Key)
+	user.TeamsLock.Unlock()
+
+	userTeam.Token = ""
+
+	user.Update()
+
+	return nil
 }
 
 func (user *User) Connect() error {
 	user.Lock()
 	defer user.Unlock()
 
-	if user.Token == "" {
-		return ErrNotLoggedIn
-	}
-
 	user.log.Debugln("connecting to slack")
 
-	user.Client = slack.New(user.Token)
-	user.rtm = user.Client.NewRTM()
+	// user.Client = slack.New("")
+	// user.rtm = user.Client.NewRTM()
 
 	return nil
 }

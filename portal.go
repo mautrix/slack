@@ -34,7 +34,7 @@ import (
 	"github.com/mautrix/slack/database"
 )
 
-type portalDiscordMessage struct {
+type portalSlackMessage struct {
 	msg  interface{}
 	user *User
 }
@@ -53,8 +53,8 @@ type Portal struct {
 	roomCreateLock sync.Mutex
 	encryptLock    sync.Mutex
 
-	discordMessages chan portalDiscordMessage
-	matrixMessages  chan portalMatrixMessage
+	slackMessages  chan portalSlackMessage
+	matrixMessages chan portalMatrixMessage
 }
 
 func (portal *Portal) IsEncrypted() bool {
@@ -162,8 +162,8 @@ func (br *SlackBridge) NewPortal(dbPortal *database.Portal) *Portal {
 		bridge: br,
 		log:    br.Log.Sub(fmt.Sprintf("Portal/%s", dbPortal.Key)),
 
-		discordMessages: make(chan portalDiscordMessage, br.Config.Bridge.PortalMessageBuffer),
-		matrixMessages:  make(chan portalMatrixMessage, br.Config.Bridge.PortalMessageBuffer),
+		slackMessages:  make(chan portalSlackMessage, br.Config.Bridge.PortalMessageBuffer),
+		matrixMessages: make(chan portalMatrixMessage, br.Config.Bridge.PortalMessageBuffer),
 	}
 
 	go portal.messageLoop()
@@ -393,9 +393,9 @@ func (portal *Portal) handleMatrixMessages(msg portalMatrixMessage) {
 }
 
 func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
-	if portal.IsPrivateChat() && sender.ID != portal.Key.Receiver {
-		return
-	}
+	// if portal.IsPrivateChat() && sender.ID != portal.Key.Receiver {
+	// 	return
+	// }
 
 	existing := portal.bridge.DB.Message.GetByMatrixID(portal.Key, evt.ID)
 	if existing != nil {
@@ -515,8 +515,10 @@ func (portal *Portal) leave(sender *User) {
 		return
 	}
 
-	intent := portal.bridge.GetPuppetByID(sender.ID).IntentFor(portal)
-	intent.LeaveRoom(portal.MXID)
+	panic("not implemented")
+
+	// intent := portal.bridge.GetPuppetByID(sender.ID).IntentFor(portal)
+	// intent.LeaveRoom(portal.MXID)
 }
 
 func (portal *Portal) delete() {
@@ -611,9 +613,9 @@ func (portal *Portal) getMatrixUsers() ([]id.UserID, error) {
 }
 
 func (portal *Portal) handleMatrixReaction(user *User, evt *event.Event) {
-	if user.ID != portal.Key.Receiver {
-		return
-	}
+	// if user.ID != portal.Key.Receiver {
+	// 	return
+	// }
 
 	reaction := evt.Content.AsReaction()
 	if reaction.RelatesTo.Type != event.RelAnnotation {
@@ -678,16 +680,16 @@ func (portal *Portal) handleMatrixReaction(user *User, evt *event.Event) {
 	dbReaction.Channel.Receiver = portal.Key.Receiver
 	dbReaction.MatrixEventID = evt.ID
 	dbReaction.DiscordMessageID = discordID
-	dbReaction.AuthorID = user.ID
+	// dbReaction.AuthorID = user.ID
 	dbReaction.MatrixName = reaction.RelatesTo.Key
 	dbReaction.DiscordID = emojiID
 	dbReaction.Insert()
 }
 
 func (portal *Portal) handleMatrixRedaction(user *User, evt *event.Event) {
-	if user.ID != portal.Key.Receiver {
-		return
-	}
+	// if user.ID != portal.Key.Receiver {
+	// 	return
+	// }
 
 	// First look if we're redacting a message
 	message := portal.bridge.DB.Message.GetByMatrixID(portal.Key, evt.Redacts)

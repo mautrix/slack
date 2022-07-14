@@ -18,6 +18,8 @@ package database
 
 import (
 	"database/sql"
+	"strings"
+	"sync"
 
 	log "maunium.net/go/maulogger/v2"
 
@@ -29,19 +31,24 @@ type User struct {
 	db  *Database
 	log log.Logger
 
-	MXID id.UserID
-	ID   string
-
+	MXID           id.UserID
 	ManagementRoom id.RoomID
 
-	Token string
+	TeamsLock sync.Mutex
+	Teams     map[UserTeamKey]*UserTeam
+}
+
+func (user *User) loadTeams() {
+	user.TeamsLock.Lock()
+	defer user.TeamsLock.Unlock()
+
+	for _, userTeam := range user.db.UserTeam.GetAllByMXID(user.MXID) {
+		user.Teams[userTeam.Key] = userTeam
+	}
 }
 
 func (u *User) Scan(row dbutil.Scannable) *User {
-	var token sql.NullString
-	var discordID sql.NullString
-
-	err := row.Scan(&u.MXID, &discordID, &u.ManagementRoom, &token)
+	err := row.Scan(&u.MXID, &u.ManagementRoom)
 	if err != nil {
 		if err != sql.ErrNoRows {
 			u.log.Errorln("Database scan failed:", err)
@@ -50,63 +57,86 @@ func (u *User) Scan(row dbutil.Scannable) *User {
 		return nil
 	}
 
-	if token.Valid {
-		u.Token = token.String
-	}
-
-	if discordID.Valid {
-		u.ID = discordID.String
-	}
+	u.loadTeams()
 
 	return u
 }
 
+func (u *User) SyncTeams() {
+	u.TeamsLock.Lock()
+	defer u.TeamsLock.Unlock()
+
+	for _, userteam := range u.Teams {
+		userteam.Upsert()
+	}
+
+	// Figure out what teams we're still aware of (logged in or not)
+	teamids := make([]string, len(u.Teams))
+	idx := 0
+	for _, team := range u.Teams {
+		teamids[idx] = team.Key.TeamID
+		idx++
+	}
+
+	// Use the list of known teams to deleted the unknown teams from the
+	// database.
+	query := "DELETE FROM user_team WHERE mxid=$1 AND team_id NOT IN "
+	query += "(\"" + strings.Join(teamids, "\", \"") + "\")"
+
+	_, err := u.db.Exec(query, u.MXID)
+	if err != nil {
+		u.log.Warnfln("Failed to prune old teams for %s: %v", u.MXID, err)
+	}
+}
+
 func (u *User) Insert() {
-	query := "INSERT INTO \"user\"" +
-		" (mxid, id, management_room, token)" +
-		" VALUES ($1, $2, $3, $4);"
+	query := "INSERT INTO \"user\" (mxid, management_room) VALUES ($1, $2);"
 
-	var token sql.NullString
-	var discordID sql.NullString
-
-	if u.Token != "" {
-		token.String = u.Token
-		token.Valid = true
-	}
-
-	if u.ID != "" {
-		discordID.String = u.ID
-		discordID.Valid = true
-	}
-
-	_, err := u.db.Exec(query, u.MXID, discordID, u.ManagementRoom, token)
+	_, err := u.db.Exec(query, u.MXID, u.ManagementRoom)
 
 	if err != nil {
 		u.log.Warnfln("Failed to insert %s: %v", u.MXID, err)
 	}
+
+	u.SyncTeams()
 }
 
 func (u *User) Update() {
-	query := "UPDATE \"user\" SET" +
-		" id=$1, management_room=$2, token=$3" +
-		" WHERE mxid=$4;"
+	query := "UPDATE \"user\" SET management_room=$1 WHERE mxid=$2;"
 
-	var token sql.NullString
-	var discordID sql.NullString
-
-	if u.Token != "" {
-		token.String = u.Token
-		token.Valid = true
-	}
-
-	if u.ID != "" {
-		discordID.String = u.ID
-		discordID.Valid = true
-	}
-
-	_, err := u.db.Exec(query, discordID, u.ManagementRoom, token, u.MXID)
+	_, err := u.db.Exec(query, u.ManagementRoom, u.MXID)
 
 	if err != nil {
 		u.log.Warnfln("Failed to update %q: %v", u.MXID, err)
 	}
+
+	u.SyncTeams()
+}
+
+func (u *User) TeamLoggedIn(email, domain string) bool {
+	u.TeamsLock.Lock()
+	defer u.TeamsLock.Unlock()
+
+	for _, team := range u.Teams {
+		if team.SlackEmail == email && team.TeamName == domain {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (u *User) GetLoggedInTeams() []*UserTeam {
+	u.TeamsLock.Lock()
+	defer u.TeamsLock.Unlock()
+
+	teams := []*UserTeam{}
+
+	for _, team := range u.Teams {
+		if team.Token != "" {
+			teams = append(teams, team)
+		}
+	}
+
+	return teams
 }

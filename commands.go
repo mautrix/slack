@@ -32,8 +32,6 @@ func (br *SlackBridge) RegisterCommands() {
 	proc.AddHandlers(
 		cmdLogin,
 		cmdLogout,
-		cmdReconnect,
-		cmdDisconnect,
 	)
 }
 
@@ -54,15 +52,36 @@ var cmdLogin = &commands.FullHandler{
 	Name: "login",
 	Help: commands.HelpMeta{
 		Section:     commands.HelpSectionAuth,
-		Description: "Link the bridge to your Slack account",
+		Description: "Link the bridge to a Slack account",
+		Args:        "<email> <domain> <password>",
 	},
 }
 
 func fnLogin(ce *WrappedCommandEvent) {
-	if ce.User.IsLoggedIn() {
-		ce.Reply("You're already logged in")
+	if len(ce.Args) != 3 {
+		ce.Reply("**Usage**: $cmdprefix login <email> <domain> <password>")
+
+		ce.MainIntent().RedactEvent(ce.RoomID, ce.EventID)
+
 		return
 	}
+
+	if ce.User.IsLoggedInTeam(ce.Args[0], ce.Args[1]) {
+		ce.Reply("%s is already logged in to team %s", ce.Args[0], ce.Args[1])
+
+		ce.MainIntent().RedactEvent(ce.RoomID, ce.EventID)
+
+		return
+	}
+
+	err := ce.User.LoginTeam(ce.Args[0], ce.Args[1], ce.Args[2])
+	if err != nil {
+		ce.Reply("Failed to log in as %s for team %s: %v", ce.Args[0], ce.Args[1], err)
+	}
+
+	ce.Reply("Successfully logged into %s for team %s", ce.Args[0], ce.Args[1])
+
+	ce.MainIntent().RedactEvent(ce.RoomID, ce.EventID)
 }
 
 var cmdLogout = &commands.FullHandler{
@@ -71,56 +90,22 @@ var cmdLogout = &commands.FullHandler{
 	Help: commands.HelpMeta{
 		Section:     commands.HelpSectionAuth,
 		Description: "Unlink the bridge from your Slack account.",
+		Args:        "<email> <domain>",
 	},
 	RequiresLogin: true,
 }
 
 func fnLogout(ce *WrappedCommandEvent) {
-	err := ce.User.Logout()
+	if len(ce.Args) != 2 {
+		ce.Reply("**Usage**: $cmdprefix logout <email> <domain>")
+
+		return
+	}
+
+	err := ce.User.LogoutTeam(ce.Args[0], ce.Args[1])
 	if err != nil {
 		ce.Reply("Error logging out: %v", err)
 	} else {
 		ce.Reply("Logged out successfully.")
-	}
-}
-
-var cmdDisconnect = &commands.FullHandler{
-	Func: wrapCommand(fnDisconnect),
-	Name: "disconnect",
-	Help: commands.HelpMeta{
-		Section:     commands.HelpSectionAuth,
-		Description: "Disconnect from Slack (without logging out)",
-	},
-	RequiresLogin: true,
-}
-
-func fnDisconnect(ce *WrappedCommandEvent) {
-	if !ce.User.Connected() {
-		ce.Reply("You're already not connected")
-	} else if err := ce.User.Disconnect(); err != nil {
-		ce.Reply("Error while disconnecting: %v", err)
-	} else {
-		ce.Reply("Successfully disconnected")
-	}
-}
-
-var cmdReconnect = &commands.FullHandler{
-	Func:    wrapCommand(fnReconnect),
-	Name:    "reconnect",
-	Aliases: []string{"connect"},
-	Help: commands.HelpMeta{
-		Section:     commands.HelpSectionAuth,
-		Description: "Reconnect to Slack after disconnecting",
-	},
-	RequiresLogin: true,
-}
-
-func fnReconnect(ce *WrappedCommandEvent) {
-	if ce.User.Connected() {
-		ce.Reply("You're already connected")
-	} else if err := ce.User.Connect(); err != nil {
-		ce.Reply("Error while reconnecting: %v", err)
-	} else {
-		ce.Reply("Successfully reconnected")
 	}
 }
