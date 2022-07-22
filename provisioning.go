@@ -202,18 +202,18 @@ func (p *ProvisioningAPI) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if user.Client == nil {
-		if force {
-			jsonResponse(w, http.StatusOK, Response{true, "Logged out successfully."})
-		} else {
-			jsonResponse(w, http.StatusNotFound, Error{
-				Error:   "You're not logged in",
-				ErrCode: "not logged in",
-			})
-		}
+	// if user.Client == nil {
+	// 	if force {
+	// 		jsonResponse(w, http.StatusOK, Response{true, "Logged out successfully."})
+	// 	} else {
+	// 		jsonResponse(w, http.StatusNotFound, Error{
+	// 			Error:   "You're not logged in",
+	// 			ErrCode: "not logged in",
+	// 		})
+	// 	}
 
-		return
-	}
+	// 	return
+	// }
 
 	// err := user.Logout()
 	var err error

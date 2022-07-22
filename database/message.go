@@ -33,8 +33,8 @@ type Message struct {
 
 	Channel PortalKey
 
-	DiscordID string
-	MatrixID  id.EventID
+	SlackID  string
+	MatrixID id.EventID
 
 	AuthorID  string
 	Timestamp time.Time
@@ -43,7 +43,7 @@ type Message struct {
 func (m *Message) Scan(row dbutil.Scannable) *Message {
 	var ts int64
 
-	err := row.Scan(&m.Channel.ChannelID, &m.Channel.Receiver, &m.DiscordID, &m.MatrixID, &m.AuthorID, &ts)
+	err := row.Scan(&m.Channel.TeamID, &m.Channel.UserID, &m.Channel.ChannelID, &m.SlackID, &m.MatrixID, &m.AuthorID, &ts)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			m.log.Errorln("Database scan failed:", err)
@@ -61,37 +61,35 @@ func (m *Message) Scan(row dbutil.Scannable) *Message {
 
 func (m *Message) Insert() {
 	query := "INSERT INTO message" +
-		" (channel_id, receiver, discord_message_id, matrix_message_id," +
-		" author_id, timestamp) VALUES ($1, $2, $3, $4, $5, $6)"
+		" (team_id, user_id, channel_id, slack_message_id, matrix_message_id," +
+		" author_id, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7)"
 
-	_, err := m.db.Exec(query, m.Channel.ChannelID, m.Channel.Receiver,
-		m.DiscordID, m.MatrixID, m.AuthorID, m.Timestamp.Unix())
+	_, err := m.db.Exec(query, m.Channel.TeamID, m.Channel.UserID,
+		m.Channel.ChannelID, m.SlackID, m.MatrixID, m.AuthorID,
+		m.Timestamp.Unix())
 
 	if err != nil {
-		m.log.Warnfln("Failed to insert %s@%s: %v", m.Channel, m.DiscordID, err)
+		m.log.Warnfln("Failed to insert %s@%s: %v", m.Channel, m.SlackID, err)
 	}
 }
 
 func (m *Message) Delete() {
 	query := "DELETE FROM message" +
-		" WHERE channel_id=$1 AND receiver=$2 AND discord_message_id=$3 AND" +
-		" matrix_message_id=$4"
+		" WHERE team_id=$1 AND user_id=$2 AND channel_id=$3 AND slack_message_id=$4 AND matrix_message_id=$5"
 
-	_, err := m.db.Exec(query, m.Channel.ChannelID, m.Channel.Receiver,
-		m.DiscordID, m.MatrixID)
+	_, err := m.db.Exec(query, m.Channel.TeamID, m.Channel.UserID, m.Channel.ChannelID, m.SlackID, m.MatrixID)
 
 	if err != nil {
-		m.log.Warnfln("Failed to delete %s@%s: %v", m.Channel, m.DiscordID, err)
+		m.log.Warnfln("Failed to delete %s@%s: %v", m.Channel, m.SlackID, err)
 	}
 }
 
 func (m *Message) UpdateMatrixID(mxid id.EventID) {
-	query := "UPDATE message SET matrix_message_id=$1 WHERE channel_id=$2" +
-		" AND receiver=$3 AND discord_message_id=$4"
+	query := "UPDATE message SET matrix_message_id=$1 WHERE team_id=$2 AND user_id=$3 AND channel_id=$4 AND slack_message_id=$5"
 	m.MatrixID = mxid
 
-	_, err := m.db.Exec(query, m.MatrixID, m.Channel.ChannelID, m.Channel.Receiver, m.DiscordID)
+	_, err := m.db.Exec(query, m.MatrixID, m.Channel.TeamID, m.Channel.UserID, m.Channel.ChannelID, m.SlackID)
 	if err != nil {
-		m.log.Warnfln("Failed to update %s@%s: %v", m.Channel, m.DiscordID, err)
+		m.log.Warnfln("Failed to update %s@%s: %v", m.Channel, m.SlackID, err)
 	}
 }

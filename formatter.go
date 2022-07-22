@@ -1,3 +1,5 @@
+package main
+
 // mautrix-slack - A Matrix-Slack puppeting bridge.
 // Copyright (C) 2022 Tulir Asokan
 //
@@ -14,25 +16,19 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package database
+import (
+	"regexp"
 
-type PortalKey struct {
-	TeamID    string
-	UserID    string
-	ChannelID string
-}
+	"maunium.net/go/mautrix/event"
+	"maunium.net/go/mautrix/format"
+)
 
-func NewPortalKey(teamID, userID, channelID string) PortalKey {
-	return PortalKey{
-		TeamID:    teamID,
-		UserID:    userID,
-		ChannelID: channelID,
-	}
-}
+var escapeFixer = regexp.MustCompile(`\\(__[^_]|\*\*[^*])`)
 
-func (key PortalKey) String() string {
-	if key.UserID == key.ChannelID {
-		return key.UserID
-	}
-	return key.TeamID + "-" + key.UserID + "-" + key.ChannelID
+func (portal *Portal) renderSlackMarkdown(text string) event.MessageEventContent {
+	text = escapeFixer.ReplaceAllStringFunc(text, func(s string) string {
+		return s[:2] + `\` + s[2:]
+	})
+
+	return format.RenderMarkdown(text, true, false)
 }

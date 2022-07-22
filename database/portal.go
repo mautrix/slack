@@ -25,6 +25,30 @@ import (
 	"maunium.net/go/mautrix/util/dbutil"
 )
 
+type ChannelType int64
+
+const (
+	ChannelTypeUnknown ChannelType = iota
+	ChannelTypeChannel
+	ChannelTypeDM
+	ChannelTypeGroupDM
+)
+
+func (ct ChannelType) String() string {
+	switch ct {
+	case ChannelTypeChannel:
+		return "channel"
+	case ChannelTypeDM:
+		return "dm"
+	case ChannelTypeGroupDM:
+		return "group-dm"
+	default:
+		return "uknown"
+	}
+
+	return "unknown"
+}
+
 type Portal struct {
 	db  *Database
 	log log.Logger
@@ -32,22 +56,28 @@ type Portal struct {
 	Key  PortalKey
 	MXID id.RoomID
 
-	Name  string
-	Topic string
+	Type     ChannelType
+	DMUserID string
 
+	PlainName string
+	Name      string
+	NameSet   bool
+	Topic     string
+	TopicSet  bool
 	Encrypted bool
-
 	Avatar    string
 	AvatarURL id.ContentURI
+	AvatarSet bool
 
 	FirstEventID id.EventID
 }
 
 func (p *Portal) Scan(row dbutil.Scannable) *Portal {
-	var mxid, avatarURL, firstEventID sql.NullString
+	var mxid, dmUserID, avatarURL, firstEventID sql.NullString
 
-	err := row.Scan(&p.Key.ChannelID, &p.Key.Receiver, &mxid, &p.Name,
-		&p.Topic, &p.Avatar, &avatarURL, &firstEventID,
+	err := row.Scan(&p.Key.TeamID, &p.Key.UserID, &p.Key.ChannelID, &mxid,
+		&p.Type, &dmUserID, &p.PlainName, &p.Name, &p.NameSet, &p.Topic,
+		&p.TopicSet, &p.Avatar, &avatarURL, &p.AvatarSet, &firstEventID,
 		&p.Encrypted)
 
 	if err != nil {
@@ -59,6 +89,7 @@ func (p *Portal) Scan(row dbutil.Scannable) *Portal {
 	}
 
 	p.MXID = id.RoomID(mxid.String)
+	p.DMUserID = dmUserID.String
 	p.AvatarURL, _ = id.ParseContentURI(avatarURL.String)
 	p.FirstEventID = id.EventID(firstEventID.String)
 
@@ -75,12 +106,14 @@ func (p *Portal) mxidPtr() *id.RoomID {
 
 func (p *Portal) Insert() {
 	query := "INSERT INTO portal" +
-		" (channel_id, receiver, mxid, name, topic, avatar, avatar_url," +
+		" (team_id, user_id, channel_id, mxid, type, dm_user_id, plain_name," +
+		" name, name_set, topic, topic_set, avatar, avatar_url, avatar_set," +
 		" first_event_id, encrypted)" +
-		" VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+		" VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"
 
-	_, err := p.db.Exec(query, p.Key.ChannelID, p.Key.Receiver, p.mxidPtr(),
-		p.Name, p.Topic, p.Avatar, p.AvatarURL.String(),
+	_, err := p.db.Exec(query, p.Key.TeamID, p.Key.UserID, p.Key.ChannelID,
+		p.mxidPtr(), p.Type, p.DMUserID, p.PlainName, p.Name, p.NameSet,
+		p.Topic, p.TopicSet, p.Avatar, p.AvatarURL.String(), p.AvatarSet,
 		p.FirstEventID.String(), p.Encrypted)
 
 	if err != nil {
@@ -90,14 +123,15 @@ func (p *Portal) Insert() {
 
 func (p *Portal) Update() {
 	query := "UPDATE portal SET" +
-		" mxid=$1, name=$2, topic=$3, avatar=$4, avatar_url=$5, " +
-		" first_event_id=$7, encrypted=$8" +
-		" WHERE channel_id=$9 AND receiver=$10"
+		" mxid=$1, type=$2, dm_user_id=$3, plain_name=$4, name=$5, name_set=$6," +
+		" topic=$7, topic_set=$8, avatar=$9, avatar_url=$10, avatar_set=$11," +
+		" first_event_id=$12, encrypted=$13" +
+		" WHERE team_id=$14 AND user_id=$15 AND channel_id=$16"
 
-	_, err := p.db.Exec(query, p.mxidPtr(), p.Name, p.Topic, p.Avatar,
-		p.AvatarURL.String(), p.FirstEventID.String(),
-		p.Encrypted,
-		p.Key.ChannelID, p.Key.Receiver)
+	_, err := p.db.Exec(query, p.mxidPtr(), p.Type, p.DMUserID, p.PlainName,
+		p.Name, p.NameSet, p.Topic, p.TopicSet, p.Avatar, p.AvatarURL.String(),
+		p.AvatarSet, p.FirstEventID.String(), p.Encrypted, p.Key.TeamID,
+		p.Key.UserID, p.Key.ChannelID)
 
 	if err != nil {
 		p.log.Warnfln("Failed to update %s: %v", p.Key, err)
@@ -105,8 +139,8 @@ func (p *Portal) Update() {
 }
 
 func (p *Portal) Delete() {
-	query := "DELETE FROM portal WHERE channel_id=$1 AND receiver=$2"
-	_, err := p.db.Exec(query, p.Key.ChannelID, p.Key.Receiver)
+	query := "DELETE FROM portal WHERE team_id=$1 AND user_id=$2 AND channel_id=$3"
+	_, err := p.db.Exec(query, p.Key.TeamID, p.Key.UserID, p.Key.ChannelID)
 	if err != nil {
 		p.log.Warnfln("Failed to delete %s: %v", p.Key, err)
 	}

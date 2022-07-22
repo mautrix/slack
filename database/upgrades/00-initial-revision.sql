@@ -1,36 +1,49 @@
 -- v1: Initial revision
 
 CREATE TABLE portal (
+	team_id    TEXT,
+	user_id    TEXT,
 	channel_id TEXT,
-	receiver   TEXT,
 	mxid       TEXT UNIQUE,
 
-	name  TEXT NOT NULL,
-	topic TEXT NOT NULL,
+	type INT DEFAULT 0,
+	dm_user_id TEXT,
 
+	plain_name TEXT NOT NULL,
+	name       TEXT NOT NULL,
+	name_set   BOOLEAN DEFAULT false,
+	topic      TEXT NOT NULL,
+	topic_set  BOOLEAN DEFAULT false,
 	avatar     TEXT NOT NULL,
 	avatar_url TEXT,
+	avatar_set BOOLEAN DEFAULT FALSE,
 
 	encrypted BOOLEAN NOT NULL DEFAULT false,
 
 	first_event_id TEXT,
 
-	PRIMARY KEY (channel_id, receiver)
+	PRIMARY KEY (team_id, user_id, channel_id)
 );
 
 CREATE TABLE puppet (
-	id           TEXT PRIMARY KEY,
-	display_name TEXT,
+	team_id TEXT NOT NULL,
+	user_id TEXT NOT NULL,
+
+	name TEXT NOT NULL,
+	name_set BOOLEAN DEFAULT false,
 
 	avatar     TEXT,
 	avatar_url TEXT,
+	avatar_set BOOLEAN DEFAULT false,
 
 	enable_presence BOOLEAN NOT NULL DEFAULT true,
 	enable_receipts BOOLEAN NOT NULL DEFAULT true,
 
 	custom_mxid  TEXT,
 	access_token TEXT,
-	next_batch   TEXT
+	next_batch   TEXT,
+
+	PRIMARY KEY(team_id, user_id)
 );
 
 CREATE TABLE "user" (
@@ -39,7 +52,7 @@ CREATE TABLE "user" (
 	management_room TEXT
 );
 
-CREATE TABLE user_team (
+CREATE TABLE "user_team" (
 	mxid TEXT NOT NULL,
 
 	slack_email TEXT NOT NULL,
@@ -54,8 +67,9 @@ CREATE TABLE user_team (
 );
 
 CREATE TABLE message (
+	team_id    TEXT NOT NULL,
+	user_id    TEXT NOT NULL,
 	channel_id TEXT NOT NULL,
-	receiver   TEXT NOT NULL,
 
 	slack_message_id TEXT NOT NULL,
 	matrix_message_id  TEXT NOT NULL UNIQUE,
@@ -63,13 +77,14 @@ CREATE TABLE message (
 	author_id TEXT   NOT NULL,
 	timestamp BIGINT NOT NULL,
 
-	PRIMARY KEY(slack_message_id, channel_id, receiver),
-	FOREIGN KEY(channel_id, receiver) REFERENCES portal(channel_id, receiver) ON DELETE CASCADE
+	PRIMARY KEY(slack_message_id, team_id, user_id, channel_id),
+	FOREIGN KEY(team_id, user_id, channel_id) REFERENCES portal(team_id, user_id, channel_id) ON DELETE CASCADE
 );
 
 CREATE TABLE reaction (
+	team_id    TEXT NOT NULL,
+	user_id    TEXT NOT NULL,
 	channel_id TEXT NOT NULL,
-	receiver   TEXT NOT NULL,
 
 	slack_message_id TEXT NOT NULL,
 	matrix_event_id  TEXT NOT NULL UNIQUE,
@@ -81,18 +96,19 @@ CREATE TABLE reaction (
 
 	slack_name TEXT,
 
-	UNIQUE (slack_name, author_id, slack_message_id, channel_id, receiver),
-	FOREIGN KEY(channel_id, receiver) REFERENCES portal(channel_id, receiver) ON DELETE CASCADE
+	UNIQUE (slack_name, author_id, slack_message_id, team_id, user_id, channel_id),
+	FOREIGN KEY(team_id, user_id, channel_id) REFERENCES portal(team_id, user_id, channel_id) ON DELETE CASCADE
 );
 
 CREATE TABLE attachment (
+	team_id    TEXT NOT NULL,
+	user_id    TEXT NOT NULL,
 	channel_id TEXT NOT NULL,
-	receiver   TEXT NOT NULL,
 
 	slack_id TEXT NOT NULL,
 
 	matrix_event_id TEXT NOT NULL UNIQUE,
 
 	PRIMARY KEY(slack_id, matrix_event_id),
-	FOREIGN KEY(channel_id, receiver) REFERENCES portal(channel_id, receiver) ON DELETE CASCADE
+	FOREIGN KEY(team_id, user_id, channel_id) REFERENCES portal(team_id, user_id, channel_id) ON DELETE CASCADE
 );

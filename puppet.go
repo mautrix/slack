@@ -56,9 +56,9 @@ func (br *SlackBridge) NewPuppet(dbPuppet *database.Puppet) *Puppet {
 	return &Puppet{
 		Puppet: dbPuppet,
 		bridge: br,
-		log:    br.Log.Sub(fmt.Sprintf("Puppet/%s", dbPuppet.ID)),
+		log:    br.Log.Sub(fmt.Sprintf("Puppet/%s-%s", dbPuppet.TeamID, dbPuppet.UserID)),
 
-		MXID: br.FormatPuppetMXID(dbPuppet.ID),
+		MXID: br.FormatPuppetMXID(dbPuppet.TeamID + "-" + dbPuppet.UserID),
 	}
 }
 
@@ -87,24 +87,30 @@ func (br *SlackBridge) GetPuppetByMXID(mxid id.UserID) *Puppet {
 		return nil
 	}
 
-	return br.GetPuppetByID(id)
+	br.Log.Errorfln("GetPuppetByMXID: id=%s", id)
+
+	panic("can we avoid this for now?")
+
+	// return br.GetPuppetByID(id)
+	return nil
 }
 
-func (br *SlackBridge) GetPuppetByID(id string) *Puppet {
+func (br *SlackBridge) GetPuppetByID(teamID, userID string) *Puppet {
 	br.puppetsLock.Lock()
 	defer br.puppetsLock.Unlock()
 
-	puppet, ok := br.puppets[id]
+	puppet, ok := br.puppets[teamID+"-"+userID]
 	if !ok {
-		dbPuppet := br.DB.Puppet.Get(id)
+		dbPuppet := br.DB.Puppet.Get(teamID, userID)
 		if dbPuppet == nil {
 			dbPuppet = br.DB.Puppet.New()
-			dbPuppet.ID = id
+			dbPuppet.TeamID = teamID
+			dbPuppet.UserID = userID
 			dbPuppet.Insert()
 		}
 
 		puppet = br.NewPuppet(dbPuppet)
-		br.puppets[puppet.ID] = puppet
+		br.puppets[puppet.Key()] = puppet
 	}
 
 	return puppet
@@ -122,7 +128,7 @@ func (br *SlackBridge) GetPuppetByCustomMXID(mxid id.UserID) *Puppet {
 		}
 
 		puppet = br.NewPuppet(dbPuppet)
-		br.puppets[puppet.ID] = puppet
+		br.puppets[puppet.Key()] = puppet
 		br.puppetsByCustomMXID[puppet.CustomMXID] = puppet
 	}
 
@@ -147,10 +153,10 @@ func (br *SlackBridge) dbPuppetsToPuppets(dbPuppets []*database.Puppet) []*Puppe
 			continue
 		}
 
-		puppet, ok := br.puppets[dbPuppet.ID]
+		puppet, ok := br.puppets[dbPuppet.TeamID+"-"+dbPuppet.UserID]
 		if !ok {
 			puppet = br.NewPuppet(dbPuppet)
-			br.puppets[dbPuppet.ID] = puppet
+			br.puppets[puppet.Key()] = puppet
 
 			if dbPuppet.CustomMXID != "" {
 				br.puppetsByCustomMXID[dbPuppet.CustomMXID] = puppet
@@ -186,8 +192,12 @@ func (puppet *Puppet) CustomIntent() *appservice.IntentAPI {
 	return puppet.customIntent
 }
 
+func (puppet *Puppet) Key() string {
+	return puppet.TeamID + "-" + puppet.UserID
+}
+
 func (puppet *Puppet) updatePortalMeta(meta func(portal *Portal)) {
-	for _, portal := range puppet.bridge.GetAllPortalsByID(puppet.ID) {
+	for _, portal := range puppet.bridge.GetAllPortalsByID(puppet.TeamID, puppet.UserID) {
 		// Get room create lock to prevent races between receiving contact info and room creation.
 		portal.roomCreateLock.Lock()
 		meta(portal)
@@ -196,7 +206,8 @@ func (puppet *Puppet) updatePortalMeta(meta func(portal *Portal)) {
 }
 
 func (puppet *Puppet) updateName(source *User) bool {
-	user, err := source.Client.GetUserInfo(puppet.ID)
+	userTeam := source.GetUserTeam(puppet.TeamID, puppet.UserID)
+	user, err := userTeam.Client.GetUserInfo(puppet.UserID)
 	if err != nil {
 		puppet.log.Warnln("failed to get user from id:", err)
 		return false
@@ -204,10 +215,10 @@ func (puppet *Puppet) updateName(source *User) bool {
 
 	newName := puppet.bridge.Config.Bridge.FormatDisplayname(user)
 
-	if puppet.DisplayName != newName {
+	if puppet.Name != newName {
 		err := puppet.DefaultIntent().SetDisplayName(newName)
 		if err == nil {
-			puppet.DisplayName = newName
+			puppet.Name = newName
 			go puppet.updatePortalName()
 			puppet.Update()
 		} else {
@@ -223,13 +234,13 @@ func (puppet *Puppet) updateName(source *User) bool {
 func (puppet *Puppet) updatePortalName() {
 	puppet.updatePortalMeta(func(portal *Portal) {
 		if portal.MXID != "" {
-			_, err := portal.MainIntent().SetRoomName(portal.MXID, puppet.DisplayName)
+			_, err := portal.MainIntent().SetRoomName(portal.MXID, puppet.Name)
 			if err != nil {
 				portal.log.Warnln("Failed to set name:", err)
 			}
 		}
 
-		portal.Name = puppet.DisplayName
+		portal.Name = puppet.Name
 		portal.Update()
 	})
 }
@@ -295,7 +306,7 @@ func (puppet *Puppet) SyncContact(source *User) {
 	puppet.syncLock.Lock()
 	defer puppet.syncLock.Unlock()
 
-	puppet.log.Debugln("syncing contact", puppet.DisplayName)
+	puppet.log.Debugln("syncing contact", puppet.Name)
 
 	err := puppet.DefaultIntent().EnsureRegistered()
 	if err != nil {

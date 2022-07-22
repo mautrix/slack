@@ -18,12 +18,15 @@ package main
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	log "maunium.net/go/maulogger/v2"
 
 	"github.com/slack-go/slack"
+
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/bridge"
@@ -31,13 +34,9 @@ import (
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
+	"github.com/mautrix/slack/config"
 	"github.com/mautrix/slack/database"
 )
-
-type portalSlackMessage struct {
-	msg  interface{}
-	user *User
-}
 
 type portalMatrixMessage struct {
 	evt  *event.Event
@@ -53,7 +52,6 @@ type Portal struct {
 	roomCreateLock sync.Mutex
 	encryptLock    sync.Mutex
 
-	slackMessages  chan portalSlackMessage
 	matrixMessages chan portalMatrixMessage
 }
 
@@ -131,8 +129,8 @@ func (br *SlackBridge) GetAllPortals() []*Portal {
 	return br.dbPortalsToPortals(br.DB.Portal.GetAll())
 }
 
-func (br *SlackBridge) GetAllPortalsByID(id string) []*Portal {
-	return br.dbPortalsToPortals(br.DB.Portal.GetAllByID(id))
+func (br *SlackBridge) GetAllPortalsByID(teamID, userID string) []*Portal {
+	return br.dbPortalsToPortals(br.DB.Portal.GetAllByID(teamID, userID))
 }
 
 func (br *SlackBridge) dbPortalsToPortals(dbPortals []*database.Portal) []*Portal {
@@ -162,7 +160,6 @@ func (br *SlackBridge) NewPortal(dbPortal *database.Portal) *Portal {
 		bridge: br,
 		log:    br.Log.Sub(fmt.Sprintf("Portal/%s", dbPortal.Key)),
 
-		slackMessages:  make(chan portalSlackMessage, br.Config.Bridge.PortalMessageBuffer),
 		matrixMessages: make(chan portalMatrixMessage, br.Config.Bridge.PortalMessageBuffer),
 	}
 
@@ -176,8 +173,6 @@ func (portal *Portal) messageLoop() {
 		select {
 		case msg := <-portal.matrixMessages:
 			portal.handleMatrixMessages(msg)
-			// case msg := <-portal.discordMessages:
-			// 	portal.handleDiscordMessages(msg)
 		}
 	}
 }
@@ -194,7 +189,7 @@ func (portal *Portal) MainIntent() *appservice.IntentAPI {
 	return portal.bridge.Bot
 }
 
-func (portal *Portal) createMatrixRoom(user *User, channel *slack.Channel) error {
+func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, channel *slack.Channel) error {
 	portal.roomCreateLock.Lock()
 	defer portal.roomCreateLock.Unlock()
 
@@ -203,17 +198,17 @@ func (portal *Portal) createMatrixRoom(user *User, channel *slack.Channel) error
 		return nil
 	}
 
-	// portal.Type = channel.Type
-	// if portal.Type == discordgo.ChannelTypeDM {
-	// 	portal.DMUser = channel.Recipients[0].ID
-	// }
+	channel = portal.UpdateInfo(user, userTeam, channel)
+	if channel == nil {
+		return fmt.Errorf("didn't find channel metadata")
+	}
 
 	intent := portal.MainIntent()
 	if err := intent.EnsureRegistered(); err != nil {
 		return err
 	}
 
-	name, err := portal.bridge.Config.Bridge.FormatChannelname(channel, user.Client)
+	name, err := portal.bridge.Config.Bridge.FormatChannelname(channel, userTeam.Client)
 	if err != nil {
 		portal.log.Warnfln("failed to format name, proceeding with generic name: %v", err)
 		portal.Name = channel.Name
@@ -247,8 +242,12 @@ func (portal *Portal) createMatrixRoom(user *User, channel *slack.Channel) error
 
 		if portal.IsPrivateChat() {
 			invite = append(invite, portal.bridge.Bot.UserID)
+			portal.log.Infoln("added the bot because this portal is encrypted")
 		}
 	}
+
+	portal.log.Infoln("name:", portal.Name, "; topic:", portal.Topic, "; invite:",
+		invite, "; initialState:", initialState, "; creationContent:", creationContent)
 
 	resp, err := intent.CreateRoom(&mautrix.ReqCreateRoom{
 		Visibility:      "private",
@@ -300,11 +299,11 @@ func (portal *Portal) ensureUserInvited(user *User) bool {
 	return false
 }
 
-func (portal *Portal) markMessageHandled(msg *database.Message, discordID string, mxid id.EventID, authorID string, timestamp time.Time) *database.Message {
+func (portal *Portal) markMessageHandled(msg *database.Message, slackID string, mxid id.EventID, authorID string, timestamp time.Time) *database.Message {
 	if msg == nil {
 		msg := portal.bridge.DB.Message.New()
 		msg.Channel = portal.Key
-		msg.DiscordID = discordID
+		msg.SlackID = slackID
 		msg.MatrixID = mxid
 		msg.AuthorID = authorID
 		msg.Timestamp = timestamp
@@ -415,13 +414,13 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
 	// if content.RelatesTo != nil && content.RelatesTo.Type == event.RelReplace {
 	// 	existing := portal.bridge.DB.Message.GetByMatrixID(portal.Key, content.RelatesTo.EventID)
 
-	// 	if existing != nil && existing.DiscordID != "" {
+	// 	if existing != nil && existing.SlackID != "" {
 	// 		// we don't have anything to save for the update message right now
 	// 		// as we're not tracking edited timestamps.
 	// 		_, err := sender.Client.ChannelMessageEdit(portal.Key.ChannelID,
-	// 			existing.DiscordID, content.NewContent.Body)
+	// 			existing.SlackID, content.NewContent.Body)
 	// 		if err != nil {
-	// 			portal.log.Errorln("Failed to update message %s: %v", existing.DiscordID, err)
+	// 			portal.log.Errorln("Failed to update message %s: %v", existing.SlackID, err)
 
 	// 			return
 	// 		}
@@ -442,13 +441,13 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
 	// 			content.RelatesTo.EventID,
 	// 		)
 
-	// 		if existing != nil && existing.DiscordID != "" {
+	// 		if existing != nil && existing.SlackID != "" {
 	// 			msg, err = sender.Client.ChannelMessageSendReply(
 	// 				portal.Key.ChannelID,
 	// 				content.Body,
 	// 				&discordgo.MessageReference{
 	// 					ChannelID: portal.Key.ChannelID,
-	// 					MessageID: existing.DiscordID,
+	// 					MessageID: existing.SlackID,
 	// 				},
 	// 			)
 	// 			if err == nil {
@@ -492,7 +491,7 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
 	// if msg != nil {
 	// 	dbMsg := portal.bridge.DB.Message.New()
 	// 	dbMsg.Channel = portal.Key
-	// 	dbMsg.DiscordID = msg.ID
+	// 	dbMsg.SlackID = msg.ID
 	// 	dbMsg.MatrixID = evt.ID
 	// 	dbMsg.AuthorID = sender.ID
 	// 	dbMsg.Timestamp = time.Now()
@@ -624,33 +623,33 @@ func (portal *Portal) handleMatrixReaction(user *User, evt *event.Event) {
 		return
 	}
 
-	var discordID string
+	var slackID string
 
 	msg := portal.bridge.DB.Message.GetByMatrixID(portal.Key, reaction.RelatesTo.EventID)
 
-	// Due to the differences in attachments between Discord and Matrix, if a
+	// Due to the differences in attachments between Slack and Matrix, if a
 	// user reacts to a media message on discord our lookup above will fail
 	// because the relation of matrix media messages to attachments in handled
 	// in the attachments table instead of messages so we need to check that
 	// before continuing.
 	//
-	// This also leads to interesting problems when a Discord message comes in
+	// This also leads to interesting problems when a Slack message comes in
 	// with multiple attachments. A user can react to each one individually on
-	// Matrix, which will cause us to send it twice. Discord tends to ignore
+	// Matrix, which will cause us to send it twice. Slack tends to ignore
 	// this, but if the user removes one of them, discord removes it and now
 	// they're out of sync. Perhaps we should add a counter to the reactions
-	// table to keep them in sync and to avoid sending duplicates to Discord.
+	// table to keep them in sync and to avoid sending duplicates to Slack.
 	if msg == nil {
 		attachment := portal.bridge.DB.Attachment.GetByMatrixID(portal.Key, reaction.RelatesTo.EventID)
-		discordID = attachment.DiscordMessageID
+		slackID = attachment.SlackMessageID
 	} else {
-		if msg.DiscordID == "" {
-			portal.log.Debugf("Message %s has not yet been sent to discord", reaction.RelatesTo.EventID)
+		if msg.SlackID == "" {
+			portal.log.Debugf("Message %s has not yet been sent to slack", reaction.RelatesTo.EventID)
 
 			return
 		}
 
-		discordID = msg.DiscordID
+		slackID = msg.SlackID
 	}
 
 	// Figure out if this is a custom emoji or not.
@@ -676,13 +675,14 @@ func (portal *Portal) handleMatrixReaction(user *User, evt *event.Event) {
 	// }
 
 	dbReaction := portal.bridge.DB.Reaction.New()
+	dbReaction.Channel.TeamID = portal.Key.TeamID
+	dbReaction.Channel.UserID = portal.Key.UserID
 	dbReaction.Channel.ChannelID = portal.Key.ChannelID
-	dbReaction.Channel.Receiver = portal.Key.Receiver
 	dbReaction.MatrixEventID = evt.ID
-	dbReaction.DiscordMessageID = discordID
+	dbReaction.SlackMessageID = slackID
 	// dbReaction.AuthorID = user.ID
 	dbReaction.MatrixName = reaction.RelatesTo.Key
-	dbReaction.DiscordID = emojiID
+	dbReaction.SlackID = emojiID
 	dbReaction.Insert()
 }
 
@@ -694,10 +694,10 @@ func (portal *Portal) handleMatrixRedaction(user *User, evt *event.Event) {
 	// First look if we're redacting a message
 	message := portal.bridge.DB.Message.GetByMatrixID(portal.Key, evt.Redacts)
 	if message != nil {
-		// if message.DiscordID != "" {
-		// 	err := user.Session.ChannelMessageDelete(portal.Key.ChannelID, message.DiscordID)
+		// if message.SlackID != "" {
+		// 	err := user.Session.ChannelMessageDelete(portal.Key.ChannelID, message.SlackID)
 		// 	if err != nil {
-		// 		portal.log.Debugfln("Failed to delete discord message %s: %v", message.DiscordID, err)
+		// 		portal.log.Debugfln("Failed to delete discord message %s: %v", message.SlackID, err)
 		// 	} else {
 		// 		message.Delete()
 		// 	}
@@ -709,10 +709,10 @@ func (portal *Portal) handleMatrixRedaction(user *User, evt *event.Event) {
 	// Now check if it's a reaction.
 	reaction := portal.bridge.DB.Reaction.GetByMatrixID(portal.Key, evt.Redacts)
 	if reaction != nil {
-		// if reaction.DiscordID != "" {
-		// 	err := user.Session.MessageReactionRemove(portal.Key.ChannelID, reaction.DiscordMessageID, reaction.DiscordID, reaction.AuthorID)
+		// if reaction.SlackID != "" {
+		// 	err := user.Session.MessageReactionRemove(portal.Key.ChannelID, reaction.SlackMessageID, reaction.SlackID, reaction.AuthorID)
 		// 	if err != nil {
-		// 		portal.log.Debugfln("Failed to delete reaction %s for message %s: %v", reaction.DiscordID, reaction.DiscordMessageID, err)
+		// 		portal.log.Debugfln("Failed to delete reaction %s for message %s: %v", reaction.SlackID, reaction.SlackMessageID, err)
 		// 	} else {
 		// 		reaction.Delete()
 		// 	}
@@ -725,7 +725,9 @@ func (portal *Portal) handleMatrixRedaction(user *User, evt *event.Event) {
 }
 
 func (portal *Portal) update(user *User, channel *slack.Channel) {
-	name, err := portal.bridge.Config.Bridge.FormatChannelname(channel, user.Client)
+	userTeam := user.GetUserTeam(portal.Key.TeamID, portal.Key.UserID)
+
+	name, err := portal.bridge.Config.Bridge.FormatChannelname(channel, userTeam.Client)
 	if err != nil {
 		portal.log.Warnln("Failed to format channel name, using existing:", err)
 	} else {
@@ -780,4 +782,250 @@ func (portal *Portal) update(user *User, channel *slack.Channel) {
 
 	portal.Update()
 	portal.log.Debugln("portal updated")
+}
+
+func (portal *Portal) parseTimestamp(timestamp string) time.Time {
+	parts := strings.Split(timestamp, ".")
+
+	seconds, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		portal.log.Warnfln("failed to parse timestamp %s, using Now()", timestamp)
+
+		return time.Now().UTC()
+	}
+
+	var nanoSeconds int64
+	if len(parts) > 1 {
+		nsec, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			portal.log.Warnfln("failed to parse nanoseconds %s, using 0", parts[1])
+			nanoSeconds = 0
+		} else {
+			nanoSeconds = nsec
+		}
+	}
+
+	return time.Unix(seconds, nanoSeconds)
+}
+
+func (portal *Portal) getBridgeInfo() (string, event.BridgeEventContent) {
+	bridgeInfo := event.BridgeEventContent{
+		BridgeBot: portal.bridge.Bot.UserID,
+		Creator:   portal.MainIntent().UserID,
+		Protocol: event.BridgeInfoSection{
+			ID:          "slack",
+			DisplayName: "Slack",
+			AvatarURL:   portal.bridge.Config.AppService.Bot.ParsedAvatar.CUString(),
+			ExternalURL: "https://slack.com/",
+		},
+		Channel: event.BridgeInfoSection{
+			ID:          portal.Key.ChannelID,
+			DisplayName: portal.Name,
+		},
+	}
+	var bridgeInfoStateKey string
+	// if portal.GuildID == "" {
+	// 	bridgeInfoStateKey = fmt.Sprintf("fi.mau.discord://discord/dm/%s", portal.Key.ChannelID)
+	// 	bridgeInfo.Channel.ExternalURL = fmt.Sprintf("https://discord.com/channels/@me/%s", portal.Key.ChannelID)
+	// } else {
+	// 	bridgeInfo.Network = &event.BridgeInfoSection{
+	// 		ID: portal.GuildID,
+	// 	}
+	// 	if portal.Guild != nil {
+	// 		bridgeInfo.Network.DisplayName = portal.Guild.Name
+	// 		bridgeInfo.Network.AvatarURL = portal.Guild.AvatarURL.CUString()
+	// 		// TODO is it possible to find the URL?
+	// 	}
+	// 	bridgeInfoStateKey = fmt.Sprintf("fi.mau.discord://discord/%s/%s", portal.GuildID, portal.Key.ChannelID)
+	// 	bridgeInfo.Channel.ExternalURL = fmt.Sprintf("https://discord.com/channels/%s/%s", portal.GuildID, portal.Key.ChannelID)
+	// }
+	return bridgeInfoStateKey, bridgeInfo
+}
+
+func (portal *Portal) UpdateBridgeInfo() {
+	if len(portal.MXID) == 0 {
+		portal.log.Debugln("Not updating bridge info: no Matrix room created")
+		return
+	}
+	portal.log.Debugln("Updating bridge info...")
+	stateKey, content := portal.getBridgeInfo()
+	_, err := portal.MainIntent().SendStateEvent(portal.MXID, event.StateBridge, stateKey, content)
+	if err != nil {
+		portal.log.Warnln("Failed to update m.bridge:", err)
+	}
+	// TODO remove this once https://github.com/matrix-org/matrix-doc/pull/2346 is in spec
+	_, err = portal.MainIntent().SendStateEvent(portal.MXID, event.StateHalfShotBridge, stateKey, content)
+	if err != nil {
+		portal.log.Warnln("Failed to update uk.half-shot.bridge:", err)
+	}
+}
+
+func (portal *Portal) getChannelType(channel *slack.Channel) database.ChannelType {
+	if channel == nil {
+		portal.log.Errorln("can't get type of nil channel")
+		return database.ChannelTypeUnknown
+	}
+
+	// Slack Conversations structures are weird... and we need to figure out
+	// what group dm's look like.
+	if channel.IsChannel {
+		return database.ChannelTypeChannel
+	} else if channel.GroupConversation.Conversation.IsIM {
+		return database.ChannelTypeDM
+	}
+
+	return database.ChannelTypeUnknown
+}
+
+func (portal *Portal) UpdateNameDirect(name string) bool {
+	if portal.Name == name && (portal.NameSet || portal.MXID == "") {
+		return false
+	} else if !portal.Encrypted && !portal.bridge.Config.Bridge.PrivateChatPortalMeta && portal.IsPrivateChat() {
+		return false
+	}
+	portal.log.Debugfln("Updating name %q -> %q", portal.Name, name)
+	portal.Name = name
+	portal.NameSet = false
+	if portal.MXID != "" {
+		_, err := portal.MainIntent().SetRoomName(portal.MXID, portal.Name)
+		if err != nil {
+			portal.log.Warnln("Failed to update room name:", err)
+		} else {
+			portal.NameSet = true
+		}
+	}
+	return true
+}
+
+func (portal *Portal) UpdateName(meta *slack.Channel) bool {
+	plainNameChanged := portal.PlainName != meta.Name
+	portal.PlainName = meta.Name
+	return portal.UpdateNameDirect(portal.bridge.Config.Bridge.FormatChannelName(config.ChannelNameParams{
+		Name: meta.Name,
+		Type: portal.getChannelType(meta),
+	})) || plainNameChanged
+}
+
+func (portal *Portal) updateRoomAvatar() {
+	if portal.MXID == "" {
+		return
+	}
+	_, err := portal.MainIntent().SetRoomAvatar(portal.MXID, portal.AvatarURL)
+	if err != nil {
+		portal.log.Warnln("Failed to update room avatar:", err)
+	} else {
+		portal.AvatarSet = true
+	}
+}
+
+func (portal *Portal) UpdateAvatarFromPuppet(puppet *Puppet) bool {
+	if portal.Avatar == puppet.Avatar && portal.AvatarURL == puppet.AvatarURL && (portal.AvatarSet || portal.MXID == "") {
+		return false
+	}
+
+	portal.log.Debugfln("Updating avatar from puppet %q -> %q", portal.Avatar, puppet.Avatar)
+	portal.Avatar = puppet.Avatar
+	portal.AvatarURL = puppet.AvatarURL
+	portal.AvatarSet = false
+	portal.updateRoomAvatar()
+
+	return true
+}
+
+func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, meta *slack.Channel) *slack.Channel {
+	changed := false
+
+	if meta == nil {
+		portal.log.Debugfln("UpdateInfo called without metadata, fetching from server via %s", sourceTeam.Key.SlackID)
+		var err error
+		meta, err = sourceTeam.Client.GetConversationInfo(portal.Key.ChannelID, true)
+		if err != nil {
+			portal.log.Errorfln("Failed to fetch meta via %s: %v", sourceTeam.Key.SlackID, err)
+			return nil
+		}
+	}
+
+	metaType := portal.getChannelType(meta)
+	if portal.Type != metaType {
+		portal.log.Warnfln("Portal type changed from %s to %s", portal.Type, metaType)
+		portal.Type = metaType
+		changed = true
+	}
+
+	switch portal.Type {
+	case database.ChannelTypeDM:
+		if portal.DMUserID != "" {
+			puppet := portal.bridge.GetPuppetByID(sourceTeam.Key.TeamID, portal.DMUserID)
+			changed = portal.UpdateAvatarFromPuppet(puppet) || changed
+			changed = portal.UpdateNameDirect(puppet.Name) || changed
+		}
+	default:
+		changed = portal.UpdateName(meta) || changed
+	}
+
+	if changed {
+		portal.UpdateBridgeInfo()
+		portal.Update()
+	}
+
+	return nil
+}
+
+func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam, msg *slack.MessageEvent) {
+	if msg.Msg.Type != "message" {
+		portal.log.Warnln("ignoring unknown message type:", msg.Msg.Type)
+		return
+	}
+
+	if portal.MXID == "" {
+		portal.log.Warnln("userTeam:", userTeam)
+		portal.log.Warnln("client:", userTeam.Client)
+		channel, err := userTeam.Client.GetConversationInfo(msg.Channel, true)
+		if err != nil {
+			portal.log.Errorln("failed to lookup channel info:", err)
+			return
+		}
+
+		portal.log.Debugln("Creating Matrix room from incoming message")
+		if err := portal.CreateMatrixRoom(user, userTeam, channel); err != nil {
+			portal.log.Errorln("Failed to create portal room:", err)
+			return
+		}
+	}
+
+	existing := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Msg.ClientMsgID)
+	if existing != nil {
+		portal.log.Debugln("Dropping duplicate message:", msg.Msg.ClientMsgID)
+		return
+	}
+
+	portal.log.Debugfln("Starting handling of %s by %s", msg.Msg.ClientMsgID, msg.Msg.User)
+
+	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.Msg.User)
+	// puppet.UpdateInfo(user, msg.Author)
+	intent := puppet.IntentFor(portal)
+
+	// TODO: render markdown
+	content := portal.renderSlackMarkdown(msg.Msg.Text)
+	portal.log.Debugfln("intent: %#v", intent)
+
+	// Parse the timestamp into a time.Time
+	ts := portal.parseTimestamp(msg.Msg.Timestamp)
+
+	resp, err := portal.sendMatrixMessage(intent, event.EventMessage, &content, nil, ts.UnixMilli())
+	if err != nil {
+		portal.log.Warnfln("Failed to send message %s to matrix: %v", msg.Msg.ClientMsgID, err)
+		return
+	}
+
+	go portal.sendDeliveryReceipt(resp.EventID)
+}
+
+func (portal *Portal) sendDeliveryReceipt(eventID id.EventID) {
+	if portal.bridge.Config.Bridge.DeliveryReceipts {
+		err := portal.bridge.Bot.MarkRead(portal.MXID, eventID)
+		if err != nil {
+			portal.log.Debugfln("Failed to send delivery receipt for %s: %v", eventID, err)
+		}
+	}
 }

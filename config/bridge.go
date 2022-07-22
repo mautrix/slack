@@ -24,14 +24,19 @@ import (
 	"github.com/slack-go/slack"
 
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
+
+	"github.com/mautrix/slack/database"
 )
 
 type BridgeConfig struct {
-	UsernameTemplate    string `yaml:"username_template"`
-	DisplaynameTemplate string `yaml:"displayname_template"`
-	ChannelnameTemplate string `yaml:"channelname_template"`
+	UsernameTemplate      string `yaml:"username_template"`
+	DisplaynameTemplate   string `yaml:"displayname_template"`
+	ChannelNameTemplate   string `yaml:"channel_name_template"`
+	PrivateChatPortalMeta bool   `yaml:"private_chat_portal_meta"`
 
 	CommandPrefix string `yaml:"command_prefix"`
+
+	DeliveryReceipts bool `yaml:"delivery_receipts"`
 
 	ManagementRoomText bridgeconfig.ManagementRoomTexts `yaml:"management_room_text"`
 
@@ -57,7 +62,7 @@ type BridgeConfig struct {
 
 	usernameTemplate    *template.Template `yaml:"-"`
 	displaynameTemplate *template.Template `yaml:"-"`
-	channelnameTemplate *template.Template `yaml:"-"`
+	channelNameTemplate *template.Template `yaml:"-"`
 }
 
 type umBridgeConfig BridgeConfig
@@ -80,7 +85,7 @@ func (bc *BridgeConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		return err
 	}
 
-	bc.channelnameTemplate, err = template.New("channelname").Parse(bc.ChannelnameTemplate)
+	bc.channelNameTemplate, err = template.New("channel_name").Parse(bc.ChannelNameTemplate)
 	if err != nil {
 		return err
 	}
@@ -117,4 +122,15 @@ func (bc BridgeConfig) FormatDisplayname(user *slack.User) string {
 func (bc BridgeConfig) FormatChannelname(channel *slack.Channel, client *slack.Client) (string, error) {
 	// TODO: make this work
 	return channel.Name, nil
+}
+
+type ChannelNameParams struct {
+	Name string
+	Type database.ChannelType
+}
+
+func (bc BridgeConfig) FormatChannelName(params ChannelNameParams) string {
+	var buffer strings.Builder
+	_ = bc.channelNameTemplate.Execute(&buffer, params)
+	return buffer.String()
 }

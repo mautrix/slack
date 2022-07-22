@@ -27,8 +27,9 @@ type AttachmentQuery struct {
 }
 
 const (
-	attachmentSelect = "SELECT channel_id, receiver, discord_message_id," +
-		" discord_attachment_id, matrix_event_id FROM attachment"
+	attachmentSelect = "SELECT team_id, user_id, channel_id, " +
+		" discord_message_id, discord_attachment_id, matrix_event_id" +
+		" FROM attachment"
 )
 
 func (aq *AttachmentQuery) New() *Attachment {
@@ -39,10 +40,10 @@ func (aq *AttachmentQuery) New() *Attachment {
 }
 
 func (aq *AttachmentQuery) GetAllByDiscordMessageID(key PortalKey, discordMessageID string) []*Attachment {
-	query := attachmentSelect + " WHERE channel_id=$1 AND receiver=$2 AND" +
-		" discord_message_id=$3"
+	query := attachmentSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3" +
+		" discord_message_id=$4"
 
-	return aq.getAll(query, key.ChannelID, key.Receiver, discordMessageID)
+	return aq.getAll(query, key.TeamID, key.UserID, key.ChannelID, discordMessageID)
 }
 
 func (aq *AttachmentQuery) getAll(query string, args ...interface{}) []*Attachment {
@@ -66,17 +67,16 @@ func (aq *AttachmentQuery) getAll(query string, args ...interface{}) []*Attachme
 }
 
 func (aq *AttachmentQuery) GetByDiscordAttachmentID(key PortalKey, discordMessageID, discordID string) *Attachment {
-	query := attachmentSelect + " WHERE channel_id=$1 AND receiver=$2" +
-		" AND discord_message_id=$3 AND discord_id=$4"
+	query := attachmentSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3" +
+		" AND discord_message_id=$4 AND discord_id=$5"
 
-	return aq.get(query, key.ChannelID, key.Receiver, discordMessageID, discordID)
+	return aq.get(query, key.TeamID, key.UserID, key.ChannelID, discordMessageID, discordID)
 }
 
 func (aq *AttachmentQuery) GetByMatrixID(key PortalKey, matrixEventID id.EventID) *Attachment {
-	query := attachmentSelect + " WHERE channel_id=$1 AND receiver=$2" +
-		" AND matrix_event_id=$3"
+	query := attachmentSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3 AND matrix_event_id=$4"
 
-	return aq.get(query, key.ChannelID, key.Receiver, matrixEventID)
+	return aq.get(query, key.TeamID, key.UserID, key.ChannelID, matrixEventID)
 }
 
 func (aq *AttachmentQuery) get(query string, args ...interface{}) *Attachment {

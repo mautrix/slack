@@ -35,8 +35,8 @@ func (pq *PuppetQuery) New() *Puppet {
 	}
 }
 
-func (pq *PuppetQuery) Get(id string) *Puppet {
-	return pq.get(puppetSelect+" WHERE id=$1", id)
+func (pq *PuppetQuery) Get(teamID, userID string) *Puppet {
+	return pq.get(puppetSelect+" WHERE team_id=$1 AND user_id=$2", teamID, userID)
 }
 
 func (pq *PuppetQuery) GetByCustomMXID(mxid id.UserID) *Puppet {

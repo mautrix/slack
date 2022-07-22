@@ -22,8 +22,9 @@ import (
 )
 
 const (
-	portalSelect = "SELECT channel_id, receiver, mxid, name, topic, avatar," +
-		" avatar_url, first_event_id, encrypted FROM portal"
+	portalSelect = "SELECT team_id, user_id, channel_id, mxid, plain_name," +
+		" name, type, dm_user_id, topic, avatar, avatar_url, first_event_id," +
+		" encrypted FROM portal"
 )
 
 type PortalQuery struct {
@@ -43,15 +44,15 @@ func (pq *PortalQuery) GetAll() []*Portal {
 }
 
 func (pq *PortalQuery) GetByID(key PortalKey) *Portal {
-	return pq.get(portalSelect+" WHERE channel_id=$1 AND receiver=$2", key.ChannelID, key.Receiver)
+	return pq.get(portalSelect+" WHERE team_id=$1 AND user_id=$2 AND channel_id=$3", key.TeamID, key.UserID, key.ChannelID)
 }
 
 func (pq *PortalQuery) GetByMXID(mxid id.RoomID) *Portal {
 	return pq.get(portalSelect+" WHERE mxid=$1", mxid)
 }
 
-func (pq *PortalQuery) GetAllByID(id string) []*Portal {
-	return pq.getAll(portalSelect+" WHERE receiver=$1", id)
+func (pq *PortalQuery) GetAllByID(teamID, userID string) []*Portal {
+	return pq.getAll(portalSelect+" WHERE team_id=$1 AND user_id=$2", teamID, userID)
 }
 
 func (pq *PortalQuery) FindPrivateChats(receiver string) []*Portal {

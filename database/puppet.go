@@ -26,9 +26,9 @@ import (
 )
 
 const (
-	puppetSelect = "SELECT id, display_name, avatar, avatar_url," +
-		" enable_presence, custom_mxid, access_token, next_batch," +
-		" enable_receipts" +
+	puppetSelect = "SELECT team_id, user_id, name, name_set, avatar," +
+		" avatar_url, avatar_set, enable_presence, custom_mxid, access_token," +
+		" next_batch, enable_receipts" +
 		" FROM puppet "
 )
 
@@ -36,11 +36,15 @@ type Puppet struct {
 	db  *Database
 	log log.Logger
 
-	ID          string
-	DisplayName string
+	TeamID string
+	UserID string
+
+	Name    string
+	NameSet bool
 
 	Avatar    string
 	AvatarURL id.ContentURI
+	AvatarSet bool
 
 	EnablePresence bool
 
@@ -53,12 +57,13 @@ type Puppet struct {
 }
 
 func (p *Puppet) Scan(row dbutil.Scannable) *Puppet {
-	var did, displayName, avatar, avatarURL sql.NullString
+	var teamID, userID, avatar, avatarURL sql.NullString
 	var enablePresence sql.NullBool
 	var customMXID, accessToken, nextBatch sql.NullString
 
-	err := row.Scan(&did, &displayName, &avatar, &avatarURL, &enablePresence,
-		&customMXID, &accessToken, &nextBatch, &p.EnableReceipts)
+	err := row.Scan(&teamID, &userID, &p.Name, &p.NameSet, &avatar, &avatarURL,
+		&p.AvatarSet, &enablePresence, &customMXID, &accessToken, &nextBatch,
+		&p.EnableReceipts)
 
 	if err != nil {
 		if err != sql.ErrNoRows {
@@ -68,8 +73,8 @@ func (p *Puppet) Scan(row dbutil.Scannable) *Puppet {
 		return nil
 	}
 
-	p.ID = did.String
-	p.DisplayName = displayName.String
+	p.TeamID = teamID.String
+	p.UserID = userID.String
 	p.Avatar = avatar.String
 	p.AvatarURL, _ = id.ParseContentURI(avatarURL.String)
 	p.EnablePresence = enablePresence.Bool
@@ -82,31 +87,32 @@ func (p *Puppet) Scan(row dbutil.Scannable) *Puppet {
 
 func (p *Puppet) Insert() {
 	query := "INSERT INTO puppet" +
-		" (id, display_name, avatar, avatar_url, enable_presence," +
-		"  custom_mxid, access_token, next_batch, enable_receipts)" +
-		" VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+		" (team_id, user_id, name, name_set, avatar, avatar_url, avatar_set," +
+		" enable_presence, custom_mxid, access_token, next_batch," +
+		" enable_receipts)" +
+		" VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"
 
-	_, err := p.db.Exec(query, p.ID, p.DisplayName, p.Avatar,
-		p.AvatarURL.String(), p.EnablePresence, p.CustomMXID, p.AccessToken,
-		p.NextBatch, p.EnableReceipts)
+	_, err := p.db.Exec(query, p.TeamID, p.UserID, p.Name, p.NameSet, p.Avatar,
+		p.AvatarURL.String(), p.AvatarSet, p.EnablePresence, p.CustomMXID,
+		p.AccessToken, p.NextBatch, p.EnableReceipts)
 
 	if err != nil {
-		p.log.Warnfln("Failed to insert %s: %v", p.ID, err)
+		p.log.Warnfln("Failed to insert %s-%s: %v", p.TeamID, p.UserID, err)
 	}
 }
 
 func (p *Puppet) Update() {
 	query := "UPDATE puppet" +
-		" SET display_name=$1, avatar=$2, avatar_url=$3, enable_presence=$4," +
-		"     custom_mxid=$5, access_token=$6, next_batch=$7," +
-		"     enable_receipts=$8" +
-		" WHERE id=$9"
+		" SET name=$1, name_set=$2, avatar=$3, avatar_url=$4, avatar_set=$5," +
+		"     enable_presence=$6, custom_mxid=$7, access_token=$8," +
+		"     next_batch=$9, enable_receipts=$10" +
+		" WHERE team_id=$11 AND user_id=$12"
 
-	_, err := p.db.Exec(query, p.DisplayName, p.Avatar, p.AvatarURL.String(),
-		p.EnablePresence, p.CustomMXID, p.AccessToken, p.NextBatch,
-		p.EnableReceipts, p.ID)
+	_, err := p.db.Exec(query, p.Name, p.NameSet, p.Avatar,
+		p.AvatarURL.String(), p.AvatarSet, p.EnablePresence, p.CustomMXID,
+		p.AccessToken, p.NextBatch, p.EnableReceipts, p.TeamID, p.UserID)
 
 	if err != nil {
-		p.log.Warnfln("Failed to update %s: %v", p.ID, err)
+		p.log.Warnfln("Failed to update %s-%s: %v", p.TeamID, p.UserID, err)
 	}
 }

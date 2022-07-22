@@ -45,9 +45,6 @@ type User struct {
 	log    log.Logger
 
 	PermissionLevel bridgeconfig.PermissionLevel
-
-	Client *slack.Client
-	rtm    *slack.RTM
 }
 
 func (user *User) GetPermissionLevel() bridgeconfig.PermissionLevel {
@@ -368,6 +365,13 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 			return
 		case *slack.LatencyReport:
 			user.log.Debugln("latency report:", event.Value)
+		case *slack.MessageEvent:
+			key := database.NewPortalKey(userTeam.Key.TeamID, userTeam.Key.SlackID, event.Channel)
+			portal := user.bridge.GetPortalByID(key)
+
+			if portal != nil {
+				portal.HandleSlackMessage(user, userTeam, event)
+			}
 		case *slack.RTMError:
 			user.log.Errorln("rtm error:", event.Error())
 		default:
@@ -422,6 +426,23 @@ func (user *User) Disconnect() error {
 		if err := user.disconnectTeam(userTeam); err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+func (user *User) GetUserTeam(teamID, userID string) *database.UserTeam {
+	user.TeamsLock.Lock()
+	defer user.TeamsLock.Unlock()
+
+	key := database.UserTeamKey{
+		MXID:    user.MXID,
+		TeamID:  teamID,
+		SlackID: userID,
+	}
+
+	if userTeam, found := user.Teams[key]; found {
+		return userTeam
 	}
 
 	return nil

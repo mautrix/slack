@@ -91,12 +91,8 @@ func (br *SlackBridge) Start() {
 
 func (br *SlackBridge) Stop() {
 	for _, user := range br.usersByMXID {
-		if user.Client == nil {
-			continue
-		}
-
 		br.Log.Debugln("Disconnecting", user.MXID)
-		// TODO close real time connect
+		user.Disconnect()
 	}
 }
 

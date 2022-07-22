@@ -32,27 +32,27 @@ type Reaction struct {
 
 	Channel PortalKey
 
-	DiscordMessageID string
-	MatrixEventID    id.EventID
+	SlackMessageID string
+	MatrixEventID  id.EventID
 
-	// The discord ID of who create this reaction
+	// The slack ID of who create this reaction
 	AuthorID string
 
 	MatrixName string
 	MatrixURL  string // Used for custom emoji
 
-	DiscordID string // The id or unicode of the emoji for discord
+	SlackID string // The id or unicode of the emoji for slack
 }
 
 func (r *Reaction) Scan(row dbutil.Scannable) *Reaction {
-	var discordID sql.NullString
+	var slackID sql.NullString
 
 	err := row.Scan(
-		&r.Channel.ChannelID, &r.Channel.Receiver,
-		&r.DiscordMessageID, &r.MatrixEventID,
+		&r.Channel.TeamID, &r.Channel.UserID, &r.Channel.ChannelID,
+		&r.SlackMessageID, &r.MatrixEventID,
 		&r.AuthorID,
 		&r.MatrixName, &r.MatrixURL,
-		&discordID)
+		&slackID)
 
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -62,34 +62,34 @@ func (r *Reaction) Scan(row dbutil.Scannable) *Reaction {
 		return nil
 	}
 
-	r.DiscordID = discordID.String
+	r.SlackID = slackID.String
 
 	return r
 }
 
 func (r *Reaction) Insert() {
 	query := "INSERT INTO reaction" +
-		" (channel_id, receiver, discord_message_id, matrix_event_id," +
-		"  author_id, matrix_name, matrix_url, discord_id)" +
-		" VALUES($1, $2, $3, $4, $5, $6, $7, $8);"
+		" (team_id, user_id, channel_id, slack_message_id, matrix_event_id," +
+		"  author_id, matrix_name, matrix_url, slack_id)" +
+		" VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9);"
 
-	var discordID sql.NullString
+	var slackID sql.NullString
 
-	if r.DiscordID != "" {
-		discordID = sql.NullString{r.DiscordID, true}
+	if r.SlackID != "" {
+		slackID = sql.NullString{r.SlackID, true}
 	}
 
 	_, err := r.db.Exec(
 		query,
-		r.Channel.ChannelID, r.Channel.Receiver,
-		r.DiscordMessageID, r.MatrixEventID,
+		r.Channel.TeamID, r.Channel.UserID, r.Channel.ChannelID,
+		r.SlackMessageID, r.MatrixEventID,
 		r.AuthorID,
 		r.MatrixName, r.MatrixURL,
-		discordID,
+		slackID,
 	)
 
 	if err != nil {
-		r.log.Warnfln("Failed to insert reaction for %s@%s: %v", r.Channel, r.DiscordMessageID, err)
+		r.log.Warnfln("Failed to insert reaction for %s@%s: %v", r.Channel, r.SlackMessageID, err)
 	}
 }
 
@@ -101,22 +101,21 @@ func (r *Reaction) Update() {
 
 func (r *Reaction) Delete() {
 	query := "DELETE FROM reaction WHERE" +
-		" channel_id=$1 AND receiver=$2 AND discord_message_id=$3 AND" +
-		" author_id=$4 AND discord_id=$5"
+		" team_id=$1 AND user_id=$2 AND channel_id=$3 AND slack_message_id=$4 AND author_id=$5 AND slack_id=$6"
 
-	var discordID sql.NullString
-	if r.DiscordID != "" {
-		discordID = sql.NullString{r.DiscordID, true}
+	var slackID sql.NullString
+	if r.SlackID != "" {
+		slackID = sql.NullString{r.SlackID, true}
 	}
 
 	_, err := r.db.Exec(
 		query,
-		r.Channel.ChannelID, r.Channel.Receiver,
-		r.DiscordMessageID, r.AuthorID,
-		discordID,
+		r.Channel.TeamID, r.Channel.UserID, r.Channel.ChannelID,
+		r.SlackMessageID, r.AuthorID,
+		slackID,
 	)
 
 	if err != nil {
-		r.log.Warnfln("Failed to delete reaction for %s@%s: %v", r.Channel, r.DiscordMessageID, err)
+		r.log.Warnfln("Failed to delete reaction for %s@%s: %v", r.Channel, r.SlackMessageID, err)
 	}
 }

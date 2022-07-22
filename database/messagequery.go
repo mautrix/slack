@@ -27,7 +27,7 @@ type MessageQuery struct {
 }
 
 const (
-	messageSelect = "SELECT channel_id, receiver, discord_message_id," +
+	messageSelect = "SELECT team_id, user_id, channel_id, slack_message_id," +
 		" matrix_message_id, author_id, timestamp FROM message"
 )
 
@@ -39,9 +39,9 @@ func (mq *MessageQuery) New() *Message {
 }
 
 func (mq *MessageQuery) GetAll(key PortalKey) []*Message {
-	query := messageSelect + " WHERE channeld_id=$1 AND receiver=$2"
+	query := messageSelect + " WHERE team_id=$1 AND user_id=$2 AND channeld_id=$3"
 
-	rows, err := mq.db.Query(query, key.ChannelID, key.Receiver)
+	rows, err := mq.db.Query(query, key.TeamID, key.UserID, key.ChannelID)
 	if err != nil || rows == nil {
 		return nil
 	}
@@ -54,13 +54,12 @@ func (mq *MessageQuery) GetAll(key PortalKey) []*Message {
 	return messages
 }
 
-func (mq *MessageQuery) GetByDiscordID(key PortalKey, discordID string) *Message {
-	query := messageSelect + " WHERE channel_id=$1 AND receiver=$2 AND" +
-		" discord_message_id=$3"
+func (mq *MessageQuery) GetBySlackID(key PortalKey, slackID string) *Message {
+	query := messageSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3 AND slack_message_id=$4"
 
-	row := mq.db.QueryRow(query, key.ChannelID, key.Receiver, discordID)
+	row := mq.db.QueryRow(query, key.TeamID, key.UserID, key.ChannelID, slackID)
 	if row == nil {
-		mq.log.Debugfln("failed to find existing message for discord_id %s", discordID)
+		mq.log.Debugfln("failed to find existing message for slack_id` %s", slackID)
 		return nil
 	}
 
@@ -68,10 +67,9 @@ func (mq *MessageQuery) GetByDiscordID(key PortalKey, discordID string) *Message
 }
 
 func (mq *MessageQuery) GetByMatrixID(key PortalKey, matrixID id.EventID) *Message {
-	query := messageSelect + " WHERE channel_id=$1 AND receiver=$2 AND" +
-		" matrix_message_id=$3"
+	query := messageSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3 AND matrix_message_id=$4"
 
-	row := mq.db.QueryRow(query, key.ChannelID, key.Receiver, matrixID)
+	row := mq.db.QueryRow(query, key.TeamID, key.UserID, key.ChannelID, matrixID)
 	if row == nil {
 		return nil
 	}
