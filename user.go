@@ -263,26 +263,26 @@ func (user *User) LoginTeam(email, team, password string) error {
 		return err
 	}
 
-	userteam := user.bridge.DB.UserTeam.New()
+	userTeam := user.bridge.DB.UserTeam.New()
 
-	userteam.Key.MXID = user.MXID
-	userteam.Key.SlackID = info.UserID
-	userteam.Key.TeamID = info.TeamID
-	userteam.SlackEmail = info.UserEmail
-	userteam.TeamName = info.TeamName
-	userteam.Token = info.Token
+	userTeam.Key.MXID = user.MXID
+	userTeam.Key.SlackID = info.UserID
+	userTeam.Key.TeamID = info.TeamID
+	userTeam.SlackEmail = info.UserEmail
+	userTeam.TeamName = info.TeamName
+	userTeam.Token = info.Token
 
 	// We minimize the time we hold the lock because SyncTeams also needs the
 	// lock.
 	user.TeamsLock.Lock()
-	user.Teams[userteam.Key] = userteam
+	user.Teams[userTeam.Key] = userTeam
 	user.TeamsLock.Unlock()
 
 	user.User.SyncTeams()
 
 	user.log.Debugln("logged into %s successfully", info.TeamName)
 
-	return nil
+	return user.connectTeam(userTeam)
 }
 
 // func (user *User) TokenLogin(token string) error {
@@ -342,14 +342,74 @@ func (user *User) LogoutTeam(email, team string) error {
 	return nil
 }
 
+func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
+	for msg := range userTeam.RTM.IncomingEvents {
+		switch event := msg.Data.(type) {
+		case *slack.ConnectingEvent:
+			user.log.Debugfln("connecting: attempt %d", event.Attempt)
+		case *slack.ConnectedEvent:
+			// Update all of our values according to what the server has for us.
+			userTeam.Key.SlackID = event.Info.User.ID
+			userTeam.Key.TeamID = event.Info.Team.ID
+			userTeam.TeamName = event.Info.Team.Name
+
+			userTeam.Upsert()
+
+			user.log.Infofln("connected to team %s as %s", userTeam.TeamName, userTeam.SlackEmail)
+		case *slack.HelloEvent:
+			// Ignored for now
+		case *slack.InvalidAuthEvent:
+			user.log.Errorln("invalid authentication token")
+
+			user.LogoutTeam(userTeam.SlackEmail, userTeam.TeamName)
+
+			// TODO: Should drop a message in the management room
+
+			return
+		case *slack.LatencyReport:
+			user.log.Debugln("latency report:", event.Value)
+		case *slack.RTMError:
+			user.log.Errorln("rtm error:", event.Error())
+		default:
+			user.log.Warnln("uknown message", msg)
+		}
+	}
+}
+
+func (user *User) connectTeam(userTeam *database.UserTeam) error {
+	user.log.Debugfln("connecting %s to team %s", userTeam.SlackEmail, userTeam.SlackEmail)
+	userTeam.Client = slack.New(userTeam.Token)
+
+	userTeam.RTM = userTeam.Client.NewRTM()
+
+	go userTeam.RTM.ManageConnection()
+
+	go user.slackMessageHandler(userTeam)
+
+	return nil
+}
+
 func (user *User) Connect() error {
 	user.Lock()
 	defer user.Unlock()
 
 	user.log.Debugln("connecting to slack")
 
-	// user.Client = slack.New("")
-	// user.rtm = user.Client.NewRTM()
+	for _, userTeam := range user.Teams {
+		user.connectTeam(userTeam)
+	}
+
+	return nil
+}
+
+func (user *User) disconnectTeam(userTeam *database.UserTeam) error {
+	if userTeam.RTM != nil {
+		if err := userTeam.RTM.Disconnect(); err != nil {
+			return err
+		}
+	}
+
+	userTeam.Client = nil
 
 	return nil
 }
@@ -358,13 +418,11 @@ func (user *User) Disconnect() error {
 	user.Lock()
 	defer user.Unlock()
 
-	if user.Client == nil {
-		return ErrNotConnected
+	for _, userTeam := range user.Teams {
+		if err := user.disconnectTeam(userTeam); err != nil {
+			return err
+		}
 	}
-
-	// TODO: cancel the rtm context
-
-	user.Client = nil
 
 	return nil
 }
