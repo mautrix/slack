@@ -22,8 +22,9 @@ import (
 )
 
 const (
-	portalSelect = "SELECT team_id, user_id, channel_id, mxid, plain_name," +
-		" name, type, dm_user_id, topic, avatar, avatar_url, first_event_id," +
+	portalSelect = "SELECT team_id, user_id, channel_id, mxid, type, " +
+		" dm_user_id, plain_name, name, name_set, topic, topic_set," +
+		" avatar, avatar_url, avatar_set, first_event_id," +
 		" encrypted FROM portal"
 )
 

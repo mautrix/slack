@@ -119,11 +119,6 @@ func (bc BridgeConfig) FormatDisplayname(user *slack.User) string {
 	return buffer.String()
 }
 
-func (bc BridgeConfig) FormatChannelname(channel *slack.Channel, client *slack.Client) (string, error) {
-	// TODO: make this work
-	return channel.Name, nil
-}
-
 type ChannelNameParams struct {
 	Name string
 	Type database.ChannelType

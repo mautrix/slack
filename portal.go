@@ -178,7 +178,7 @@ func (portal *Portal) messageLoop() {
 }
 
 func (portal *Portal) IsPrivateChat() bool {
-	return false
+	return portal.Type == database.ChannelTypeDM
 }
 
 func (portal *Portal) MainIntent() *appservice.IntentAPI {
@@ -208,13 +208,7 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		return err
 	}
 
-	name, err := portal.bridge.Config.Bridge.FormatChannelname(channel, userTeam.Client)
-	if err != nil {
-		portal.log.Warnfln("failed to format name, proceeding with generic name: %v", err)
-		portal.Name = channel.Name
-	} else {
-		portal.Name = name
-	}
+	// TODO: bridge state stuff
 
 	portal.Topic = channel.Topic.Value
 
@@ -724,66 +718,6 @@ func (portal *Portal) handleMatrixRedaction(user *User, evt *event.Event) {
 	portal.log.Warnfln("Failed to redact %s@%s: no event found", portal.Key, evt.Redacts)
 }
 
-func (portal *Portal) update(user *User, channel *slack.Channel) {
-	userTeam := user.GetUserTeam(portal.Key.TeamID, portal.Key.UserID)
-
-	name, err := portal.bridge.Config.Bridge.FormatChannelname(channel, userTeam.Client)
-	if err != nil {
-		portal.log.Warnln("Failed to format channel name, using existing:", err)
-	} else {
-		portal.Name = name
-	}
-
-	intent := portal.MainIntent()
-
-	if portal.Name != name {
-		_, err = intent.SetRoomName(portal.MXID, portal.Name)
-		if err != nil {
-			portal.log.Warnln("Failed to update room name:", err)
-		}
-	}
-
-	if portal.Topic != channel.Topic.Value {
-		portal.Topic = channel.Topic.Value
-		_, err = intent.SetRoomTopic(portal.MXID, portal.Topic)
-		if err != nil {
-			portal.log.Warnln("Failed to update room topic:", err)
-		}
-	}
-
-	// if portal.Avatar != channel.Icon {
-	// 	portal.Avatar = channel.Icon
-
-	// 	var url string
-
-	// 	if portal.Type == discordgo.ChannelTypeDM {
-	// 		dmUser, err := user.Session.User(portal.DMUser)
-	// 		if err != nil {
-	// 			portal.log.Warnln("failed to lookup the dmuser", err)
-	// 		} else {
-	// 			url = dmUser.AvatarURL("")
-	// 		}
-	// 	} else {
-	// 		url = discordgo.EndpointGroupIcon(channel.ID, channel.Icon)
-	// 	}
-
-	// 	portal.AvatarURL = id.ContentURI{}
-	// 	if url != "" {
-	// 		uri, err := uploadAvatar(intent, url)
-	// 		if err != nil {
-	// 			portal.log.Warnf("failed to upload avatar", err)
-	// 		} else {
-	// 			portal.AvatarURL = uri
-	// 		}
-	// 	}
-
-	// 	intent.SetRoomAvatar(portal.MXID, portal.AvatarURL)
-	// }
-
-	portal.Update()
-	portal.log.Debugln("portal updated")
-}
-
 func (portal *Portal) parseTimestamp(timestamp string) time.Time {
 	parts := strings.Split(timestamp, ".")
 
@@ -897,12 +831,25 @@ func (portal *Portal) UpdateNameDirect(name string) bool {
 	return true
 }
 
-func (portal *Portal) UpdateName(meta *slack.Channel) bool {
-	plainNameChanged := portal.PlainName != meta.Name
-	portal.PlainName = meta.Name
+func (portal *Portal) UpdateName(meta *slack.Channel, sourceTeam *database.UserTeam) bool {
+	channelType := portal.getChannelType(meta)
+	plainName := meta.Name
+
+	if channelType == database.ChannelTypeDM {
+		user, err := sourceTeam.Client.GetUserInfo(meta.User)
+		if err != nil {
+			portal.log.Warnfln("failed to lookup user %s: %w", user, err)
+		} else {
+			portal.log.Errorfln("user: %#v", user)
+		}
+	}
+
+	plainNameChanged := portal.PlainName != plainName
+	portal.PlainName = plainName
+
 	return portal.UpdateNameDirect(portal.bridge.Config.Bridge.FormatChannelName(config.ChannelNameParams{
-		Name: meta.Name,
-		Type: portal.getChannelType(meta),
+		Name: plainName,
+		Type: channelType,
 	})) || plainNameChanged
 }
 
@@ -932,6 +879,26 @@ func (portal *Portal) UpdateAvatarFromPuppet(puppet *Puppet) bool {
 	return true
 }
 
+func (portal *Portal) UpdateTopic(topic string) bool {
+	if portal.Topic == topic && (portal.TopicSet || portal.MXID == "") {
+		return false
+	}
+
+	portal.log.Debugfln("Updating topic %q -> %q", portal.Topic, topic)
+	portal.Topic = topic
+	portal.TopicSet = false
+	if portal.MXID != "" {
+		_, err := portal.MainIntent().SetRoomTopic(portal.MXID, portal.Topic)
+		if err != nil {
+			portal.log.Warnln("Failed to update room topic:", err)
+		} else {
+			portal.TopicSet = true
+		}
+	}
+
+	return true
+}
+
 func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, meta *slack.Channel) *slack.Channel {
 	changed := false
 
@@ -952,23 +919,32 @@ func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, me
 		changed = true
 	}
 
+	if portal.DMUserID == "" && portal.IsPrivateChat() {
+		portal.DMUserID = meta.User
+		portal.log.Infoln("Found other user ID:", portal.DMUserID)
+		changed = true
+	}
+
 	switch portal.Type {
 	case database.ChannelTypeDM:
 		if portal.DMUserID != "" {
 			puppet := portal.bridge.GetPuppetByID(sourceTeam.Key.TeamID, portal.DMUserID)
+			puppet.UpdateInfo(source, portal.Key.UserID, nil)
 			changed = portal.UpdateAvatarFromPuppet(puppet) || changed
 			changed = portal.UpdateNameDirect(puppet.Name) || changed
 		}
 	default:
-		changed = portal.UpdateName(meta) || changed
+		changed = portal.UpdateName(meta, sourceTeam) || changed
 	}
+
+	changed = portal.UpdateTopic(meta.Topic.Value) || changed
 
 	if changed {
 		portal.UpdateBridgeInfo()
 		portal.Update()
 	}
 
-	return nil
+	return meta
 }
 
 func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam, msg *slack.MessageEvent) {
@@ -978,8 +954,6 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 	}
 
 	if portal.MXID == "" {
-		portal.log.Warnln("userTeam:", userTeam)
-		portal.log.Warnln("client:", userTeam.Client)
 		channel, err := userTeam.Client.GetConversationInfo(msg.Channel, true)
 		if err != nil {
 			portal.log.Errorln("failed to lookup channel info:", err)
@@ -1002,14 +976,10 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 	portal.log.Debugfln("Starting handling of %s by %s", msg.Msg.ClientMsgID, msg.Msg.User)
 
 	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.Msg.User)
-	// puppet.UpdateInfo(user, msg.Author)
+	puppet.UpdateInfo(user, portal.Key.UserID, nil)
 	intent := puppet.IntentFor(portal)
 
-	// TODO: render markdown
 	content := portal.renderSlackMarkdown(msg.Msg.Text)
-	portal.log.Debugfln("intent: %#v", intent)
-
-	// Parse the timestamp into a time.Time
 	ts := portal.parseTimestamp(msg.Msg.Timestamp)
 
 	resp, err := portal.sendMatrixMessage(intent, event.EventMessage, &content, nil, ts.UnixMilli())

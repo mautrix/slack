@@ -27,6 +27,8 @@ import (
 	"maunium.net/go/mautrix/bridge"
 	"maunium.net/go/mautrix/id"
 
+	"github.com/slack-go/slack"
+
 	"github.com/mautrix/slack/database"
 )
 
@@ -66,7 +68,7 @@ func (br *SlackBridge) ParsePuppetMXID(mxid id.UserID) (string, bool) {
 	if userIDRegex == nil {
 		pattern := fmt.Sprintf(
 			"^@%s:%s$",
-			br.Config.Bridge.FormatUsername("([0-9]+)"),
+			br.Config.Bridge.FormatUsername("([A-Z0-9-]+)"),
 			br.Config.Homeserver.Domain,
 		)
 
@@ -323,6 +325,97 @@ func (puppet *Puppet) SyncContact(source *User) {
 	}
 
 	if update {
+		puppet.Update()
+	}
+}
+
+func (puppet *Puppet) UpdateName(info *slack.User) bool {
+	newName := puppet.bridge.Config.Bridge.FormatDisplayname(info)
+	if puppet.Name == newName && puppet.NameSet {
+		return false
+	}
+	puppet.Name = newName
+	puppet.NameSet = false
+	err := puppet.DefaultIntent().SetDisplayName(newName)
+	if err != nil {
+		puppet.log.Warnln("Failed to update displayname:", err)
+	} else {
+		go puppet.updatePortalMeta(func(portal *Portal) {
+			if portal.UpdateNameDirect(puppet.Name) {
+				portal.Update()
+				portal.UpdateBridgeInfo()
+			}
+		})
+		puppet.NameSet = true
+	}
+	return true
+}
+
+func (puppet *Puppet) UpdateAvatar(info *slack.User) bool {
+	if puppet.Avatar == info.Profile.Image512 && puppet.AvatarSet {
+		return false
+	}
+	avatarChanged := info.Profile.Image512 != puppet.Avatar
+	puppet.Avatar = info.Profile.Image512
+	puppet.AvatarSet = false
+	puppet.AvatarURL = id.ContentURI{}
+
+	// TODO should we just use slack's default avatars for users with no avatar?
+	if puppet.Avatar != "" && (puppet.AvatarURL.IsEmpty() || avatarChanged) {
+		url, err := uploadAvatar(puppet.DefaultIntent(), info.Profile.Image512)
+		if err != nil {
+			puppet.log.Warnfln("Failed to reupload user avatar %s: %v", puppet.Avatar, err)
+			return true
+		}
+		puppet.AvatarURL = url
+	}
+
+	err := puppet.DefaultIntent().SetAvatarURL(puppet.AvatarURL)
+	if err != nil {
+		puppet.log.Warnln("Failed to update avatar:", err)
+	} else {
+		go puppet.updatePortalMeta(func(portal *Portal) {
+			if portal.UpdateAvatarFromPuppet(puppet) {
+				portal.Update()
+				portal.UpdateBridgeInfo()
+			}
+		})
+		puppet.AvatarSet = true
+	}
+	return true
+}
+
+func (puppet *Puppet) UpdateInfo(source *User, sourceID string, info *slack.User) {
+	puppet.syncLock.Lock()
+	defer puppet.syncLock.Unlock()
+
+	if info == nil {
+		if puppet.Name != "" {
+			return
+		}
+
+		var err error
+		puppet.log.Debugfln("Fetching info through team %s to update", puppet.TeamID)
+
+		userTeam := source.GetUserTeam(puppet.TeamID, sourceID)
+
+		info, err = userTeam.Client.GetUserInfo(puppet.UserID)
+		if err != nil {
+			puppet.log.Errorfln("Failed to fetch info through %s: %v", puppet.TeamID, err)
+			return
+		}
+	}
+
+	err := puppet.DefaultIntent().EnsureRegistered()
+	if err != nil {
+		puppet.log.Errorln("Failed to ensure registered:", err)
+	}
+
+	changed := false
+	changed = puppet.UpdateName(info) || changed
+	changed = puppet.UpdateAvatar(info) || changed
+
+	if changed {
 		puppet.Update()
 	}
 }

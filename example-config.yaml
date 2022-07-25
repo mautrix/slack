@@ -70,8 +70,8 @@ bridge:
   username_template: slack_{{.}}
   # Displayname template for Slack users.
   # TODO: document variables
-  displayname_template: '{{.Username}} (S){{if .Bot}} (bot){{end}}'
-  channelname_template: '{{if .Worksapce}}{{.Workspace}} - {{end}}{{.Name}} (S)'
+  displayname_template: '{{.RealName}} (S)'
+  channelname_template: '{{if .Workspace}}{{.Workspace}} - {{end}}{{.RealName}} (S)'
 
   portal_message_buffer: 128
 
