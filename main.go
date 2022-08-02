@@ -49,6 +49,7 @@ type SlackBridge struct {
 	provisioning *ProvisioningAPI
 
 	usersByMXID map[id.UserID]*User
+	usersByID   map[string]*User // the key is teamID-userID
 	usersLock   sync.Mutex
 
 	managementRooms     map[id.RoomID]*User

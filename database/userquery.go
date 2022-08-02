@@ -44,11 +44,11 @@ func (uq *UserQuery) GetByMXID(userID id.UserID) *User {
 	return uq.New().Scan(row)
 }
 
-func (uq *UserQuery) GetBySlackID(user_id, domain_id string) *User {
-	query := `SELECT mxid, management_room FROM "user" u` +
-		` INNER JOIN user_token ud ON u.mxid = ud.mxid` +
-		` WHERE ud.user_id=$1 AND ud.domain_id=$2`
-	row := uq.db.QueryRow(query, user_id, domain_id)
+func (uq *UserQuery) GetBySlackID(teamID, userID string) *User {
+	query := `SELECT u.mxid, u.management_room FROM "user" u` +
+		` INNER JOIN user_team ut ON u.mxid = ut.mxid` +
+		` WHERE ut.team_id=$1 AND ut.slack_id=$2`
+	row := uq.db.QueryRow(query, teamID, userID)
 	if row == nil {
 		return nil
 	}

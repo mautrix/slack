@@ -182,11 +182,30 @@ func (portal *Portal) IsPrivateChat() bool {
 }
 
 func (portal *Portal) MainIntent() *appservice.IntentAPI {
-	// if portal.IsPrivateChat() && portal.DMUser != "" {
-	// 	return portal.bridge.GetPuppetByID(portal.DMUser).DefaultIntent()
-	// }
+	if portal.IsPrivateChat() && portal.DMUserID != "" {
+		return portal.bridge.GetPuppetByID(portal.Key.TeamID, portal.DMUserID).DefaultIntent()
+	}
 
 	return portal.bridge.Bot
+}
+
+func (portal *Portal) syncParticipants(source *User, sourceTeam *database.UserTeam, participants []string) {
+	for _, participant := range participants {
+		puppet := portal.bridge.GetPuppetByID(sourceTeam.Key.TeamID, participant)
+
+		puppet.UpdateInfo(source, participant, nil)
+
+		user := portal.bridge.GetUserByID(sourceTeam.Key.TeamID, participant)
+		if user != nil {
+			portal.ensureUserInvited(user)
+		}
+
+		if user == nil || !puppet.IntentFor(portal).IsCustomPuppet {
+			if err := puppet.IntentFor(portal).EnsureJoined(portal.MXID); err != nil {
+				portal.log.Warnfln("Failed to make puppet of %s join %s: %v", participant, portal.MXID, err)
+			}
+		}
+	}
 }
 
 func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, channel *slack.Channel) error {
@@ -197,6 +216,8 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	if portal.MXID != "" {
 		return nil
 	}
+
+	portal.log.Infoln("Creating Matrix room for channel:", portal.Portal.Key.ChannelID)
 
 	channel = portal.UpdateInfo(user, userTeam, channel)
 	if channel == nil {
@@ -215,8 +236,6 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	// TODO: get avatars figured out
 	// portal.Avatar = puppet.Avatar
 	// portal.AvatarURL = puppet.AvatarURL
-
-	portal.log.Infoln("Creating Matrix room for channel:", portal.Portal.Key.ChannelID)
 
 	initialState := []*event.Event{}
 
@@ -240,9 +259,6 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		}
 	}
 
-	portal.log.Infoln("name:", portal.Name, "; topic:", portal.Topic, "; invite:",
-		invite, "; initialState:", initialState, "; creationContent:", creationContent)
-
 	resp, err := intent.CreateRoom(&mautrix.ReqCreateRoom{
 		Visibility:      "private",
 		Name:            portal.Name,
@@ -258,19 +274,35 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		return err
 	}
 
+	portal.NameSet = true
+	portal.TopicSet = true
 	portal.MXID = resp.RoomID
-	portal.Update()
 	portal.bridge.portalsLock.Lock()
 	portal.bridge.portalsByMXID[portal.MXID] = portal
 	portal.bridge.portalsLock.Unlock()
+	portal.Update()
+	portal.log.Infoln("Matrix room created:", portal.MXID)
+
+	if portal.Encrypted && portal.IsPrivateChat() {
+		err = portal.bridge.Bot.EnsureJoined(portal.MXID, appservice.EnsureJoinedParams{BotOverride: portal.MainIntent().Client})
+		if err != nil {
+			portal.log.Errorfln("Failed to ensure bridge bot is joined to private chat portal: %v", err)
+		}
+	}
 
 	portal.ensureUserInvited(user)
 	user.syncChatDoublePuppetDetails(portal, true)
 
-	// TODO: portal.syncParticipants(user, channel.Recipients)
+	members := channel.Members
+	if len(members) == 0 && channel.IsIM {
+		members = append(members, channel.User)
+		members = append(members, portal.Key.UserID)
+	}
+
+	portal.syncParticipants(user, userTeam, members)
 
 	// if portal.IsPrivateChat() {
-	// 	puppet := user.bridge.GetPuppetByID(portal.Key.Receiver)
+	// 	puppet := user.bridge.GetPuppetByID(userTeam.Key.TeamID, portal.Key.UserID)
 
 	// 	chats := map[id.UserID][]id.RoomID{puppet.MXID: {portal.MXID}}
 	// 	user.updateDirectChats(chats)
@@ -288,9 +320,7 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 }
 
 func (portal *Portal) ensureUserInvited(user *User) bool {
-	// TODO
-	// return user.ensureInvited(portal.MainIntent(), portal.MXID, portal.IsPrivateChat())
-	return false
+	return user.ensureInvited(portal.MainIntent(), portal.MXID, portal.IsPrivateChat())
 }
 
 func (portal *Portal) markMessageHandled(msg *database.Message, slackID string, mxid id.EventID, authorID string, timestamp time.Time) *database.Message {

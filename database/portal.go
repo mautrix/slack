@@ -43,7 +43,7 @@ func (ct ChannelType) String() string {
 	case ChannelTypeGroupDM:
 		return "group-dm"
 	default:
-		return "uknown"
+		return "unknown"
 	}
 
 	return "unknown"

@@ -18,13 +18,19 @@ package main
 
 import (
 	"errors"
+	// "net/http"
+	"strings"
 	"sync"
 
 	log "maunium.net/go/maulogger/v2"
 
 	"github.com/slack-go/slack"
+
+	"maunium.net/go/mautrix"
+	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/bridge"
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
+	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
 	"github.com/mautrix/slack/auth"
@@ -127,17 +133,17 @@ func (br *SlackBridge) GetUserByMXID(userID id.UserID) *User {
 	return user
 }
 
-// func (br *SlackBridge) GetUserByID(user_id, domain_id string) *User {
-// 	br.usersLock.Lock()
-// 	defer br.usersLock.Unlock()
+func (br *SlackBridge) GetUserByID(teamID, userID string) *User {
+	br.usersLock.Lock()
+	defer br.usersLock.Unlock()
 
-// 	user, ok := br.usersByID[id]
-// 	if !ok {
-// 		return br.loadUser(br.DB.User.GetBySlackID(user_id, domain_id), nil)
-// 	}
+	user, ok := br.usersByID[teamID+"-"+userID]
+	if !ok {
+		return br.loadUser(br.DB.User.GetBySlackID(teamID, userID), nil)
+	}
 
-// 	return user
-// }
+	return user
+}
 
 func (br *SlackBridge) NewUser(dbUser *database.User) *User {
 	user := &User{
@@ -207,7 +213,7 @@ func (user *User) SetManagementRoom(roomID id.RoomID) {
 	user.Update()
 }
 
-func (user *User) tryAutomaticDoublePuppeting() {
+func (user *User) tryAutomaticDoublePuppeting(userTeam *database.UserTeam) {
 	user.Lock()
 	defer user.Unlock()
 
@@ -217,28 +223,28 @@ func (user *User) tryAutomaticDoublePuppeting() {
 
 	user.log.Debugln("Checking if double puppeting needs to be enabled")
 
-	// puppet := user.bridge.GetPuppetByID(user.ID)
-	// if puppet.CustomMXID != "" {
-	// 	user.log.Debugln("User already has double-puppeting enabled")
+	puppet := user.bridge.GetPuppetByID(userTeam.Key.TeamID, userTeam.Key.SlackID)
+	if puppet.CustomMXID != "" {
+		user.log.Debugln("User already has double-puppeting enabled")
 
-	// 	return
-	// }
+		return
+	}
 
-	// accessToken, err := puppet.loginWithSharedSecret(user.MXID)
-	// if err != nil {
-	// 	user.log.Warnln("Failed to login with shared secret:", err)
+	accessToken, err := puppet.loginWithSharedSecret(user.MXID)
+	if err != nil {
+		user.log.Warnln("Failed to login with shared secret:", err)
 
-	// 	return
-	// }
+		return
+	}
 
-	// err = puppet.SwitchCustomMXID(accessToken, user.MXID)
-	// if err != nil {
-	// 	puppet.log.Warnln("Failed to switch to auto-logined custom puppet:", err)
+	err = puppet.SwitchCustomMXID(accessToken, user.MXID)
+	if err != nil {
+		puppet.log.Warnln("Failed to switch to auto-logined custom puppet:", err)
 
-	// 	return
-	// }
+		return
+	}
 
-	// user.log.Infoln("Successfully automatically enabled custom puppet")
+	user.log.Infoln("Successfully automatically enabled custom puppet")
 }
 
 func (user *User) syncChatDoublePuppetDetails(portal *Portal, justCreated bool) {
@@ -352,6 +358,8 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 
 			userTeam.Upsert()
 
+			user.tryAutomaticDoublePuppeting(userTeam)
+
 			user.log.Infofln("connected to team %s as %s", userTeam.TeamName, userTeam.SlackEmail)
 		case *slack.HelloEvent:
 			// Ignored for now
@@ -375,13 +383,13 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 		case *slack.RTMError:
 			user.log.Errorln("rtm error:", event.Error())
 		default:
-			user.log.Warnln("uknown message", msg)
+			user.log.Warnln("unknown message", msg)
 		}
 	}
 }
 
 func (user *User) connectTeam(userTeam *database.UserTeam) error {
-	user.log.Debugfln("connecting %s to team %s", userTeam.SlackEmail, userTeam.SlackEmail)
+	user.log.Debugfln("connecting %s to team %s", userTeam.SlackEmail, userTeam.TeamName)
 	userTeam.Client = slack.New(userTeam.Token)
 
 	userTeam.RTM = userTeam.Client.NewRTM()
@@ -446,4 +454,123 @@ func (user *User) GetUserTeam(teamID, userID string) *database.UserTeam {
 	}
 
 	return nil
+}
+
+// func (user *User) getDirectChats() map[id.UserID][]id.RoomID {
+// 	chats := map[id.UserID][]id.RoomID{}
+
+// 	privateChats := user.bridge.DB.Portal.FindPrivateChatsOf(user.DiscordID)
+// 	for _, portal := range privateChats {
+// 		if portal.MXID != "" {
+// 			puppetMXID := user.bridge.FormatPuppetMXID(portal.Key.Receiver)
+
+// 			chats[puppetMXID] = []id.RoomID{portal.MXID}
+// 		}
+// 	}
+
+// 	return chats
+// }
+
+// func (user *User) updateDirectChats(chats map[id.UserID][]id.RoomID) {
+// 	if !user.bridge.Config.Bridge.SyncDirectChatList {
+// 		return
+// 	}
+
+// 	puppet := user.bridge.GetPuppetByMXID(user.MXID)
+// 	if puppet == nil {
+// 		return
+// 	}
+
+// 	intent := puppet.CustomIntent()
+// 	if intent == nil {
+// 		return
+// 	}
+
+// 	method := http.MethodPatch
+// 	if chats == nil {
+// 		chats = user.getDirectChats()
+// 		method = http.MethodPut
+// 	}
+
+// 	user.log.Debugln("Updating m.direct list on homeserver")
+
+// 	var err error
+// 	if user.bridge.Config.Homeserver.Asmux {
+// 		urlPath := intent.BuildURL(mautrix.ClientURLPath{"unstable", "com.beeper.asmux", "dms"})
+// 		_, err = intent.MakeFullRequest(mautrix.FullRequest{
+// 			Method:      method,
+// 			URL:         urlPath,
+// 			Headers:     http.Header{"X-Asmux-Auth": {user.bridge.AS.Registration.AppToken}},
+// 			RequestJSON: chats,
+// 		})
+// 	} else {
+// 		existingChats := map[id.UserID][]id.RoomID{}
+
+// 		err = intent.GetAccountData(event.AccountDataDirectChats.Type, &existingChats)
+// 		if err != nil {
+// 			user.log.Warnln("Failed to get m.direct list to update it:", err)
+
+// 			return
+// 		}
+
+// 		for userID, rooms := range existingChats {
+// 			if _, ok := user.bridge.ParsePuppetMXID(userID); !ok {
+// 				// This is not a ghost user, include it in the new list
+// 				chats[userID] = rooms
+// 			} else if _, ok := chats[userID]; !ok && method == http.MethodPatch {
+// 				// This is a ghost user, but we're not replacing the whole list, so include it too
+// 				chats[userID] = rooms
+// 			}
+// 		}
+
+// 		err = intent.SetAccountData(event.AccountDataDirectChats.Type, &chats)
+// 	}
+
+// 	if err != nil {
+// 		user.log.Warnln("Failed to update m.direct list:", err)
+// 	}
+// }
+
+func (user *User) ensureInvited(intent *appservice.IntentAPI, roomID id.RoomID, isDirect bool) bool {
+	if intent == nil {
+		intent = user.bridge.Bot
+	}
+	ret := false
+
+	inviteContent := event.Content{
+		Parsed: &event.MemberEventContent{
+			Membership: event.MembershipInvite,
+			IsDirect:   isDirect,
+		},
+		Raw: map[string]interface{}{},
+	}
+
+	customPuppet := user.bridge.GetPuppetByCustomMXID(user.MXID)
+	if customPuppet != nil && customPuppet.CustomIntent() != nil {
+		inviteContent.Raw["fi.mau.will_auto_accept"] = true
+	}
+
+	_, err := intent.SendStateEvent(roomID, event.StateMember, user.MXID.String(), &inviteContent)
+
+	var httpErr mautrix.HTTPError
+	if err != nil && errors.As(err, &httpErr) && httpErr.RespError != nil && strings.Contains(httpErr.RespError.Err, "is already in the room") {
+		user.bridge.StateStore.SetMembership(roomID, user.MXID, event.MembershipJoin)
+		ret = true
+	} else if err != nil {
+		user.log.Warnfln("Failed to invite user to %s: %v", roomID, err)
+	} else {
+		ret = true
+	}
+
+	if customPuppet != nil && customPuppet.CustomIntent() != nil {
+		err = customPuppet.CustomIntent().EnsureJoined(roomID, appservice.EnsureJoinedParams{IgnoreCache: true})
+		if err != nil {
+			user.log.Warnfln("Failed to auto-join %s: %v", roomID, err)
+			ret = false
+		} else {
+			ret = true
+		}
+	}
+
+	return ret
 }
