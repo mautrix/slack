@@ -57,7 +57,7 @@ func newProvisioningAPI(br *SlackBridge) *ProvisioningAPI {
 	r.Use(p.authMiddleware)
 
 	r.HandleFunc("/ping", p.ping).Methods(http.MethodGet)
-	r.HandleFunc("/login", p.login).Methods(http.MethodGet)
+	r.HandleFunc("/login", p.login).Methods(http.MethodPost)
 	r.HandleFunc("/logout", p.logout).Methods(http.MethodPost)
 
 	return p
@@ -107,18 +107,8 @@ func (p *ProvisioningAPI) authMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 
-		// Special case the login endpoint to use the discord qrcode auth
-		if auth == "" && strings.HasSuffix(r.URL.Path, "/login") {
-			authParts := strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",")
-			for _, part := range authParts {
-				part = strings.TrimSpace(part)
-				if strings.HasPrefix(part, SecWebSocketProtocol+"-") {
-					auth = part[len(SecWebSocketProtocol+"-"):]
-
-					break
-				}
-			}
-		} else if strings.HasPrefix(auth, "Bearer ") {
+		// Special case the login endpoint
+		if strings.HasPrefix(auth, "Bearer ") {
 			auth = auth[len("Bearer "):]
 		}
 
@@ -234,7 +224,35 @@ func (p *ProvisioningAPI) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *ProvisioningAPI) login(w http.ResponseWriter, r *http.Request) {
-	// userID := r.URL.Query().Get("user_id")
-	// user := p.bridge.GetUserByMXID(id.UserID(userID))
+	userID := r.URL.Query().Get("user_id")
+	user := p.bridge.GetUserByMXID(id.UserID(userID))
 
+	r.ParseForm()
+
+	token := r.Form.Get("token")
+	if token == "" {
+		jsonResponse(w, http.StatusBadRequest, Error{
+			Error:   "No token specified",
+			ErrCode: "No token specified",
+		})
+
+		return
+	}
+
+	info, err := user.TokenLogin(token)
+	if err != nil {
+		jsonResponse(w, http.StatusNotAcceptable, Error{
+			Error:   fmt.Sprintf("Failed to login: %s", err),
+			ErrCode: err.Error(),
+		})
+
+		return
+	}
+
+	jsonResponse(w, http.StatusCreated,
+		map[string]interface{}{
+			"success": true,
+			"teamid":  info.TeamID,
+			"userid":  info.UserID,
+		})
 }

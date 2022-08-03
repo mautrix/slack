@@ -18,6 +18,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	// "net/http"
 	"strings"
 	"sync"
@@ -260,10 +261,9 @@ func (user *User) syncChatDoublePuppetDetails(portal *Portal, justCreated bool) 
 	// TODO sync mute status
 }
 
-func (user *User) LoginTeam(email, team, password string) error {
-	info, err := auth.Login(user.log, email, team, password)
-	if err != nil {
-		return err
+func (user *User) login(info *auth.Info) error {
+	if user.TeamLoggedIn(info.UserEmail, info.TeamName) {
+		return fmt.Errorf("%s is already logged into team %s with %s", user.MXID, info.TeamName, info.UserEmail)
 	}
 
 	userTeam := user.bridge.DB.UserTeam.New()
@@ -288,11 +288,23 @@ func (user *User) LoginTeam(email, team, password string) error {
 	return user.connectTeam(userTeam)
 }
 
-// func (user *User) TokenLogin(token string) error {
-// 	user.Token = token
-// 	user.Update()
-// 	return user.Connect()
-// }
+func (user *User) LoginTeam(email, team, password string) error {
+	info, err := auth.Login(user.log, email, team, password)
+	if err != nil {
+		return err
+	}
+
+	return user.login(info)
+}
+
+func (user *User) TokenLogin(token string) (*auth.Info, error) {
+	info, err := auth.LoginToken(token)
+	if err != nil {
+		return nil, err
+	}
+
+	return info, user.login(info)
+}
 
 func (user *User) IsLoggedIn() bool {
 	return len(user.GetLoggedInTeams()) > 0

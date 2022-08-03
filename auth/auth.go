@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	log "maunium.net/go/maulogger/v2"
+
+	"github.com/slack-go/slack"
 )
 
 const (
@@ -155,6 +157,23 @@ func Login(l log.Logger, email, team, password string) (*Info, error) {
 		UserID:    userID,
 		TeamName:  team,
 		TeamID:    teamID,
+		Token:     token,
+	}, nil
+}
+
+func LoginToken(token string) (*Info, error) {
+	client := slack.New(token)
+
+	userIdentity, err := client.GetUserIdentity()
+	if err != nil {
+		return nil, err
+	}
+
+	return &Info{
+		UserEmail: userIdentity.User.Email,
+		UserID:    userIdentity.User.ID,
+		TeamName:  userIdentity.Team.Name,
+		TeamID:    userIdentity.Team.ID,
 		Token:     token,
 	}, nil
 }
