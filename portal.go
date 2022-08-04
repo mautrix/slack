@@ -17,6 +17,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
@@ -416,9 +417,10 @@ func (portal *Portal) handleMatrixMessages(msg portalMatrixMessage) {
 }
 
 func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
-	// if portal.IsPrivateChat() && sender.ID != portal.Key.Receiver {
-	// 	return
-	// }
+	userTeam := sender.GetUserTeam(portal.Key.TeamID, portal.Key.UserID)
+	if userTeam == nil {
+		return
+	}
 
 	existing := portal.bridge.DB.Message.GetByMatrixID(portal.Key, evt.ID)
 	if existing != nil {
@@ -427,7 +429,7 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
 		return
 	}
 
-	_, ok := evt.Content.Parsed.(*event.MessageEventContent)
+	content, ok := evt.Content.Parsed.(*event.MessageEventContent)
 	if !ok {
 		portal.log.Debugfln("Failed to handle event %s: unexpected parsed content type %T", evt.ID, evt.Content.Parsed)
 
@@ -454,6 +456,41 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
 	// }
 
 	var err error
+	var options []slack.MsgOption
+	var ts string
+	sent := false
+
+	switch content.MsgType {
+	case event.MsgText, event.MsgEmote, event.MsgNotice:
+
+		if !sent {
+			options = []slack.MsgOption{slack.MsgOptionText(content.Body, false)}
+		}
+	case event.MsgAudio, event.MsgFile, event.MsgImage, event.MsgVideo:
+		data, err := portal.downloadMatrixAttachment(content)
+		if err != nil {
+			portal.log.Errorfln("Failed to download matrix attachment: %v", err)
+
+			return
+		}
+
+		params := slack.FileUploadParameters{
+			Filename: content.Body,
+			Filetype: content.Info.MimeType,
+			Reader:   bytes.NewReader(data),
+			Channels: []string{portal.Key.ChannelID},
+		}
+
+		file, err := userTeam.Client.UploadFile(params)
+		if err != nil {
+			portal.log.Errorfln("Failed to upload slack attachment: %v", err)
+
+			return
+		}
+
+		sent = true
+		ts = file.Timestamp.String()
+	}
 
 	// switch content.MsgType {
 	// case event.MsgText, event.MsgEmote, event.MsgNotice:
@@ -499,18 +536,25 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
 	// 			},
 	// 		},
 	// 	}
-
-	// 	msg, err = sender.Client.ChannelMessageSendComplex(portal.Key.ChannelID, msgSend)
-	// default:
-	// 	portal.log.Warnln("unknown message type:", content.MsgType)
-	// 	return
 	// }
 
-	if err != nil {
-		portal.log.Errorfln("Failed to send message: %v", err)
+	// This returns the channel id for some reason which we don't care about. It
+	// also returns the timestamp of the message that we use to identify the
+	// message.
+	if !sent {
+		_, ts, err = userTeam.Client.PostMessage(
+			portal.Key.ChannelID,
+			slack.MsgOptionAsUser(true),
+			slack.MsgOptionCompose(options...))
 
-		return
+		if err != nil {
+			portal.log.Errorfln("Failed to send message: %v", err)
+
+			return
+		}
 	}
+
+	portal.log.Warnln("message timestamp", ts)
 
 	// if msg != nil {
 	// 	dbMsg := portal.bridge.DB.Message.New()
