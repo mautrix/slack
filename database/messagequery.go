@@ -28,7 +28,7 @@ type MessageQuery struct {
 
 const (
 	messageSelect = "SELECT team_id, user_id, channel_id, slack_message_id," +
-		" matrix_message_id, author_id, timestamp FROM message"
+		" matrix_message_id, author_id FROM message"
 )
 
 func (mq *MessageQuery) New() *Message {
@@ -39,7 +39,7 @@ func (mq *MessageQuery) New() *Message {
 }
 
 func (mq *MessageQuery) GetAll(key PortalKey) []*Message {
-	query := messageSelect + " WHERE team_id=$1 AND user_id=$2 AND channeld_id=$3"
+	query := messageSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3"
 
 	rows, err := mq.db.Query(query, key.TeamID, key.UserID, key.ChannelID)
 	if err != nil || rows == nil {
@@ -55,7 +55,8 @@ func (mq *MessageQuery) GetAll(key PortalKey) []*Message {
 }
 
 func (mq *MessageQuery) GetBySlackID(key PortalKey, slackID string) *Message {
-	query := messageSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3 AND slack_message_id=$4"
+	query := messageSelect + " WHERE team_id=$1 AND user_id=$2" +
+		" AND channel_id=$3 AND slack_message_id=$4"
 
 	row := mq.db.QueryRow(query, key.TeamID, key.UserID, key.ChannelID, slackID)
 	if row == nil {

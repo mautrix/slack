@@ -19,7 +19,6 @@ package database
 import (
 	"database/sql"
 	"errors"
-	"time"
 
 	log "maunium.net/go/maulogger/v2"
 
@@ -36,14 +35,11 @@ type Message struct {
 	SlackID  string
 	MatrixID id.EventID
 
-	AuthorID  string
-	Timestamp time.Time
+	AuthorID string
 }
 
 func (m *Message) Scan(row dbutil.Scannable) *Message {
-	var ts int64
-
-	err := row.Scan(&m.Channel.TeamID, &m.Channel.UserID, &m.Channel.ChannelID, &m.SlackID, &m.MatrixID, &m.AuthorID, &ts)
+	err := row.Scan(&m.Channel.TeamID, &m.Channel.UserID, &m.Channel.ChannelID, &m.SlackID, &m.MatrixID, &m.AuthorID)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			m.log.Errorln("Database scan failed:", err)
@@ -52,21 +48,16 @@ func (m *Message) Scan(row dbutil.Scannable) *Message {
 		return nil
 	}
 
-	if ts != 0 {
-		m.Timestamp = time.Unix(ts, 0)
-	}
-
 	return m
 }
 
 func (m *Message) Insert() {
 	query := "INSERT INTO message" +
 		" (team_id, user_id, channel_id, slack_message_id, matrix_message_id," +
-		" author_id, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7)"
+		" author_id) VALUES ($1, $2, $3, $4, $5, $6)"
 
 	_, err := m.db.Exec(query, m.Channel.TeamID, m.Channel.UserID,
-		m.Channel.ChannelID, m.SlackID, m.MatrixID, m.AuthorID,
-		m.Timestamp.Unix())
+		m.Channel.ChannelID, m.SlackID, m.MatrixID, m.AuthorID)
 
 	if err != nil {
 		m.log.Warnfln("Failed to insert %s@%s: %v", m.Channel, m.SlackID, err)

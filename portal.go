@@ -54,6 +54,8 @@ type Portal struct {
 	encryptLock    sync.Mutex
 
 	matrixMessages chan portalMatrixMessage
+
+	slackMessageLock sync.Mutex
 }
 
 func (portal *Portal) IsEncrypted() bool {
@@ -324,14 +326,13 @@ func (portal *Portal) ensureUserInvited(user *User) bool {
 	return user.ensureInvited(portal.MainIntent(), portal.MXID, portal.IsPrivateChat())
 }
 
-func (portal *Portal) markMessageHandled(msg *database.Message, slackID string, mxid id.EventID, authorID string, timestamp time.Time) *database.Message {
+func (portal *Portal) markMessageHandled(msg *database.Message, slackID string, mxid id.EventID, authorID string) *database.Message {
 	if msg == nil {
 		msg := portal.bridge.DB.Message.New()
 		msg.Channel = portal.Key
 		msg.SlackID = slackID
 		msg.MatrixID = mxid
 		msg.AuthorID = authorID
-		msg.Timestamp = timestamp
 		msg.Insert()
 	} else {
 		msg.UpdateMatrixID(mxid)
@@ -417,6 +418,9 @@ func (portal *Portal) handleMatrixMessages(msg portalMatrixMessage) {
 }
 
 func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
+	portal.slackMessageLock.Lock()
+	defer portal.slackMessageLock.Unlock()
+
 	userTeam := sender.GetUserTeam(portal.Key.TeamID, portal.Key.UserID)
 	if userTeam == nil {
 		return
@@ -457,12 +461,11 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
 
 	var err error
 	var options []slack.MsgOption
-	var ts string
+	var timestamp string
 	sent := false
 
 	switch content.MsgType {
 	case event.MsgText, event.MsgEmote, event.MsgNotice:
-
 		if !sent {
 			options = []slack.MsgOption{slack.MsgOptionText(content.Body, false)}
 		}
@@ -489,60 +492,14 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
 		}
 
 		sent = true
-		ts = file.Timestamp.String()
+		timestamp = file.Timestamp.String()
 	}
-
-	// switch content.MsgType {
-	// case event.MsgText, event.MsgEmote, event.MsgNotice:
-	// 	sent := false
-
-	// 	if content.RelatesTo != nil && content.RelatesTo.Type == event.RelReply {
-	// 		existing := portal.bridge.DB.Message.GetByMatrixID(
-	// 			portal.Key,
-	// 			content.RelatesTo.EventID,
-	// 		)
-
-	// 		if existing != nil && existing.SlackID != "" {
-	// 			msg, err = sender.Client.ChannelMessageSendReply(
-	// 				portal.Key.ChannelID,
-	// 				content.Body,
-	// 				&discordgo.MessageReference{
-	// 					ChannelID: portal.Key.ChannelID,
-	// 					MessageID: existing.SlackID,
-	// 				},
-	// 			)
-	// 			if err == nil {
-	// 				sent = true
-	// 			}
-	// 		}
-	// 	}
-	// 	if !sent {
-	// 		msg, err = sender.Client.ChannelMessageSend(portal.Key.ChannelID, content.Body)
-	// 	}
-	// case event.MsgAudio, event.MsgFile, event.MsgImage, event.MsgVideo:
-	// 	data, err := portal.downloadMatrixAttachment(evt.ID, content)
-	// 	if err != nil {
-	// 		portal.log.Errorfln("Failed to download matrix attachment: %v", err)
-
-	// 		return
-	// 	}
-
-	// 	msgSend := &discordgo.MessageSend{
-	// 		Files: []*discordgo.File{
-	// 			&discordgo.File{
-	// 				Name:        content.Body,
-	// 				ContentType: content.Info.MimeType,
-	// 				Reader:      bytes.NewReader(data),
-	// 			},
-	// 		},
-	// 	}
-	// }
 
 	// This returns the channel id for some reason which we don't care about. It
 	// also returns the timestamp of the message that we use to identify the
 	// message.
 	if !sent {
-		_, ts, err = userTeam.Client.PostMessage(
+		_, timestamp, err = userTeam.Client.PostMessage(
 			portal.Key.ChannelID,
 			slack.MsgOptionAsUser(true),
 			slack.MsgOptionCompose(options...))
@@ -554,17 +511,14 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
 		}
 	}
 
-	portal.log.Warnln("message timestamp", ts)
-
-	// if msg != nil {
-	// 	dbMsg := portal.bridge.DB.Message.New()
-	// 	dbMsg.Channel = portal.Key
-	// 	dbMsg.SlackID = msg.ID
-	// 	dbMsg.MatrixID = evt.ID
-	// 	dbMsg.AuthorID = sender.ID
-	// 	dbMsg.Timestamp = time.Now()
-	// 	dbMsg.Insert()
-	// }
+	if timestamp != "" {
+		dbMsg := portal.bridge.DB.Message.New()
+		dbMsg.Channel = portal.Key
+		dbMsg.SlackID = timestamp
+		dbMsg.MatrixID = evt.ID
+		dbMsg.AuthorID = portal.Key.UserID
+		dbMsg.Insert()
+	}
 }
 
 func (portal *Portal) HandleMatrixLeave(brSender bridge.User) {
@@ -1022,6 +976,9 @@ func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, me
 }
 
 func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam, msg *slack.MessageEvent) {
+	portal.slackMessageLock.Lock()
+	defer portal.slackMessageLock.Unlock()
+
 	if msg.Msg.Type != "message" {
 		portal.log.Warnln("ignoring unknown message type:", msg.Msg.Type)
 		return
@@ -1041,13 +998,13 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 		}
 	}
 
-	existing := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Msg.ClientMsgID)
+	existing := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Msg.Timestamp)
 	if existing != nil {
-		portal.log.Debugln("Dropping duplicate message:", msg.Msg.ClientMsgID)
+		portal.log.Debugln("Dropping duplicate message:", msg.Msg.Timestamp)
 		return
 	}
 
-	portal.log.Debugfln("Starting handling of %s by %s", msg.Msg.ClientMsgID, msg.Msg.User)
+	portal.log.Debugfln("Starting handling of %s by %s", msg.Msg.Timestamp, msg.Msg.User)
 
 	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.Msg.User)
 	puppet.UpdateInfo(user, portal.Key.UserID, nil)
@@ -1058,7 +1015,7 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 
 	resp, err := portal.sendMatrixMessage(intent, event.EventMessage, &content, nil, ts.UnixMilli())
 	if err != nil {
-		portal.log.Warnfln("Failed to send message %s to matrix: %v", msg.Msg.ClientMsgID, err)
+		portal.log.Warnfln("Failed to send message %s to matrix: %v", msg.Msg.Timestamp, err)
 		return
 	}
 

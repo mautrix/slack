@@ -75,7 +75,6 @@ CREATE TABLE message (
 	matrix_message_id  TEXT NOT NULL UNIQUE,
 
 	author_id TEXT   NOT NULL,
-	timestamp BIGINT NOT NULL,
 
 	PRIMARY KEY(slack_message_id, team_id, user_id, channel_id),
 	FOREIGN KEY(team_id, user_id, channel_id) REFERENCES portal(team_id, user_id, channel_id) ON DELETE CASCADE
