@@ -31,6 +31,7 @@ func (br *SlackBridge) RegisterCommands() {
 	proc := br.CommandProcessor.(*commands.Processor)
 	proc.AddHandlers(
 		cmdLogin,
+		cmdLoginToken,
 		cmdLogout,
 	)
 }
@@ -80,6 +81,34 @@ func fnLogin(ce *WrappedCommandEvent) {
 	}
 
 	ce.Reply("Successfully logged into %s for team %s", ce.Args[0], ce.Args[1])
+
+	ce.MainIntent().RedactEvent(ce.RoomID, ce.EventID)
+}
+var cmdLoginToken = &commands.FullHandler{
+	Func: wrapCommand(fnLoginToken),
+	Name: "login-token",
+	Help: commands.HelpMeta{
+		Section:     commands.HelpSectionAuth,
+		Description: "Link the bridge to a Slack account",
+		Args:        "<token>",
+	},
+}
+
+func fnLoginToken(ce *WrappedCommandEvent) {
+	if len(ce.Args) != 1 {
+		ce.Reply("**Usage**: $cmdprefix login-token <token>")
+
+		ce.MainIntent().RedactEvent(ce.RoomID, ce.EventID)
+
+		return
+	}
+
+	info, err := ce.User.TokenLogin(ce.Args[0])
+	if err != nil {
+		ce.Reply("Failed to log in with token: %v", err)
+	} else {
+		ce.Reply("Successfully logged into %s for team %s", info.UserEmail, info.TeamName)
+	}
 
 	ce.MainIntent().RedactEvent(ce.RoomID, ce.EventID)
 }
