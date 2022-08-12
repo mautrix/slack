@@ -234,6 +234,7 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 
 	// TODO: bridge state stuff
 
+	portal.Name = channel.Name
 	portal.Topic = channel.Topic.Value
 
 	// TODO: get avatars figured out
@@ -597,7 +598,7 @@ func (portal *Portal) cleanup(puppetsOnly bool) {
 		}
 
 		puppet := portal.bridge.GetPuppetByMXID(member)
-		if portal != nil {
+		if puppet != nil {
 			_, err = puppet.DefaultIntent().LeaveRoom(portal.MXID)
 			if err != nil {
 				portal.log.Errorln("Error leaving as puppet while cleaning up portal:", err)
@@ -1010,16 +1011,21 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 	puppet.UpdateInfo(user, portal.Key.UserID, nil)
 	intent := puppet.IntentFor(portal)
 
-	content := portal.renderSlackMarkdown(msg.Msg.Text)
-	ts := portal.parseTimestamp(msg.Msg.Timestamp)
+	switch msg.Msg.SubType {
+	case "": // Regular messages have no subtype
+		content := portal.renderSlackMarkdown(msg.Msg.Text)
+		ts := portal.parseTimestamp(msg.Msg.Timestamp)
 
-	resp, err := portal.sendMatrixMessage(intent, event.EventMessage, &content, nil, ts.UnixMilli())
-	if err != nil {
-		portal.log.Warnfln("Failed to send message %s to matrix: %v", msg.Msg.Timestamp, err)
-		return
+		resp, err := portal.sendMatrixMessage(intent, event.EventMessage, &content, nil, ts.UnixMilli())
+		if err != nil {
+			portal.log.Warnfln("Failed to send message %s to matrix: %v", msg.Msg.Timestamp, err)
+			return
+		}
+
+		go portal.sendDeliveryReceipt(resp.EventID)
+	default:
+		portal.log.Debugfln("Received unknown message subtype %s", msg.Msg.SubType)
 	}
-
-	go portal.sendDeliveryReceipt(resp.EventID)
 }
 
 func (portal *Portal) sendDeliveryReceipt(eventID id.EventID) {
