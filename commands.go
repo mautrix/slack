@@ -84,6 +84,7 @@ func fnLogin(ce *WrappedCommandEvent) {
 
 	ce.MainIntent().RedactEvent(ce.RoomID, ce.EventID)
 }
+
 var cmdLoginToken = &commands.FullHandler{
 	Func: wrapCommand(fnLoginToken),
 	Name: "login-token",
