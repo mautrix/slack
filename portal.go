@@ -1012,14 +1012,14 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 	intent := puppet.IntentFor(portal)
 
 	switch msg.Msg.SubType {
-	case "": // Regular messages have no subtype
+	case "", "me_message": // Regular messages and /me
 		content := portal.renderSlackMarkdown(msg.Msg.Text)
 		ts := portal.parseTimestamp(msg.Msg.Timestamp)
 
 		if msg.Msg.SubType == "me_message" {
 			content.MsgType = event.MsgEmote
 		}
-		
+
 		resp, err := portal.sendMatrixMessage(intent, event.EventMessage, &content, nil, ts.UnixMilli())
 		if err != nil {
 			portal.log.Warnfln("Failed to send message %s to matrix: %v", msg.Msg.Timestamp, err)
