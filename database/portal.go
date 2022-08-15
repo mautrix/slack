@@ -45,8 +45,6 @@ func (ct ChannelType) String() string {
 	default:
 		return "unknown"
 	}
-
-	return "unknown"
 }
 
 type Portal struct {

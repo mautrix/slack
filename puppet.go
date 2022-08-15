@@ -94,7 +94,7 @@ func (br *SlackBridge) GetPuppetByMXID(mxid id.UserID) *Puppet {
 	panic("can we avoid this for now?")
 
 	// return br.GetPuppetByID(id)
-	return nil
+	//return nil
 }
 
 func (br *SlackBridge) GetPuppetByID(teamID, userID string) *Puppet {

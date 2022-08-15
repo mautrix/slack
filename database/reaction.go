@@ -76,7 +76,7 @@ func (r *Reaction) Insert() {
 	var slackID sql.NullString
 
 	if r.SlackID != "" {
-		slackID = sql.NullString{r.SlackID, true}
+		slackID = sql.NullString{String: r.SlackID, Valid: true}
 	}
 
 	_, err := r.db.Exec(
@@ -105,7 +105,7 @@ func (r *Reaction) Delete() {
 
 	var slackID sql.NullString
 	if r.SlackID != "" {
-		slackID = sql.NullString{r.SlackID, true}
+		slackID = sql.NullString{String: r.SlackID, Valid: true}
 	}
 
 	_, err := r.db.Exec(

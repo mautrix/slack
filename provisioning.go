@@ -145,7 +145,7 @@ var upgrader = websocket.Upgrader{
 func (p *ProvisioningAPI) ping(w http.ResponseWriter, r *http.Request) {
 	panic("not implemented")
 
-	user := r.Context().Value("user").(*User)
+	/*user := r.Context().Value("user").(*User)
 
 	slackData := map[string]interface{}{
 		"logged_in": user.IsLoggedIn(),
@@ -174,13 +174,13 @@ func (p *ProvisioningAPI) ping(w http.ResponseWriter, r *http.Request) {
 
 	user.Unlock()
 
-	jsonResponse(w, http.StatusOK, resp)
+	jsonResponse(w, http.StatusOK, resp)*/
 }
 
 func (p *ProvisioningAPI) logout(w http.ResponseWriter, r *http.Request) {
 	panic("not implemented")
 
-	user := r.Context().Value("user").(*User)
+	/*user := r.Context().Value("user").(*User)
 	force := strings.ToLower(r.URL.Query().Get("force")) != "false"
 
 	if !user.IsLoggedIn() {
@@ -220,7 +220,7 @@ func (p *ProvisioningAPI) logout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	jsonResponse(w, http.StatusOK, Response{true, "Logged out successfully."})
+	jsonResponse(w, http.StatusOK, Response{true, "Logged out successfully."})*/
 }
 
 func (p *ProvisioningAPI) login(w http.ResponseWriter, r *http.Request) {
