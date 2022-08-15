@@ -25,6 +25,7 @@ import (
 	"maunium.net/go/mautrix/util/dbutil"
 
 	"github.com/mautrix/slack/database/upgrades"
+	"maunium.net/go/maulogger/v2"
 )
 
 type Database struct {
@@ -39,38 +40,45 @@ type Database struct {
 	Attachment *AttachmentQuery
 }
 
-func New(baseDB *dbutil.Database) *Database {
+func New(baseDB *dbutil.Database, log maulogger.Logger) *Database {
 	db := &Database{Database: baseDB}
 
 	db.UpgradeTable = upgrades.Table
 	db.User = &UserQuery{
 		db:  db,
-		log: db.Log.Sub("User"),
+		log: log.Sub("User"),
 	}
 	db.UserTeam = &UserTeamQuery{
 		db:  db,
-		log: db.Log.Sub("UserTeam"),
+		log: log.Sub("UserTeam"),
 	}
 	db.Portal = &PortalQuery{
 		db:  db,
-		log: db.Log.Sub("Portal"),
+		log: log.Sub("Portal"),
 	}
 	db.Puppet = &PuppetQuery{
 		db:  db,
-		log: db.Log.Sub("Puppet"),
+		log: log.Sub("Puppet"),
 	}
 	db.Message = &MessageQuery{
 		db:  db,
-		log: db.Log.Sub("Message"),
+		log: log.Sub("Message"),
 	}
 	db.Reaction = &ReactionQuery{
 		db:  db,
-		log: db.Log.Sub("Reaction"),
+		log: log.Sub("Reaction"),
 	}
 	db.Attachment = &AttachmentQuery{
 		db:  db,
-		log: db.Log.Sub("Attachment"),
+		log: log.Sub("Attachment"),
 	}
 
 	return db
+}
+
+func strPtr(val string) *string {
+	if val == "" {
+		return nil
+	}
+	return &val
 }

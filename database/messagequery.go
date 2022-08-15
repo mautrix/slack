@@ -28,7 +28,7 @@ type MessageQuery struct {
 
 const (
 	messageSelect = "SELECT team_id, user_id, channel_id, slack_message_id," +
-		" matrix_message_id, author_id FROM message"
+		" matrix_message_id, author_id, slack_thread_id FROM message"
 )
 
 func (mq *MessageQuery) New() *Message {
@@ -76,4 +76,20 @@ func (mq *MessageQuery) GetByMatrixID(key PortalKey, matrixID id.EventID) *Messa
 	}
 
 	return mq.New().Scan(row)
+}
+
+func (mq *MessageQuery) GetLastInThread(key PortalKey, slackThreadId string) *Message {
+	query := messageSelect + " WHERE team_id=$1 AND channel_id=$2 AND slack_thread_id=$3 ORDER BY slack_message_id DESC LIMIT 1"
+
+	row := mq.db.QueryRow(query, key.TeamID, key.ChannelID, slackThreadId)
+	if row == nil {
+		return mq.GetBySlackID(key, slackThreadId)
+	}
+
+	message := mq.New().Scan(row)
+	if message == nil {
+		return mq.GetBySlackID(key, slackThreadId)
+	}
+
+	return message
 }

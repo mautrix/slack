@@ -132,6 +132,15 @@ func (br *SlackBridge) GetAllPortals() []*Portal {
 	return br.dbPortalsToPortals(br.DB.Portal.GetAll())
 }
 
+func (br *SlackBridge) GetAllIPortals() (iportals []bridge.Portal) {
+	portals := br.GetAllPortals()
+	iportals = make([]bridge.Portal, len(portals))
+	for i, portal := range portals {
+		iportals[i] = portal
+	}
+	return iportals
+}
+
 func (br *SlackBridge) GetAllPortalsByID(teamID, userID string) []*Portal {
 	return br.dbPortalsToPortals(br.DB.Portal.GetAllByID(teamID, userID))
 }
@@ -234,7 +243,8 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 
 	// TODO: bridge state stuff
 
-	portal.Name = channel.Name
+	// TODO: figure out the real config-based name format
+	portal.Name = fmt.Sprintf("#%s", channel.Name)
 	portal.Topic = channel.Topic.Value
 
 	// TODO: get avatars figured out
@@ -317,6 +327,7 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		portal.log.Errorln("Failed to send dummy event to mark portal creation:", err)
 	} else {
 		portal.FirstEventID = firstEventResp.EventID
+		portal.UpdateBridgeInfo()
 		portal.Update()
 	}
 
@@ -327,13 +338,14 @@ func (portal *Portal) ensureUserInvited(user *User) bool {
 	return user.ensureInvited(portal.MainIntent(), portal.MXID, portal.IsPrivateChat())
 }
 
-func (portal *Portal) markMessageHandled(msg *database.Message, slackID string, mxid id.EventID, authorID string) *database.Message {
+func (portal *Portal) markMessageHandled(msg *database.Message, slackID string, slackThreadID string, mxid id.EventID, authorID string) *database.Message {
 	if msg == nil {
 		msg := portal.bridge.DB.Message.New()
 		msg.Channel = portal.Key
 		msg.SlackID = slackID
 		msg.MatrixID = mxid
 		msg.AuthorID = authorID
+		msg.SlackThreadID = slackThreadID
 		msg.Insert()
 	} else {
 		msg.UpdateMatrixID(mxid)
@@ -354,19 +366,19 @@ func (portal *Portal) sendMediaFailedMessage(intent *appservice.IntentAPI, bridg
 	}
 }
 
-func (portal *Portal) encrypt(content *event.Content, eventType event.Type) (event.Type, error) {
-	if portal.Encrypted && portal.bridge.Crypto != nil {
-		// TODO maybe the locking should be inside mautrix-go?
-		portal.encryptLock.Lock()
-		encrypted, err := portal.bridge.Crypto.Encrypt(portal.MXID, eventType, *content)
-		portal.encryptLock.Unlock()
-		if err != nil {
-			return eventType, fmt.Errorf("failed to encrypt event: %w", err)
-		}
-		eventType = event.EventEncrypted
-		content.Parsed = encrypted
+func (portal *Portal) encrypt(intent *appservice.IntentAPI, content *event.Content, eventType event.Type) (event.Type, error) {
+	if !portal.Encrypted || portal.bridge.Crypto == nil {
+		return eventType, nil
 	}
-	return eventType, nil
+	intent.AddDoublePuppetValue(content)
+	// TODO maybe the locking should be inside mautrix-go?
+	portal.encryptLock.Lock()
+	err := portal.bridge.Crypto.Encrypt(portal.MXID, eventType, content)
+	portal.encryptLock.Unlock()
+	if err != nil {
+		return eventType, fmt.Errorf("failed to encrypt event: %w", err)
+	}
+	return event.EventEncrypted, nil
 }
 
 const doublePuppetKey = "fi.mau.double_puppet_source"
@@ -383,7 +395,7 @@ func (portal *Portal) sendMatrixMessage(intent *appservice.IntentAPI, eventType 
 		}
 	}
 	var err error
-	eventType, err = portal.encrypt(&wrappedContent, eventType)
+	eventType, err = portal.encrypt(intent, &wrappedContent, eventType)
 	if err != nil {
 		return nil, err
 	}
@@ -1005,7 +1017,7 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 		return
 	}
 
-	portal.log.Debugfln("Starting handling of %s by %s", msg.Msg.Timestamp, msg.Msg.User)
+	portal.log.Debugfln("Starting handling of %s by %s, subtype %s", msg.Msg.Timestamp, msg.Msg.User, msg.Msg.SubType)
 
 	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.Msg.User)
 	puppet.UpdateInfo(user, portal.Key.UserID, nil)
@@ -1020,13 +1032,34 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 			content.MsgType = event.MsgEmote
 		}
 
+		if msg.Msg.ThreadTimestamp != "" {
+			if content.RelatesTo == nil {
+				content.RelatesTo = &event.RelatesTo{}
+			}
+			latestThreadMessage := portal.bridge.DB.Message.GetLastInThread(portal.Key, msg.Msg.ThreadTimestamp)
+			portal.log.Debugfln("Thread_ts is %v", msg.Msg.ThreadTimestamp)
+			rootThreadMessage := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Msg.ThreadTimestamp)
+			portal.log.Debugfln("Latest thread message is %v", latestThreadMessage)
+			portal.log.Debugfln("Root thread message is %v", rootThreadMessage)
+			if latestThreadMessage != nil {
+				content.RelatesTo.SetReplyTo(latestThreadMessage.MatrixID)
+			}
+			if rootThreadMessage != nil {
+				content.RelatesTo.SetThread(rootThreadMessage.MatrixID, "")
+			}
+		}
+
 		resp, err := portal.sendMatrixMessage(intent, event.EventMessage, &content, nil, ts.UnixMilli())
 		if err != nil {
 			portal.log.Warnfln("Failed to send message %s to matrix: %v", msg.Msg.Timestamp, err)
 			return
 		}
 
+		portal.markMessageHandled(nil, msg.Msg.Timestamp, msg.Msg.ThreadTimestamp, resp.EventID, msg.Msg.User)
 		go portal.sendDeliveryReceipt(resp.EventID)
+	case "message_replied", "group_join", "group_leave", "channel_join", "channel_leave": // Not yet an exhaustive list.
+		// These subtypes are simply ignored, because they're handled elsewhere/in other ways (Slack sends multiple info of these events)
+		portal.log.Debugfln("Received message subtype %s, which is ignored", msg.Msg.SubType)
 	default:
 		portal.log.Debugfln("Received unknown message subtype %s", msg.Msg.SubType)
 	}

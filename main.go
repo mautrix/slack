@@ -80,7 +80,7 @@ func (br *SlackBridge) Init() {
 	br.CommandProcessor = commands.NewProcessor(&br.Bridge)
 	br.RegisterCommands()
 
-	br.DB = database.New(br.Bridge.DB)
+	br.DB = database.New(br.Bridge.DB, br.Log.Sub("Database"))
 }
 
 func (br *SlackBridge) Start() {
@@ -143,11 +143,12 @@ func main() {
 		puppetsByCustomMXID: make(map[id.UserID]*Puppet),
 	}
 	br.Bridge = bridge.Bridge{
-		Name:         "mautrix-slack",
-		URL:          "https://github.com/mautrix/slack",
-		Description:  "A Matrix-Slack puppeting bridge.",
-		Version:      "0.1.0",
-		ProtocolName: "Slack",
+		Name:            "mautrix-slack",
+		URL:             "https://github.com/mautrix/slack",
+		Description:     "A Matrix-Slack puppeting bridge.",
+		Version:         "0.1.0",
+		ProtocolName:    "Slack",
+		CryptoPickleKey: "maunium.net/go/mautrix-whatsapp",
 
 		ConfigUpgrader: &configupgrade.StructUpgrader{
 			SimpleUpgrader: configupgrade.SimpleUpgrader(config.DoUpgrade),

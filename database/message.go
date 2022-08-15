@@ -35,11 +35,15 @@ type Message struct {
 	SlackID  string
 	MatrixID id.EventID
 
+	SlackThreadID string
+
 	AuthorID string
 }
 
 func (m *Message) Scan(row dbutil.Scannable) *Message {
-	err := row.Scan(&m.Channel.TeamID, &m.Channel.UserID, &m.Channel.ChannelID, &m.SlackID, &m.MatrixID, &m.AuthorID)
+	var threadID sql.NullString
+
+	err := row.Scan(&m.Channel.TeamID, &m.Channel.UserID, &m.Channel.ChannelID, &m.SlackID, &m.MatrixID, &m.AuthorID, &threadID)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			m.log.Errorln("Database scan failed:", err)
@@ -48,16 +52,18 @@ func (m *Message) Scan(row dbutil.Scannable) *Message {
 		return nil
 	}
 
+	m.SlackThreadID = threadID.String
+
 	return m
 }
 
 func (m *Message) Insert() {
 	query := "INSERT INTO message" +
 		" (team_id, user_id, channel_id, slack_message_id, matrix_message_id," +
-		" author_id) VALUES ($1, $2, $3, $4, $5, $6)"
+		" author_id, slack_thread_id) VALUES ($1, $2, $3, $4, $5, $6, $7)"
 
 	_, err := m.db.Exec(query, m.Channel.TeamID, m.Channel.UserID,
-		m.Channel.ChannelID, m.SlackID, m.MatrixID, m.AuthorID)
+		m.Channel.ChannelID, m.SlackID, m.MatrixID, m.AuthorID, strPtr(m.SlackThreadID))
 
 	if err != nil {
 		m.log.Warnfln("Failed to insert %s@%s: %v", m.Channel, m.SlackID, err)
