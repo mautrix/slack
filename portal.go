@@ -145,6 +145,10 @@ func (br *SlackBridge) GetAllPortalsByID(teamID, userID string) []*Portal {
 	return br.dbPortalsToPortals(br.DB.Portal.GetAllByID(teamID, userID))
 }
 
+func (br *SlackBridge) GetDMPortalsWith(otherUserID string) []*Portal {
+	return br.dbPortalsToPortals(br.DB.Portal.FindPrivateChatsWith(otherUserID))
+}
+
 func (br *SlackBridge) dbPortalsToPortals(dbPortals []*database.Portal) []*Portal {
 	br.portalsLock.Lock()
 	defer br.portalsLock.Unlock()
@@ -867,6 +871,11 @@ func (portal *Portal) getChannelType(channel *slack.Channel) database.ChannelTyp
 
 	// Slack Conversations structures are weird... and we need to figure out
 	// what group dm's look like.
+	portal.log.Warnfln("Channel %s is:", channel.Name)
+	portal.log.Warnfln("channel.IsChannel: %v", channel.IsChannel)
+	portal.log.Warnfln("channel.GroupConversation.Conversation.IsIM: %v", channel.GroupConversation.Conversation.IsIM)
+	portal.log.Warnfln("channel.GroupConversation.Conversation.IsGroup: %v", channel.GroupConversation.Conversation.IsGroup)
+	portal.log.Warnfln("channel.GroupConversation.Conversation.IsMpIM: %v", channel.GroupConversation.Conversation.IsMpIM)
 	if channel.IsChannel {
 		return database.ChannelTypeChannel
 	} else if channel.GroupConversation.Conversation.IsIM {

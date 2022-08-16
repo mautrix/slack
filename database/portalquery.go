@@ -56,10 +56,8 @@ func (pq *PortalQuery) GetAllByID(teamID, userID string) []*Portal {
 	return pq.getAll(portalSelect+" WHERE team_id=$1 AND user_id=$2", teamID, userID)
 }
 
-func (pq *PortalQuery) FindPrivateChats(receiver string) []*Portal {
-	query := portalSelect + " portal WHERE receiver=$1;"
-
-	return pq.getAll(query, receiver)
+func (pq *PortalQuery) FindPrivateChatsWith(id string) []*Portal {
+	return pq.getAll(portalSelect+" WHERE dm_user_id=$1 AND type=$2", id, ChannelTypeDM)
 }
 
 func (pq *PortalQuery) getAll(query string, args ...interface{}) []*Portal {
