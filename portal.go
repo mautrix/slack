@@ -471,6 +471,26 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
 
 	// 	return
 	// }
+	threadTimestamp := ""
+
+	// fetch the root ID via Matrix thread
+	if content.RelatesTo != nil && content.RelatesTo.Type == event.RelThread {
+		rootMessage := portal.bridge.DB.Message.GetByMatrixID(portal.Key, content.RelatesTo.GetThreadParent())
+		if rootMessage != nil {
+			threadTimestamp = rootMessage.SlackID
+		}
+	}
+	// if the first method failed, try via Matrix reply
+	if threadTimestamp == "" && content.RelatesTo != nil && content.RelatesTo.InReplyTo != nil {
+		parentMessage := portal.bridge.DB.Message.GetByMatrixID(portal.Key, content.GetReplyTo())
+		if parentMessage != nil {
+			if parentMessage.SlackThreadID != "" {
+				threadTimestamp = parentMessage.SlackThreadID
+			} else {
+				threadTimestamp = parentMessage.SlackID
+			}
+		}
+	}
 
 	var err error
 	var options []slack.MsgOption
@@ -481,6 +501,9 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
 	case event.MsgText, event.MsgEmote, event.MsgNotice:
 		if !sent {
 			options = []slack.MsgOption{slack.MsgOptionText(content.Body, false)}
+			if threadTimestamp != "" {
+				options = append(options, slack.MsgOptionTS(threadTimestamp))
+			}
 		}
 	case event.MsgAudio, event.MsgFile, event.MsgImage, event.MsgVideo:
 		data, err := portal.downloadMatrixAttachment(content)
@@ -530,6 +553,7 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
 		dbMsg.SlackID = timestamp
 		dbMsg.MatrixID = evt.ID
 		dbMsg.AuthorID = portal.Key.UserID
+		dbMsg.SlackThreadID = threadTimestamp
 		dbMsg.Insert()
 	}
 }
@@ -1037,15 +1061,19 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 				content.RelatesTo = &event.RelatesTo{}
 			}
 			latestThreadMessage := portal.bridge.DB.Message.GetLastInThread(portal.Key, msg.Msg.ThreadTimestamp)
-			portal.log.Debugfln("Thread_ts is %v", msg.Msg.ThreadTimestamp)
 			rootThreadMessage := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Msg.ThreadTimestamp)
-			portal.log.Debugfln("Latest thread message is %v", latestThreadMessage)
-			portal.log.Debugfln("Root thread message is %v", rootThreadMessage)
+
+			var latestThreadMessageID id.EventID
 			if latestThreadMessage != nil {
-				content.RelatesTo.SetReplyTo(latestThreadMessage.MatrixID)
+				latestThreadMessageID = latestThreadMessage.MatrixID
+			} else {
+				latestThreadMessageID = ""
 			}
+
 			if rootThreadMessage != nil {
-				content.RelatesTo.SetThread(rootThreadMessage.MatrixID, "")
+				content.RelatesTo.SetThread(rootThreadMessage.MatrixID, latestThreadMessageID)
+			} else if latestThreadMessage != nil {
+				content.RelatesTo.SetReplyTo(latestThreadMessage.MatrixID)
 			}
 		}
 
