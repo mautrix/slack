@@ -26,7 +26,7 @@ import (
 
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
 
-	"github.com/mautrix/slack/database"
+	"go.mau.fi/mautrix-slack/database"
 )
 
 type BridgeConfig struct {

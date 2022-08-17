@@ -33,8 +33,8 @@ import (
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
-	"github.com/mautrix/slack/auth"
-	"github.com/mautrix/slack/database"
+	"go.mau.fi/mautrix-slack/auth"
+	"go.mau.fi/mautrix-slack/database"
 )
 
 var (

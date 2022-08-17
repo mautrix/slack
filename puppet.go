@@ -29,7 +29,7 @@ import (
 
 	"github.com/slack-go/slack"
 
-	"github.com/mautrix/slack/database"
+	"go.mau.fi/mautrix-slack/database"
 )
 
 type Puppet struct {

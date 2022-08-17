@@ -25,8 +25,8 @@ import (
 	"maunium.net/go/mautrix/id"
 	"maunium.net/go/mautrix/util/configupgrade"
 
-	"github.com/mautrix/slack/config"
-	"github.com/mautrix/slack/database"
+	"go.mau.fi/mautrix-slack/config"
+	"go.mau.fi/mautrix-slack/database"
 )
 
 // Information to find out exactly which commit the bridge was built from.

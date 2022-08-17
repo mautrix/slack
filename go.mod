@@ -1,4 +1,4 @@
-module github.com/mautrix/slack
+module go.mau.fi/mautrix-slack
 
 go 1.18
 
@@ -27,7 +27,5 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	maunium.net/go/mauflag v1.0.0 // indirect
 )
-
-//replace go.mau.fi/mautrix-slack => github.com/mautrix/slack main
 
 replace github.com/slack-go/slack => github.com/rusq/slack v0.11.101-0.20220725083544-8e115f4a7907

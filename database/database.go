@@ -24,7 +24,7 @@ import (
 
 	"maunium.net/go/mautrix/util/dbutil"
 
-	"github.com/mautrix/slack/database/upgrades"
+	"go.mau.fi/mautrix-slack/database/upgrades"
 	"maunium.net/go/maulogger/v2"
 )
 
