@@ -129,9 +129,13 @@ type ChannelNameParams struct {
 }
 
 func (bc BridgeConfig) FormatChannelName(params ChannelNameParams) string {
-	var buffer strings.Builder
-	_ = bc.channelNameTemplate.Execute(&buffer, params)
-	return buffer.String()
+	if params.Type == database.ChannelTypeDM {
+		return params.Name // TODO: should there be a separate template for formatting a DM name as well?
+	} else {
+		var buffer strings.Builder
+		_ = bc.channelNameTemplate.Execute(&buffer, params)
+		return buffer.String()
+	}
 }
 
 func (bc *BridgeConfig) GetResendBridgeInfo() bool {

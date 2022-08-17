@@ -247,8 +247,16 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 
 	// TODO: bridge state stuff
 
-	// TODO: figure out the real config-based name format
-	portal.Name = fmt.Sprintf("#%s", channel.Name)
+	plainName, err := portal.GetPlainName(channel, userTeam)
+	if err == nil {
+		formattedName := portal.bridge.Config.Bridge.FormatChannelName(config.ChannelNameParams{
+			Name: plainName,
+			Type: portal.getChannelType(channel),
+		})
+		portal.PlainName = plainName
+		portal.Name = formattedName
+	}
+
 	portal.Topic = channel.Topic.Value
 
 	// TODO: get avatars figured out
@@ -869,20 +877,36 @@ func (portal *Portal) getChannelType(channel *slack.Channel) database.ChannelTyp
 		return database.ChannelTypeUnknown
 	}
 
-	// Slack Conversations structures are weird... and we need to figure out
-	// what group dm's look like.
-	portal.log.Warnfln("Channel %s is:", channel.Name)
-	portal.log.Warnfln("channel.IsChannel: %v", channel.IsChannel)
-	portal.log.Warnfln("channel.GroupConversation.Conversation.IsIM: %v", channel.GroupConversation.Conversation.IsIM)
-	portal.log.Warnfln("channel.GroupConversation.Conversation.IsGroup: %v", channel.GroupConversation.Conversation.IsGroup)
-	portal.log.Warnfln("channel.GroupConversation.Conversation.IsMpIM: %v", channel.GroupConversation.Conversation.IsMpIM)
+	// Slack Conversations structures are weird
 	if channel.IsChannel {
 		return database.ChannelTypeChannel
 	} else if channel.GroupConversation.Conversation.IsIM {
 		return database.ChannelTypeDM
+	} else if channel.GroupConversation.Conversation.IsMpIM {
+		return database.ChannelTypeGroupDM
 	}
 
 	return database.ChannelTypeUnknown
+}
+
+func (portal *Portal) GetPlainName(meta *slack.Channel, sourceTeam *database.UserTeam) (string, error) {
+	channelType := portal.getChannelType(meta)
+	var plainName string
+
+	if channelType == database.ChannelTypeDM {
+		user, err := sourceTeam.Client.GetUserInfo(meta.User)
+		if err != nil {
+			portal.log.Warnfln("failed to lookup user %s: %w", user, err)
+			return "", err
+		} else {
+			portal.log.Debugfln("user: %#v", user)
+			plainName = user.RealName
+		}
+	} else {
+		plainName = meta.Name
+	}
+
+	return plainName, nil
 }
 
 func (portal *Portal) UpdateNameDirect(name string) bool {
@@ -907,24 +931,22 @@ func (portal *Portal) UpdateNameDirect(name string) bool {
 
 func (portal *Portal) UpdateName(meta *slack.Channel, sourceTeam *database.UserTeam) bool {
 	channelType := portal.getChannelType(meta)
-	plainName := meta.Name
+	plainName, err := portal.GetPlainName(meta, sourceTeam)
 
-	if channelType == database.ChannelTypeDM {
-		user, err := sourceTeam.Client.GetUserInfo(meta.User)
-		if err != nil {
-			portal.log.Warnfln("failed to lookup user %s: %w", user, err)
-		} else {
-			portal.log.Errorfln("user: %#v", user)
-		}
+	if err != nil {
+		portal.log.Errorfln("Couldn't update portal name: %v", err)
+		return false
 	}
 
 	plainNameChanged := portal.PlainName != plainName
 	portal.PlainName = plainName
 
-	return portal.UpdateNameDirect(portal.bridge.Config.Bridge.FormatChannelName(config.ChannelNameParams{
+	formattedName := portal.bridge.Config.Bridge.FormatChannelName(config.ChannelNameParams{
 		Name: plainName,
 		Type: channelType,
-	})) || plainNameChanged
+	})
+
+	return portal.UpdateNameDirect(formattedName) || plainNameChanged
 }
 
 func (portal *Portal) updateRoomAvatar() {
