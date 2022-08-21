@@ -30,6 +30,7 @@ import (
 	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/bridge"
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
+	"maunium.net/go/mautrix/bridge/status"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
@@ -49,6 +50,8 @@ type User struct {
 
 	bridge *SlackBridge
 	log    log.Logger
+
+	BridgeStates map[database.UserTeamKey]*bridge.BridgeStateQueue
 
 	PermissionLevel bridgeconfig.PermissionLevel
 }
@@ -153,6 +156,7 @@ func (br *SlackBridge) NewUser(dbUser *database.User) *User {
 	}
 
 	user.PermissionLevel = br.Config.Bridge.Permissions.Get(user.MXID)
+	user.BridgeStates = make(map[database.UserTeamKey]*bridge.BridgeStateQueue)
 
 	return user
 }
@@ -178,8 +182,13 @@ func (br *SlackBridge) getAllUsers() []*User {
 func (br *SlackBridge) startUsers() {
 	br.Log.Debugln("Starting users")
 
-	for _, user := range br.getAllUsers() {
+	users := br.getAllUsers()
+
+	for _, user := range users {
 		go user.Connect()
+	}
+	if len(users) == 0 {
+		br.SendGlobalBridgeState(status.BridgeState{StateEvent: status.StateUnconfigured}.Fill(nil))
 	}
 
 	br.Log.Debugln("Starting custom puppets")
@@ -339,6 +348,7 @@ func (user *User) LogoutTeam(email, team string) error {
 
 	if userTeam.RTM != nil {
 		if err := userTeam.RTM.Disconnect(); err != nil {
+			user.BridgeStates[userTeam.Key].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: err.Error()})
 			return err
 		}
 	}
@@ -361,6 +371,7 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 		switch event := msg.Data.(type) {
 		case *slack.ConnectingEvent:
 			user.log.Debugfln("connecting: attempt %d", event.Attempt)
+			user.BridgeStates[userTeam.Key].Send(status.BridgeState{StateEvent: status.StateConnecting})
 		case *slack.ConnectedEvent:
 			// Update all of our values according to what the server has for us.
 			userTeam.Key.SlackID = event.Info.User.ID
@@ -371,6 +382,7 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 
 			user.tryAutomaticDoublePuppeting(userTeam)
 
+			user.BridgeStates[userTeam.Key].Send(status.BridgeState{StateEvent: status.StateConnected})
 			user.log.Infofln("connected to team %s as %s", userTeam.TeamName, userTeam.SlackEmail)
 		case *slack.HelloEvent:
 			// Ignored for now
@@ -378,6 +390,7 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 			user.log.Errorln("invalid authentication token")
 
 			user.LogoutTeam(userTeam.SlackEmail, userTeam.TeamName)
+			user.BridgeStates[userTeam.Key].Send(status.BridgeState{StateEvent: status.StateBadCredentials})
 
 			// TODO: Should drop a message in the management room
 
@@ -393,6 +406,7 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 			}
 		case *slack.RTMError:
 			user.log.Errorln("rtm error:", event.Error())
+			user.BridgeStates[userTeam.Key].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: event.Error()})
 		default:
 			user.log.Warnln("unknown message", msg)
 		}
@@ -418,8 +432,13 @@ func (user *User) Connect() error {
 
 	user.log.Debugln("connecting to slack")
 
-	for _, userTeam := range user.Teams {
-		user.connectTeam(userTeam)
+	for key, userTeam := range user.Teams {
+		user.BridgeStates[key] = user.bridge.NewBridgeStateQueue(userTeam, user.log)
+		err := user.connectTeam(userTeam)
+		if err != nil {
+			// TODO: more detailed error state
+			user.BridgeStates[key].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: err.Error()})
+		}
 	}
 
 	return nil
@@ -428,6 +447,7 @@ func (user *User) Connect() error {
 func (user *User) disconnectTeam(userTeam *database.UserTeam) error {
 	if userTeam.RTM != nil {
 		if err := userTeam.RTM.Disconnect(); err != nil {
+			user.BridgeStates[userTeam.Key].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: err.Error()})
 			return err
 		}
 	}
@@ -441,8 +461,9 @@ func (user *User) Disconnect() error {
 	user.Lock()
 	defer user.Unlock()
 
-	for _, userTeam := range user.Teams {
+	for key, userTeam := range user.Teams {
 		if err := user.disconnectTeam(userTeam); err != nil {
+			user.BridgeStates[key].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: err.Error()})
 			return err
 		}
 	}

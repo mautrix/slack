@@ -89,6 +89,18 @@ type UserTeam struct {
 	RTM    *slack.RTM
 }
 
+func (ut *UserTeam) GetMXID() id.UserID {
+	return ut.Key.MXID
+}
+
+func (ut *UserTeam) GetRemoteID() string {
+	return ut.Key.SlackID
+}
+
+func (ut *UserTeam) GetRemoteName() string {
+	return ut.SlackEmail // TODO: maybe get a better name for this purpose
+}
+
 func (ut *UserTeam) Scan(row dbutil.Scannable) *UserTeam {
 	var token sql.NullString
 
