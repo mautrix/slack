@@ -52,7 +52,7 @@ appservice:
     # Display name and avatar for bot. Set to "remove" to remove display name/avatar, leave empty
     # to leave display name/avatar as-is.
     displayname: Slack bridge bot
-    avatar: mxc://maunium.net/nIdEykemnwdisvHbpxflpDlC
+    avatar: mxc://maunium.net/pVtzLmChZejGxLqmXtQjFxem
 
   # Whether or not to receive ephemeral events via appservice transactions.
   # Requires MSC2409 support (i.e. Synapse 1.22+).
