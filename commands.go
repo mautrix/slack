@@ -33,6 +33,8 @@ func (br *SlackBridge) RegisterCommands() {
 		cmdLogin,
 		cmdLoginToken,
 		cmdLogout,
+		cmdSyncChannels,
+		cmdDeletePortal,
 	)
 }
 
@@ -138,4 +140,38 @@ func fnLogout(ce *WrappedCommandEvent) {
 	} else {
 		ce.Reply("Logged out successfully.")
 	}
+}
+
+var cmdSyncChannels = &commands.FullHandler{
+	Func: wrapCommand(fnSyncChannels),
+	Name: "sync-channels",
+	Help: commands.HelpMeta{
+		Section:     commands.HelpSectionGeneral,
+		Description: "Synchronize channel information from Slack into Matrix",
+	},
+	RequiresLogin: true,
+}
+
+func fnSyncChannels(ce *WrappedCommandEvent) {
+	ce.Log.Warnfln("%v", ce.User.Teams)
+	for _, team := range ce.User.Teams {
+		for _, portal := range ce.Bridge.dbPortalsToPortals(ce.Bridge.DB.Portal.GetAllByID(team.Key.TeamID, team.Key.SlackID)) {
+			userteam := ce.User.GetUserTeam(portal.Key.TeamID, portal.Key.UserID)
+			portal.UpdateInfo(ce.User, userteam, nil, true)
+			ce.Log.Debugfln("Synced channel %s", portal.Key.ChannelID)
+		}
+	}
+	ce.Reply("Done syncing channels.")
+}
+
+var cmdDeletePortal = &commands.FullHandler{
+	Func:           wrapCommand(fnDeletePortal),
+	Name:           "delete-portal",
+	RequiresPortal: true,
+}
+
+func fnDeletePortal(ce *WrappedCommandEvent) {
+	ce.Portal.delete()
+	ce.Portal.cleanup(false)
+	ce.Log.Infofln("Deleted portal")
 }

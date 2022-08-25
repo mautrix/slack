@@ -235,7 +235,7 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 
 	portal.log.Infoln("Creating Matrix room for channel:", portal.Portal.Key.ChannelID)
 
-	channel = portal.UpdateInfo(user, userTeam, channel)
+	channel = portal.UpdateInfo(user, userTeam, channel, false)
 	if channel == nil {
 		return fmt.Errorf("didn't find channel metadata")
 	}
@@ -257,7 +257,7 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		portal.Name = formattedName
 	}
 
-	portal.Topic = channel.Topic.Value
+	portal.Topic = portal.getTopic(channel, userTeam)
 
 	// TODO: get avatars figured out
 	// portal.Avatar = puppet.Avatar
@@ -824,7 +824,7 @@ func (portal *Portal) getBridgeInfo() (string, event.BridgeEventContent) {
 		BridgeBot: portal.bridge.Bot.UserID,
 		Creator:   portal.MainIntent().UserID,
 		Protocol: event.BridgeInfoSection{
-			ID:          "slack",
+			ID:          "slackgo",
 			DisplayName: "Slack",
 			AvatarURL:   portal.bridge.Config.AppService.Bot.ParsedAvatar.CUString(),
 			ExternalURL: "https://slack.com/",
@@ -834,7 +834,15 @@ func (portal *Portal) getBridgeInfo() (string, event.BridgeEventContent) {
 			DisplayName: portal.Name,
 		},
 	}
-	var bridgeInfoStateKey string
+
+	teamInfo := portal.bridge.DB.UserTeam.GetAllBySlackTeamID(portal.Key.TeamID)
+	if len(teamInfo) > 0 {
+		bridgeInfo.Network = &event.BridgeInfoSection{
+			ID:          portal.Key.TeamID,
+			DisplayName: teamInfo[0].TeamName,
+		}
+	}
+	var bridgeInfoStateKey = fmt.Sprintf("fi.mau.slack://slackgo/%s/%s", portal.Key.TeamID, portal.Key.ChannelID)
 	// if portal.GuildID == "" {
 	// 	bridgeInfoStateKey = fmt.Sprintf("fi.mau.discord://discord/dm/%s", portal.Key.ChannelID)
 	// 	bridgeInfo.Channel.ExternalURL = fmt.Sprintf("https://discord.com/channels/@me/%s", portal.Key.ChannelID)
@@ -975,7 +983,7 @@ func (portal *Portal) UpdateAvatarFromPuppet(puppet *Puppet) bool {
 	return true
 }
 
-func (portal *Portal) UpdateTopic(topic string) bool {
+func (portal *Portal) UpdateTopicDirect(topic string) bool {
 	if portal.Topic == topic && (portal.TopicSet || portal.MXID == "") {
 		return false
 	}
@@ -995,7 +1003,32 @@ func (portal *Portal) UpdateTopic(topic string) bool {
 	return true
 }
 
-func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, meta *slack.Channel) *slack.Channel {
+func (portal *Portal) getTopic(meta *slack.Channel, sourceTeam *database.UserTeam) string {
+	plainTopic := meta.Topic.Value
+	plainDescription := meta.Purpose.Value
+
+	var topicParts []string
+
+	if plainTopic != "" {
+		topicParts = append(topicParts, fmt.Sprintf("Topic: %s", plainTopic))
+	}
+	if plainDescription != "" {
+		topicParts = append(topicParts, fmt.Sprintf("Description: %s", plainDescription))
+	}
+
+	return strings.Join(topicParts, "\n")
+}
+
+func (portal *Portal) UpdateTopic(meta *slack.Channel, sourceTeam *database.UserTeam) bool {
+	matrixTopic := portal.getTopic(meta, sourceTeam)
+
+	changed := portal.Topic != matrixTopic
+
+	portal.log.Debugfln("Setting Matrix topic to %s", matrixTopic)
+	return portal.UpdateTopicDirect(matrixTopic) || changed
+}
+
+func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, meta *slack.Channel, force bool) *slack.Channel {
 	changed := false
 
 	if meta == nil {
@@ -1033,9 +1066,9 @@ func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, me
 		changed = portal.UpdateName(meta, sourceTeam) || changed
 	}
 
-	changed = portal.UpdateTopic(meta.Topic.Value) || changed
+	changed = portal.UpdateTopic(meta, sourceTeam) || changed
 
-	if changed {
+	if changed || force {
 		portal.UpdateBridgeInfo()
 		portal.Update()
 	}
@@ -1116,7 +1149,10 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 
 		portal.markMessageHandled(nil, msg.Msg.Timestamp, msg.Msg.ThreadTimestamp, resp.EventID, msg.Msg.User)
 		go portal.sendDeliveryReceipt(resp.EventID)
-	case "message_replied", "group_join", "group_leave", "channel_join", "channel_leave": // Not yet an exhaustive list.
+	case "channel_topic", "channel_purpose":
+		portal.UpdateInfo(user, userTeam, nil, false)
+		portal.log.Debugfln("Received %s update, updating portal topic", msg.Msg.SubType)
+	case "message_replied", "group_join", "group_leave", "channel_join", "channel_leave", "thread_broadcast": // Not yet an exhaustive list.
 		// These subtypes are simply ignored, because they're handled elsewhere/in other ways (Slack sends multiple info of these events)
 		portal.log.Debugfln("Received message subtype %s, which is ignored", msg.Msg.SubType)
 	default:

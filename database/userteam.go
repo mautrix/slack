@@ -68,6 +68,24 @@ func (utq *UserTeamQuery) GetAllByMXID(userID id.UserID) []*UserTeam {
 	return tokens
 }
 
+func (utq *UserTeamQuery) GetAllBySlackTeamID(teamID string) []*UserTeam {
+	query := `SELECT mxid, slack_email, slack_id, team_name, team_id, token FROM user_team WHERE team_id=$1`
+
+	rows, err := utq.db.Query(query, teamID)
+	if err != nil || rows == nil {
+		return nil
+	}
+
+	defer rows.Close()
+
+	tokens := []*UserTeam{}
+	for rows.Next() {
+		tokens = append(tokens, utq.New().Scan(rows))
+	}
+
+	return tokens
+}
+
 type UserTeamKey struct {
 	MXID    id.UserID
 	SlackID string
