@@ -155,11 +155,7 @@ var cmdSyncChannels = &commands.FullHandler{
 func fnSyncChannels(ce *WrappedCommandEvent) {
 	ce.Log.Warnfln("%v", ce.User.Teams)
 	for _, team := range ce.User.Teams {
-		for _, portal := range ce.Bridge.dbPortalsToPortals(ce.Bridge.DB.Portal.GetAllByID(team.Key.TeamID, team.Key.SlackID)) {
-			userteam := ce.User.GetUserTeam(portal.Key.TeamID, portal.Key.UserID)
-			portal.UpdateInfo(ce.User, userteam, nil, true)
-			ce.Log.Debugfln("Synced channel %s", portal.Key.ChannelID)
-		}
+		ce.User.SyncChannels(team, true)
 	}
 	ce.Reply("Done syncing channels.")
 }

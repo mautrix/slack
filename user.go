@@ -430,6 +430,29 @@ func (user *User) connectTeam(userTeam *database.UserTeam) error {
 
 	go user.slackMessageHandler(userTeam)
 
+	user.SyncChannels(userTeam, false)
+
+	return nil
+}
+
+func (user *User) SyncChannels(userTeam *database.UserTeam, force bool) error {
+	channels, _, err := userTeam.Client.GetConversations(&slack.GetConversationsParameters{})
+	if err != nil {
+		user.log.Warnfln("Error fetching channels: %v", err)
+		return err
+	} else {
+		for _, channel := range channels {
+			if channel.IsMember {
+				key := database.NewPortalKey(userTeam.Key.TeamID, userTeam.Key.SlackID, channel.ID)
+				portal := user.bridge.GetPortalByID(key)
+				if portal.MXID != "" {
+					portal.UpdateInfo(user, userTeam, &channel, force)
+				} else {
+					portal.CreateMatrixRoom(user, userTeam, &channel)
+				}
+			}
+		}
+	}
 	return nil
 }
 
