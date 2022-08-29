@@ -21,7 +21,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -224,35 +223,36 @@ func (p *ProvisioningAPI) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *ProvisioningAPI) login(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("user_id")
-	user := p.bridge.GetUserByMXID(id.UserID(userID))
+	panic("not implemented")
+	/* 	userID := r.URL.Query().Get("user_id")
+	   	user := p.bridge.GetUserByMXID(id.UserID(userID))
 
-	r.ParseForm()
+	   	r.ParseForm()
 
-	token := r.Form.Get("token")
-	if token == "" {
-		jsonResponse(w, http.StatusBadRequest, Error{
-			Error:   "No token specified",
-			ErrCode: "No token specified",
-		})
+	   	token := r.Form.Get("token")
+	   	if token == "" {
+	   		jsonResponse(w, http.StatusBadRequest, Error{
+	   			Error:   "No token specified",
+	   			ErrCode: "No token specified",
+	   		})
 
-		return
-	}
+	   		return
+	   	}
 
-	info, err := user.TokenLogin(token)
-	if err != nil {
-		jsonResponse(w, http.StatusNotAcceptable, Error{
-			Error:   fmt.Sprintf("Failed to login: %s", err),
-			ErrCode: err.Error(),
-		})
+	   	info, err := user.TokenLogin(token)
+	   	if err != nil {
+	   		jsonResponse(w, http.StatusNotAcceptable, Error{
+	   			Error:   fmt.Sprintf("Failed to login: %s", err),
+	   			ErrCode: err.Error(),
+	   		})
 
-		return
-	}
+	   		return
+	   	}
 
-	jsonResponse(w, http.StatusCreated,
-		map[string]interface{}{
-			"success": true,
-			"teamid":  info.TeamID,
-			"userid":  info.UserID,
-		})
+	   	jsonResponse(w, http.StatusCreated,
+	   		map[string]interface{}{
+	   			"success": true,
+	   			"teamid":  info.TeamID,
+	   			"userid":  info.UserID,
+	   		}) */
 }

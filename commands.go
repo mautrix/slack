@@ -98,15 +98,15 @@ var cmdLoginToken = &commands.FullHandler{
 }
 
 func fnLoginToken(ce *WrappedCommandEvent) {
-	if len(ce.Args) != 1 {
-		ce.Reply("**Usage**: $cmdprefix login-token <token>")
+	if len(ce.Args) != 2 {
+		ce.Reply("**Usage**: $cmdprefix login-token <token> <cookieToken>")
 
 		ce.MainIntent().RedactEvent(ce.RoomID, ce.EventID)
 
 		return
 	}
 
-	info, err := ce.User.TokenLogin(ce.Args[0])
+	info, err := ce.User.TokenLogin(ce.Args[0], ce.Args[1])
 	if err != nil {
 		ce.Reply("Failed to log in with token: %v", err)
 	} else {

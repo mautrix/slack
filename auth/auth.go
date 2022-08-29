@@ -161,19 +161,25 @@ func Login(l log.Logger, email, team, password string) (*Info, error) {
 	}, nil
 }
 
-func LoginToken(token string) (*Info, error) {
-	client := slack.New(token)
+func LoginToken(token string, cookieToken string) (*Info, error) {
+	client := slack.New(token, slack.OptionCookie("d", cookieToken), slack.OptionDebug(true))
 
-	userIdentity, err := client.GetUserIdentity()
+	clientBoot, err := client.ClientBoot()
 	if err != nil {
+		fmt.Printf("client.boot error %v\n", err)
+		return nil, err
+	}
+	userProfile, err := client.GetUserProfile(&slack.GetUserProfileParameters{})
+	if err != nil {
+		fmt.Printf("user.profile.get error %v\n", err)
 		return nil, err
 	}
 
 	return &Info{
-		UserEmail: userIdentity.User.Email,
-		UserID:    userIdentity.User.ID,
-		TeamName:  userIdentity.Team.Name,
-		TeamID:    userIdentity.Team.ID,
+		UserEmail: userProfile.Email,
+		UserID:    clientBoot.Self.ID,
+		TeamName:  clientBoot.Team.Name,
+		TeamID:    clientBoot.Team.ID,
 		Token:     token,
 	}, nil
 }

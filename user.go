@@ -305,8 +305,8 @@ func (user *User) LoginTeam(email, team, password string) error {
 	return user.login(info)
 }
 
-func (user *User) TokenLogin(token string) (*auth.Info, error) {
-	info, err := auth.LoginToken(token)
+func (user *User) TokenLogin(token string, cookieToken string) (*auth.Info, error) {
+	info, err := auth.LoginToken(token, cookieToken)
 	if err != nil {
 		return nil, err
 	}
