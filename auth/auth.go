@@ -18,11 +18,12 @@ const (
 )
 
 type Info struct {
-	UserEmail string
-	UserID    string
-	TeamName  string
-	TeamID    string
-	Token     string
+	UserEmail   string
+	UserID      string
+	TeamName    string
+	TeamID      string
+	Token       string
+	CookieToken string
 }
 
 type domainResponse struct {
@@ -134,7 +135,7 @@ func signin(log log.Logger, userID, teamID, password string) (string, error) {
 	return data.Token, nil
 }
 
-func Login(l log.Logger, email, team, password string) (*Info, error) {
+func LoginPassword(l log.Logger, email, team, password string) (*Info, error) {
 	log := log.Sub("auth")
 
 	teamID, err := findTeam(log, team)
@@ -176,10 +177,11 @@ func LoginToken(token string, cookieToken string) (*Info, error) {
 	}
 
 	return &Info{
-		UserEmail: userProfile.Email,
-		UserID:    clientBoot.Self.ID,
-		TeamName:  clientBoot.Team.Name,
-		TeamID:    clientBoot.Team.ID,
-		Token:     token,
+		UserEmail:   userProfile.Email,
+		UserID:      clientBoot.Self.ID,
+		TeamName:    clientBoot.Team.Name,
+		TeamID:      clientBoot.Team.ID,
+		Token:       token,
+		CookieToken: cookieToken,
 	}, nil
 }

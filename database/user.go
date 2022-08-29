@@ -42,7 +42,7 @@ func (user *User) loadTeams() {
 	user.TeamsLock.Lock()
 	defer user.TeamsLock.Unlock()
 
-	for _, userTeam := range user.db.UserTeam.GetAllByMXID(user.MXID) {
+	for _, userTeam := range user.db.UserTeam.GetAllByMXIDWithToken(user.MXID) {
 		user.Teams[userTeam.Key] = userTeam
 	}
 }

@@ -282,6 +282,7 @@ func (user *User) login(info *auth.Info) error {
 	userTeam.SlackEmail = info.UserEmail
 	userTeam.TeamName = info.TeamName
 	userTeam.Token = info.Token
+	userTeam.CookieToken = info.CookieToken
 
 	// We minimize the time we hold the lock because SyncTeams also needs the
 	// lock.
@@ -297,7 +298,7 @@ func (user *User) login(info *auth.Info) error {
 }
 
 func (user *User) LoginTeam(email, team, password string) error {
-	info, err := auth.Login(user.log, email, team, password)
+	info, err := auth.LoginPassword(user.log, email, team, password)
 	if err != nil {
 		return err
 	}
@@ -360,6 +361,8 @@ func (user *User) LogoutTeam(email, team string) error {
 	user.TeamsLock.Unlock()
 
 	userTeam.Token = ""
+	userTeam.CookieToken = ""
+	userTeam.Upsert()
 
 	user.Update()
 
@@ -415,7 +418,11 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 
 func (user *User) connectTeam(userTeam *database.UserTeam) error {
 	user.log.Debugfln("connecting %s to team %s", userTeam.SlackEmail, userTeam.TeamName)
-	userTeam.Client = slack.New(userTeam.Token)
+	if userTeam.CookieToken != "" {
+		userTeam.Client = slack.New(userTeam.Token, slack.OptionCookie("d", userTeam.CookieToken))
+	} else {
+		userTeam.Client = slack.New(userTeam.Token)
+	}
 
 	userTeam.RTM = userTeam.Client.NewRTM()
 

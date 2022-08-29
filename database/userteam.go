@@ -40,7 +40,7 @@ func (utq *UserTeamQuery) New() *UserTeam {
 }
 
 func (utq *UserTeamQuery) GetBySlackTeam(userID id.UserID, email, team string) *UserTeam {
-	query := `SELECT mxid, slack_email, slack_id, team_name, team_id, token FROM user_team WHERE mxid=$1 AND slack_email=$2 AND team_name=$3`
+	query := `SELECT mxid, slack_email, slack_id, team_name, team_id, token, cookie_token FROM user_team WHERE mxid=$1 AND slack_email=$2 AND team_name=$3`
 
 	row := utq.db.QueryRow(query, userID, email, team)
 	if row == nil {
@@ -50,8 +50,8 @@ func (utq *UserTeamQuery) GetBySlackTeam(userID id.UserID, email, team string) *
 	return utq.New().Scan(row)
 }
 
-func (utq *UserTeamQuery) GetAllByMXID(userID id.UserID) []*UserTeam {
-	query := `SELECT mxid, slack_email, slack_id, team_name, team_id, token FROM user_team WHERE mxid=$1`
+func (utq *UserTeamQuery) GetAllByMXIDWithToken(userID id.UserID) []*UserTeam {
+	query := `SELECT mxid, slack_email, slack_id, team_name, team_id, token, cookie_token FROM user_team WHERE mxid=$1 AND token IS NOT NULL`
 
 	rows, err := utq.db.Query(query, userID)
 	if err != nil || rows == nil {
@@ -69,7 +69,7 @@ func (utq *UserTeamQuery) GetAllByMXID(userID id.UserID) []*UserTeam {
 }
 
 func (utq *UserTeamQuery) GetAllBySlackTeamID(teamID string) []*UserTeam {
-	query := `SELECT mxid, slack_email, slack_id, team_name, team_id, token FROM user_team WHERE team_id=$1`
+	query := `SELECT mxid, slack_email, slack_id, team_name, team_id, token, cookie_token FROM user_team WHERE team_id=$1`
 
 	rows, err := utq.db.Query(query, teamID)
 	if err != nil || rows == nil {
@@ -101,7 +101,8 @@ type UserTeam struct {
 	SlackEmail string
 	TeamName   string
 
-	Token string
+	Token       string
+	CookieToken string
 
 	Client *slack.Client
 	RTM    *slack.RTM
@@ -121,8 +122,9 @@ func (ut *UserTeam) GetRemoteName() string {
 
 func (ut *UserTeam) Scan(row dbutil.Scannable) *UserTeam {
 	var token sql.NullString
+	var cookieToken sql.NullString
 
-	err := row.Scan(&ut.Key.MXID, &ut.SlackEmail, &ut.Key.SlackID, &ut.TeamName, &ut.Key.TeamID, &token)
+	err := row.Scan(&ut.Key.MXID, &ut.SlackEmail, &ut.Key.SlackID, &ut.TeamName, &ut.Key.TeamID, &token, &cookieToken)
 	if err != nil {
 		if err != sql.ErrNoRows {
 			ut.log.Errorln("Database scan failed:", err)
@@ -134,26 +136,34 @@ func (ut *UserTeam) Scan(row dbutil.Scannable) *UserTeam {
 	if token.Valid {
 		ut.Token = token.String
 	}
+	if cookieToken.Valid {
+		ut.CookieToken = cookieToken.String
+	}
 
 	return ut
 }
 
 func (ut *UserTeam) Upsert() {
 	query := `
-		INSERT INTO user_team (mxid, slack_email, slack_id, team_name, team_id, token)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO user_team (mxid, slack_email, slack_id, team_name, team_id, token, cookie_token)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (mxid, slack_id, team_id) DO UPDATE
-			SET slack_email=excluded.slack_email, team_name=excluded.team_name, token=excluded.token
+			SET slack_email=excluded.slack_email, team_name=excluded.team_name, token=excluded.token, cookie_token=excluded.cookie_token
 	`
 
 	var token sql.NullString
+	var cookieToken sql.NullString
 
 	if ut.Token != "" {
 		token.String = ut.Token
 		token.Valid = true
 	}
+	if ut.CookieToken != "" {
+		cookieToken.String = ut.CookieToken
+		cookieToken.Valid = true
+	}
 
-	_, err := ut.db.Exec(query, ut.Key.MXID, ut.SlackEmail, ut.Key.SlackID, ut.TeamName, ut.Key.TeamID, token)
+	_, err := ut.db.Exec(query, ut.Key.MXID, ut.SlackEmail, ut.Key.SlackID, ut.TeamName, ut.Key.TeamID, token, cookieToken)
 
 	if err != nil {
 		ut.log.Warnfln("Failed to upsert %s/%s/%s: %v", ut.Key.MXID, ut.Key.SlackID, ut.Key.TeamID, err)
