@@ -75,7 +75,7 @@ bridge:
 
   portal_message_buffer: 128
 
-  # Should the bridge send a read receipt from the bridge bot when a message has been sent to WhatsApp?
+  # Should the bridge send a read receipt from the bridge bot when a message has been sent to Slack?
   delivery_receipts: true
   # Whether the bridge should send the message status as a custom com.beeper.message_send_status event.
   message_status_events: false
