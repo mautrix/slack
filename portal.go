@@ -343,7 +343,47 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		portal.Update()
 	}
 
+	portal.FillMessages(user, userTeam, 1, "")
+
 	return nil
+}
+
+func (portal *Portal) FillMessages(user *User, userteam *database.UserTeam, limit int, latest string) error {
+	messagesHandled := 0
+	earliestHandled := latest
+
+	// keep fetching `limit` messages from Slack and handling the message type events until `limit` messages have been handled
+	for {
+		messages, err := userteam.Client.GetConversationHistory(&slack.GetConversationHistoryParameters{
+			ChannelID: portal.Key.ChannelID,
+			Limit:     limit,
+			Latest:    earliestHandled,
+			Inclusive: false,
+		})
+		if err != nil {
+			portal.log.Warnfln("Unable to fill %d message: %v", limit, err)
+			return err
+		}
+		if len(messages.Messages) == 0 {
+			portal.log.Warnfln("Not enough messages in Slack to fill %d messages", limit)
+			return nil
+		}
+		portal.log.Debugfln("Received %d messages from Slack when filling", len(messages.Messages))
+		for _, message := range messages.Messages {
+			if message.Type == "message" {
+				portal.log.Debugfln("Filling in message %v at timestamp %s", message, message.Timestamp)
+				messageEvent := slack.MessageEvent(message)
+				portal.HandleSlackMessage(user, userteam, &messageEvent)
+				if portal.parseTimestamp(message.Timestamp).Before(portal.parseTimestamp(earliestHandled)) {
+					earliestHandled = message.Timestamp
+				}
+				messagesHandled += 1
+				if messagesHandled >= limit {
+					return nil
+				}
+			}
+		}
+	}
 }
 
 func (portal *Portal) ensureUserInvited(user *User) bool {
