@@ -18,6 +18,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -40,8 +41,9 @@ import (
 )
 
 type portalMatrixMessage struct {
-	evt  *event.Event
-	user *User
+	evt        *event.Event
+	user       *User
+	receivedAt time.Time
 }
 
 type Portal struct {
@@ -69,7 +71,7 @@ func (portal *Portal) MarkEncrypted() {
 
 func (portal *Portal) ReceiveMatrixEvent(user bridge.User, evt *event.Event) {
 	if user.GetPermissionLevel() >= bridgeconfig.PermissionLevelUser /*|| portal.HasRelaybot()*/ {
-		portal.matrixMessages <- portalMatrixMessage{user: user.(*User), evt: evt}
+		portal.matrixMessages <- portalMatrixMessage{user: user.(*User), evt: evt, receivedAt: time.Now()}
 	}
 }
 
@@ -470,9 +472,17 @@ func (portal *Portal) sendMatrixMessage(intent *appservice.IntentAPI, eventType 
 }
 
 func (portal *Portal) handleMatrixMessages(msg portalMatrixMessage) {
+	evtTS := time.UnixMilli(msg.evt.Timestamp)
+	timings := messageTimings{
+		initReceive:  msg.evt.Mautrix.ReceivedAt.Sub(evtTS),
+		decrypt:      msg.evt.Mautrix.DecryptionDuration,
+		portalQueue:  time.Since(msg.receivedAt),
+		totalReceive: time.Since(evtTS),
+	}
+
 	switch msg.evt.Type {
 	case event.EventMessage:
-		portal.handleMatrixMessage(msg.user, msg.evt)
+		portal.handleMatrixMessage(msg.user, msg.evt, timings)
 	case event.EventRedaction:
 		portal.handleMatrixRedaction(msg.user, msg.evt)
 	case event.EventReaction:
@@ -482,27 +492,115 @@ func (portal *Portal) handleMatrixMessages(msg portalMatrixMessage) {
 	}
 }
 
-func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
+func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event, timings messageTimings) {
+	start := time.Now()
+	ms := metricSender{portal: portal, timings: &timings}
+
 	portal.slackMessageLock.Lock()
 	defer portal.slackMessageLock.Unlock()
 
 	userTeam := sender.GetUserTeam(portal.Key.TeamID, portal.Key.UserID)
 	if userTeam == nil {
+		go ms.sendMessageMetrics(evt, errUserNotLoggedIn, "Ignoring", true)
 		return
 	}
 
 	existing := portal.bridge.DB.Message.GetByMatrixID(portal.Key, evt.ID)
 	if existing != nil {
 		portal.log.Debugln("not handling duplicate message", evt.ID)
-
+		go ms.sendMessageMetrics(evt, nil, "", true)
 		return
 	}
 
+	messageAge := timings.totalReceive
+	errorAfter := portal.bridge.Config.Bridge.MessageHandlingTimeout.ErrorAfter
+	deadline := portal.bridge.Config.Bridge.MessageHandlingTimeout.Deadline
+	isScheduled, _ := evt.Content.Raw["com.beeper.scheduled"].(bool)
+	if isScheduled {
+		portal.log.Debugfln("%s is a scheduled message, extending handling timeouts", evt.ID)
+		errorAfter *= 10
+		deadline *= 10
+	}
+
+	if errorAfter > 0 {
+		remainingTime := errorAfter - messageAge
+		if remainingTime < 0 {
+			go ms.sendMessageMetrics(evt, errTimeoutBeforeHandling, "Timeout handling", true)
+			return
+		} else if remainingTime < 1*time.Second {
+			portal.log.Warnfln("Message %s was delayed before reaching the bridge, only have %s (of %s timeout) until delay warning", evt.ID, remainingTime, errorAfter)
+		}
+		go func() {
+			time.Sleep(remainingTime)
+			ms.sendMessageMetrics(evt, errMessageTakingLong, "Timeout handling", false)
+		}()
+	}
+
+	ctx := context.Background()
+	if deadline > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, deadline)
+		defer cancel()
+	}
+	timings.preproc = time.Since(start)
+
+	start = time.Now()
+	options, fileUpload, threadTs, err := portal.convertMatrixMessage(ctx, sender, userTeam, evt)
+	timings.convert = time.Since(start)
+
+	start = time.Now()
+	var timestamp string
+	if options == nil && fileUpload == nil {
+		go ms.sendMessageMetrics(evt, err, "Error converting", true)
+		return
+	} else if options != nil {
+		portal.log.Debugfln("Sending message %s to Slack %s %s", evt.ID, portal.Key.TeamID, portal.Key.ChannelID)
+		_, timestamp, err = userTeam.Client.PostMessage(
+			portal.Key.ChannelID,
+			slack.MsgOptionAsUser(true),
+			slack.MsgOptionCompose(options...))
+		if err != nil {
+			go ms.sendMessageMetrics(evt, err, "Error sending", true)
+			return
+		}
+	} else if fileUpload != nil {
+		portal.log.Debugfln("Uploading file from message %s to Slack %s %s", evt.ID, portal.Key.TeamID, portal.Key.ChannelID)
+		file, err := userTeam.Client.UploadFile(*fileUpload)
+		if err != nil {
+			portal.log.Errorfln("Failed to upload slack attachment: %v", err)
+			go ms.sendMessageMetrics(evt, errMediaSlackUploadFailed, "Error uploading", true)
+			return
+		}
+		var shareInfo slack.ShareFileInfo
+		if info, found := file.Shares.Private[portal.Key.ChannelID]; found && len(info) > 0 {
+			shareInfo = info[0]
+		} else if info, found := file.Shares.Public[portal.Key.ChannelID]; found && len(info) > 0 {
+			shareInfo = info[0]
+		} else {
+			go ms.sendMessageMetrics(evt, errMediaSlackUploadFailed, "Error uploading", true)
+			return
+		}
+		timestamp = shareInfo.Ts
+	}
+	timings.totalSend = time.Since(start)
+	go ms.sendMessageMetrics(evt, err, "Error sending", true)
+	// TODO: store these timings in some way
+
+	if timestamp != "" {
+		dbMsg := portal.bridge.DB.Message.New()
+		dbMsg.Channel = portal.Key
+		dbMsg.SlackID = timestamp
+		dbMsg.MatrixID = evt.ID
+		dbMsg.AuthorID = portal.Key.UserID
+		dbMsg.SlackThreadID = threadTs
+		dbMsg.Insert()
+	}
+}
+
+func (portal *Portal) convertMatrixMessage(ctx context.Context, sender *User, userTeam *database.UserTeam, evt *event.Event) (options []slack.MsgOption, fileUpload *slack.FileUploadParameters, threadTs string, err error) {
 	content, ok := evt.Content.Parsed.(*event.MessageEventContent)
 	if !ok {
-		portal.log.Debugfln("Failed to handle event %s: unexpected parsed content type %T", evt.ID, evt.Content.Parsed)
-
-		return
+		return nil, nil, "", errUnexpectedParsedContentType
 	}
 
 	// TODO
@@ -523,90 +621,51 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event) {
 
 	// 	return
 	// }
-	threadTimestamp := ""
 
 	// fetch the root ID via Matrix thread
 	if content.RelatesTo != nil && content.RelatesTo.Type == event.RelThread {
 		rootMessage := portal.bridge.DB.Message.GetByMatrixID(portal.Key, content.RelatesTo.GetThreadParent())
 		if rootMessage != nil {
-			threadTimestamp = rootMessage.SlackID
+			threadTs = rootMessage.SlackID
 		}
 	}
 	// if the first method failed, try via Matrix reply
-	if threadTimestamp == "" && content.RelatesTo != nil && content.RelatesTo.InReplyTo != nil {
+	if threadTs == "" && content.RelatesTo != nil && content.RelatesTo.InReplyTo != nil {
 		parentMessage := portal.bridge.DB.Message.GetByMatrixID(portal.Key, content.GetReplyTo())
 		if parentMessage != nil {
 			if parentMessage.SlackThreadID != "" {
-				threadTimestamp = parentMessage.SlackThreadID
+				threadTs = parentMessage.SlackThreadID
 			} else {
-				threadTimestamp = parentMessage.SlackID
+				threadTs = parentMessage.SlackID
 			}
 		}
 	}
 
-	var err error
-	var options []slack.MsgOption
-	var timestamp string
-	sent := false
-
 	switch content.MsgType {
 	case event.MsgText, event.MsgEmote, event.MsgNotice:
-		if !sent {
-			options = []slack.MsgOption{slack.MsgOptionText(content.Body, false)}
-			if threadTimestamp != "" {
-				options = append(options, slack.MsgOptionTS(threadTimestamp))
-			}
+		options = []slack.MsgOption{slack.MsgOptionText(content.Body, false)}
+		if threadTs != "" {
+			options = append(options, slack.MsgOptionTS(threadTs))
 		}
+		if content.MsgType == event.MsgEmote {
+			options = append(options, slack.MsgOptionMeMessage())
+		}
+		return options, nil, threadTs, nil
 	case event.MsgAudio, event.MsgFile, event.MsgImage, event.MsgVideo:
 		data, err := portal.downloadMatrixAttachment(content)
 		if err != nil {
 			portal.log.Errorfln("Failed to download matrix attachment: %v", err)
-
-			return
+			return nil, nil, "", errMediaDownloadFailed
 		}
-
-		params := slack.FileUploadParameters{
+		fileUpload = &slack.FileUploadParameters{
 			Filename: content.Body,
 			Filetype: content.Info.MimeType,
 			Reader:   bytes.NewReader(data),
 			Channels: []string{portal.Key.ChannelID},
 		}
-
-		file, err := userTeam.Client.UploadFile(params)
-		if err != nil {
-			portal.log.Errorfln("Failed to upload slack attachment: %v", err)
-
-			return
-		}
-
-		sent = true
-		timestamp = file.Timestamp.String()
-	}
-
-	// This returns the channel id for some reason which we don't care about. It
-	// also returns the timestamp of the message that we use to identify the
-	// message.
-	if !sent {
-		_, timestamp, err = userTeam.Client.PostMessage(
-			portal.Key.ChannelID,
-			slack.MsgOptionAsUser(true),
-			slack.MsgOptionCompose(options...))
-
-		if err != nil {
-			portal.log.Errorfln("Failed to send message: %v", err)
-
-			return
-		}
-	}
-
-	if timestamp != "" {
-		dbMsg := portal.bridge.DB.Message.New()
-		dbMsg.Channel = portal.Key
-		dbMsg.SlackID = timestamp
-		dbMsg.MatrixID = evt.ID
-		dbMsg.AuthorID = portal.Key.UserID
-		dbMsg.SlackThreadID = threadTimestamp
-		dbMsg.Insert()
+		return nil, fileUpload, threadTs, nil
+	default:
+		return nil, nil, "", errUnknownMsgType
 	}
 }
 
@@ -859,6 +918,10 @@ func (portal *Portal) parseTimestamp(timestamp string) time.Time {
 	return time.Unix(seconds, nanoSeconds)
 }
 
+func (portal *Portal) getBridgeInfoStateKey() string {
+	return fmt.Sprintf("fi.mau.slack://slackgo/%s/%s", portal.Key.TeamID, portal.Key.ChannelID)
+}
+
 func (portal *Portal) getBridgeInfo() (string, event.BridgeEventContent) {
 	bridgeInfo := event.BridgeEventContent{
 		BridgeBot: portal.bridge.Bot.UserID,
@@ -882,7 +945,7 @@ func (portal *Portal) getBridgeInfo() (string, event.BridgeEventContent) {
 			DisplayName: teamInfo[0].TeamName,
 		}
 	}
-	var bridgeInfoStateKey = fmt.Sprintf("fi.mau.slack://slackgo/%s/%s", portal.Key.TeamID, portal.Key.ChannelID)
+	var bridgeInfoStateKey = portal.getBridgeInfoStateKey()
 	// if portal.GuildID == "" {
 	// 	bridgeInfoStateKey = fmt.Sprintf("fi.mau.discord://discord/dm/%s", portal.Key.ChannelID)
 	// 	bridgeInfo.Channel.ExternalURL = fmt.Sprintf("https://discord.com/channels/@me/%s", portal.Key.ChannelID)
@@ -1197,14 +1260,5 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 		portal.log.Debugfln("Received message subtype %s, which is ignored", msg.Msg.SubType)
 	default:
 		portal.log.Debugfln("Received unknown message subtype %s", msg.Msg.SubType)
-	}
-}
-
-func (portal *Portal) sendDeliveryReceipt(eventID id.EventID) {
-	if portal.bridge.Config.Bridge.DeliveryReceipts {
-		err := portal.bridge.Bot.MarkRead(portal.MXID, eventID)
-		if err != nil {
-			portal.log.Debugfln("Failed to send delivery receipt for %s: %v", eventID, err)
-		}
 	}
 }

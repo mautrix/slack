@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/slack-go/slack"
 
@@ -54,6 +55,14 @@ type BridgeConfig struct {
 	DoublePuppetServerMap      map[string]string `yaml:"double_puppet_server_map"`
 	DoublePuppetAllowDiscovery bool              `yaml:"double_puppet_allow_discovery"`
 	LoginSharedSecretMap       map[string]string `yaml:"login_shared_secret_map"`
+
+	MessageHandlingTimeout struct {
+		ErrorAfterStr string `yaml:"error_after"`
+		DeadlineStr   string `yaml:"deadline"`
+
+		ErrorAfter time.Duration `yaml:"-"`
+		Deadline   time.Duration `yaml:"-"`
+	} `yaml:"message_handling_timeout"`
 
 	Encryption bridgeconfig.EncryptionConfig `yaml:"encryption"`
 
