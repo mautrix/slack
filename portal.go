@@ -19,7 +19,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"image"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,6 +35,7 @@ import (
 	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/bridge"
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
+	"maunium.net/go/mautrix/crypto/attachment"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
@@ -1230,42 +1233,67 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 
 	switch msg.Msg.SubType {
 	case "", "me_message": // Regular messages and /me
-		content := portal.renderSlackMarkdown(msg.Msg.Text)
 		ts := portal.parseTimestamp(msg.Msg.Timestamp)
 
-		if msg.Msg.SubType == "me_message" {
-			content.MsgType = event.MsgEmote
+		var lastEventId *id.EventID
+
+		for _, file := range msg.Msg.Files {
+			content := portal.renderSlackFile(file)
+			portal.addThreadMetadata(&content, msg.Msg.ThreadTimestamp)
+			var data bytes.Buffer
+			err := userTeam.Client.GetFile(file.URLPrivateDownload, &data)
+			if err != nil {
+				portal.log.Errorfln("Error downloading Slack file %s: %v", file.ID, err)
+				continue
+			}
+			err = portal.uploadMedia(intent, data.Bytes(), &content)
+			if err != nil {
+				if errors.Is(err, mautrix.MTooLarge) {
+					portal.log.Errorfln("File %s too large for Matrix server: %v", file.ID, err)
+					continue
+				} else if httpErr, ok := err.(mautrix.HTTPError); ok && httpErr.IsStatus(413) {
+					portal.log.Errorfln("Proxy rejected too large file %s: %v", file.ID, err)
+					continue
+				} else {
+					portal.log.Errorfln("Error uploading file %s to Matrix: %v", file.ID, err)
+					continue
+				}
+			}
+			resp, err := portal.sendMatrixMessage(intent, event.EventMessage, &content, nil, ts.UnixMilli())
+			if err != nil {
+				portal.log.Warnfln("Failed to send media message %s to matrix: %v", msg.Msg.Timestamp, err)
+				continue
+			}
+			//portal.markMessageHandled(nil, msg.Msg.Timestamp, msg.Msg.ThreadTimestamp, resp.EventID, msg.Msg.User)
+			lastEventId = &resp.EventID
 		}
 
-		if msg.Msg.ThreadTimestamp != "" {
-			if content.RelatesTo == nil {
-				content.RelatesTo = &event.RelatesTo{}
-			}
-			latestThreadMessage := portal.bridge.DB.Message.GetLastInThread(portal.Key, msg.Msg.ThreadTimestamp)
-			rootThreadMessage := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Msg.ThreadTimestamp)
+		// Slack adds an empty text field even in messages that don't have text
+		if msg.Msg.Text != "" {
+			content := portal.renderSlackMarkdown(msg.Msg.Text)
 
-			var latestThreadMessageID id.EventID
-			if latestThreadMessage != nil {
-				latestThreadMessageID = latestThreadMessage.MatrixID
-			} else {
-				latestThreadMessageID = ""
+			// set m.emote if it's a /me message
+			if msg.Msg.SubType == "me_message" {
+				content.MsgType = event.MsgEmote
 			}
 
-			if rootThreadMessage != nil {
-				content.RelatesTo.SetThread(rootThreadMessage.MatrixID, latestThreadMessageID)
-			} else if latestThreadMessage != nil {
-				content.RelatesTo.SetReplyTo(latestThreadMessage.MatrixID)
+			portal.addThreadMetadata(&content, msg.Msg.ThreadTimestamp)
+
+			resp, err := portal.sendMatrixMessage(intent, event.EventMessage, &content, nil, ts.UnixMilli())
+			if err != nil {
+				portal.log.Warnfln("Failed to send message %s to matrix: %v", msg.Msg.Timestamp, err)
+				return
 			}
+
+			//portal.markMessageHandled(nil, msg.Msg.Timestamp, msg.Msg.ThreadTimestamp, resp.EventID, msg.Msg.User)
+			lastEventId = &resp.EventID
 		}
-
-		resp, err := portal.sendMatrixMessage(intent, event.EventMessage, &content, nil, ts.UnixMilli())
-		if err != nil {
-			portal.log.Warnfln("Failed to send message %s to matrix: %v", msg.Msg.Timestamp, err)
-			return
+		if lastEventId != nil {
+			// TODO: Now only the last message bridged, if it exists, will be put in the DB.
+			// This means you can't react or reply to the earlier of these messages. Needs to be fixed in DB schema
+			portal.markMessageHandled(nil, msg.Msg.Timestamp, msg.Msg.ThreadTimestamp, *lastEventId, msg.Msg.User)
+			go portal.sendDeliveryReceipt(*lastEventId)
 		}
-
-		portal.markMessageHandled(nil, msg.Msg.Timestamp, msg.Msg.ThreadTimestamp, resp.EventID, msg.Msg.User)
-		go portal.sendDeliveryReceipt(resp.EventID)
 	case "channel_topic", "channel_purpose":
 		portal.UpdateInfo(user, userTeam, nil, false)
 		portal.log.Debugfln("Received %s update, updating portal topic", msg.Msg.SubType)
@@ -1288,4 +1316,81 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 	default:
 		portal.log.Debugfln("Received unknown message subtype %s", msg.Msg.SubType)
 	}
+}
+
+func (portal *Portal) addThreadMetadata(content *event.MessageEventContent, threadTs string) (hasThread bool, hasReply bool) {
+	// fetch thread metadata and add to message
+	if threadTs != "" {
+		if content.RelatesTo == nil {
+			content.RelatesTo = &event.RelatesTo{}
+		}
+		latestThreadMessage := portal.bridge.DB.Message.GetLastInThread(portal.Key, threadTs)
+		rootThreadMessage := portal.bridge.DB.Message.GetBySlackID(portal.Key, threadTs)
+
+		var latestThreadMessageID id.EventID
+		if latestThreadMessage != nil {
+			latestThreadMessageID = latestThreadMessage.MatrixID
+		} else {
+			latestThreadMessageID = ""
+		}
+
+		if rootThreadMessage != nil {
+			content.RelatesTo.SetThread(rootThreadMessage.MatrixID, latestThreadMessageID)
+			return true, true
+		} else if latestThreadMessage != nil {
+			content.RelatesTo.SetReplyTo(latestThreadMessage.MatrixID)
+			return false, true
+		}
+	}
+	return false, false
+}
+
+func (portal *Portal) uploadMedia(intent *appservice.IntentAPI, data []byte, content *event.MessageEventContent) error {
+	uploadMimeType, file := portal.encryptFileInPlace(data, content.Info.MimeType)
+
+	req := mautrix.ReqUploadMedia{
+		ContentBytes: data,
+		ContentType:  uploadMimeType,
+	}
+	var mxc id.ContentURI
+	if portal.bridge.Config.Homeserver.AsyncMedia {
+		uploaded, err := intent.UnstableUploadAsync(req)
+		if err != nil {
+			return err
+		}
+		mxc = uploaded.ContentURI
+	} else {
+		uploaded, err := intent.UploadMedia(req)
+		if err != nil {
+			return err
+		}
+		mxc = uploaded.ContentURI
+	}
+
+	if file != nil {
+		file.URL = mxc.CUString()
+		content.File = file
+	} else {
+		content.URL = mxc.CUString()
+	}
+
+	content.Info.Size = len(data)
+	if content.Info.Width == 0 && content.Info.Height == 0 && strings.HasPrefix(content.Info.MimeType, "image/") {
+		cfg, _, _ := image.DecodeConfig(bytes.NewReader(data))
+		content.Info.Width, content.Info.Height = cfg.Width, cfg.Height
+	}
+	return nil
+}
+
+func (portal *Portal) encryptFileInPlace(data []byte, mimeType string) (string, *event.EncryptedFileInfo) {
+	if !portal.Encrypted {
+		return mimeType, nil
+	}
+
+	file := &event.EncryptedFileInfo{
+		EncryptedFile: *attachment.NewEncryptedFile(),
+		URL:           "",
+	}
+	file.EncryptInPlace(data)
+	return "application/octet-stream", file
 }
