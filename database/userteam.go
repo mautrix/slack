@@ -120,6 +120,10 @@ func (ut *UserTeam) GetRemoteName() string {
 	return ut.SlackEmail // TODO: maybe get a better name for this purpose
 }
 
+func (ut *UserTeam) IsLoggedIn() bool {
+	return ut.Token != ""
+}
+
 func (ut *UserTeam) Scan(row dbutil.Scannable) *UserTeam {
 	var token sql.NullString
 	var cookieToken sql.NullString

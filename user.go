@@ -331,20 +331,16 @@ func (user *User) IsLoggedInTeam(email, team string) bool {
 
 func (user *User) LogoutTeam(email, team string) error {
 	userTeam := user.bridge.DB.UserTeam.GetBySlackTeam(user.MXID, email, team)
-	if userTeam == nil {
+	if userTeam == nil || !userTeam.IsLoggedIn() {
 		return ErrNotLoggedIn
 	}
 
-	// If this is the last slack team, also disconnect the double puppet.
-	if len(user.Teams) == 1 {
-		// puppet := user.bridge.GetPuppetByID(user.ID)
-		// var puppet Puppet
-		// if puppet.CustomMXID != "" {
-		// 	err := puppet.SwitchCustomMXID("", "")
-		// 	if err != nil {
-		// 		user.log.Warnln("Failed to logout-matrix while logging out of Slack:", err)
-		// 	}
-		// }
+	puppet := user.bridge.GetPuppetByID(userTeam.Key.TeamID, userTeam.Key.SlackID)
+	if puppet.CustomMXID != "" {
+		err := puppet.SwitchCustomMXID("", "")
+		if err != nil {
+			user.log.Warnln("Failed to logout-matrix while logging out of Slack:", err)
+		}
 	}
 
 	if userTeam.RTM != nil {

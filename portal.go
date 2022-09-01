@@ -669,6 +669,128 @@ func (portal *Portal) convertMatrixMessage(ctx context.Context, sender *User, us
 	}
 }
 
+func (portal *Portal) handleMatrixReaction(user *User, evt *event.Event) {
+	// if user.ID != portal.Key.Receiver {
+	// 	return
+	// }
+
+	reaction := evt.Content.AsReaction()
+	if reaction.RelatesTo.Type != event.RelAnnotation {
+		portal.log.Errorfln("Ignoring reaction %s due to unknown m.relates_to data", evt.ID)
+
+		return
+	}
+
+	var slackID string
+
+	msg := portal.bridge.DB.Message.GetByMatrixID(portal.Key, reaction.RelatesTo.EventID)
+
+	// Due to the differences in attachments between Slack and Matrix, if a
+	// user reacts to a media message on discord our lookup above will fail
+	// because the relation of matrix media messages to attachments in handled
+	// in the attachments table instead of messages so we need to check that
+	// before continuing.
+	//
+	// This also leads to interesting problems when a Slack message comes in
+	// with multiple attachments. A user can react to each one individually on
+	// Matrix, which will cause us to send it twice. Slack tends to ignore
+	// this, but if the user removes one of them, discord removes it and now
+	// they're out of sync. Perhaps we should add a counter to the reactions
+	// table to keep them in sync and to avoid sending duplicates to Slack.
+	if msg == nil {
+		attachment := portal.bridge.DB.Attachment.GetByMatrixID(portal.Key, reaction.RelatesTo.EventID)
+		slackID = attachment.SlackMessageID
+	} else {
+		if msg.SlackID == "" {
+			portal.log.Debugf("Message %s has not yet been sent to slack", reaction.RelatesTo.EventID)
+
+			return
+		}
+
+		slackID = msg.SlackID
+	}
+
+	// Figure out if this is a custom emoji or not.
+	emojiID := ""
+	// emojiID := reaction.RelatesTo.Key
+	// if strings.HasPrefix(emojiID, "mxc://") {
+	// 	uri, _ := id.ParseContentURI(emojiID)
+	// 	emoji := portal.bridge.DB.Emoji.GetByMatrixURL(uri)
+	// 	if emoji == nil {
+	// 		portal.log.Errorfln("failed to find emoji for %s", emojiID)
+
+	// 		return
+	// 	}
+
+	// 	emojiID = emoji.APIName()
+	// }
+
+	// err := user.Session.MessageReactionAdd(portal.Key.ChannelID, discordID, emojiID)
+	// if err != nil {
+	// 	portal.log.Debugf("Failed to send reaction %s id:%s: %v", portal.Key, discordID, err)
+
+	// 	return
+	// }
+
+	dbReaction := portal.bridge.DB.Reaction.New()
+	dbReaction.Channel.TeamID = portal.Key.TeamID
+	dbReaction.Channel.UserID = portal.Key.UserID
+	dbReaction.Channel.ChannelID = portal.Key.ChannelID
+	dbReaction.MatrixEventID = evt.ID
+	dbReaction.SlackMessageID = slackID
+	// dbReaction.AuthorID = user.ID
+	dbReaction.MatrixName = reaction.RelatesTo.Key
+	dbReaction.SlackID = emojiID
+	dbReaction.Insert()
+}
+
+func (portal *Portal) handleMatrixRedaction(user *User, evt *event.Event) {
+	userTeam := user.GetUserTeam(portal.Key.TeamID, portal.Key.UserID)
+	if userTeam == nil {
+		go portal.sendMessageMetrics(evt, errUserNotLoggedIn, "Ignoring", nil)
+		return
+	}
+	portal.log.Debugfln("Received redaction %s from %s", evt.ID, evt.Sender)
+
+	// First look if we're redacting a message
+	message := portal.bridge.DB.Message.GetByMatrixID(portal.Key, evt.Redacts)
+	if message != nil {
+		if message.SlackID != "" {
+			_, _, err := userTeam.Client.DeleteMessage(portal.Key.ChannelID, message.SlackID)
+			if err != nil {
+				portal.log.Debugfln("Failed to delete slack message %s: %v", message.SlackID, err)
+			} else {
+				message.Delete()
+			}
+			go portal.sendMessageMetrics(evt, err, "Error sending", nil)
+		}
+
+		return
+	}
+
+	// Now check if it's a reaction.
+	reaction := portal.bridge.DB.Reaction.GetByMatrixID(portal.Key, evt.Redacts)
+	if reaction != nil {
+		if reaction.SlackID != "" {
+			err := userTeam.Client.RemoveReaction(reaction.SlackID, slack.ItemRef{
+				Channel:   portal.Key.ChannelID,
+				Timestamp: reaction.SlackMessageID,
+			})
+			if err != nil {
+				portal.log.Debugfln("Failed to delete reaction %s for message %s: %v", reaction.SlackID, reaction.SlackMessageID, err)
+			} else {
+				reaction.Delete()
+			}
+			go portal.sendMessageMetrics(evt, err, "Error sending", nil)
+		}
+
+		return
+	}
+
+	portal.log.Warnfln("Failed to redact %s@%s: no event found", portal.Key, evt.Redacts)
+	go portal.sendMessageMetrics(evt, errTargetNotFound, "Error sending", nil)
+}
+
 func (portal *Portal) HandleMatrixLeave(brSender bridge.User) {
 	portal.log.Debugln("User left private chat portal, cleaning up and deleting...")
 	portal.delete()
@@ -779,119 +901,6 @@ func (portal *Portal) getMatrixUsers() ([]id.UserID, error) {
 	}
 
 	return users, nil
-}
-
-func (portal *Portal) handleMatrixReaction(user *User, evt *event.Event) {
-	// if user.ID != portal.Key.Receiver {
-	// 	return
-	// }
-
-	reaction := evt.Content.AsReaction()
-	if reaction.RelatesTo.Type != event.RelAnnotation {
-		portal.log.Errorfln("Ignoring reaction %s due to unknown m.relates_to data", evt.ID)
-
-		return
-	}
-
-	var slackID string
-
-	msg := portal.bridge.DB.Message.GetByMatrixID(portal.Key, reaction.RelatesTo.EventID)
-
-	// Due to the differences in attachments between Slack and Matrix, if a
-	// user reacts to a media message on discord our lookup above will fail
-	// because the relation of matrix media messages to attachments in handled
-	// in the attachments table instead of messages so we need to check that
-	// before continuing.
-	//
-	// This also leads to interesting problems when a Slack message comes in
-	// with multiple attachments. A user can react to each one individually on
-	// Matrix, which will cause us to send it twice. Slack tends to ignore
-	// this, but if the user removes one of them, discord removes it and now
-	// they're out of sync. Perhaps we should add a counter to the reactions
-	// table to keep them in sync and to avoid sending duplicates to Slack.
-	if msg == nil {
-		attachment := portal.bridge.DB.Attachment.GetByMatrixID(portal.Key, reaction.RelatesTo.EventID)
-		slackID = attachment.SlackMessageID
-	} else {
-		if msg.SlackID == "" {
-			portal.log.Debugf("Message %s has not yet been sent to slack", reaction.RelatesTo.EventID)
-
-			return
-		}
-
-		slackID = msg.SlackID
-	}
-
-	// Figure out if this is a custom emoji or not.
-	emojiID := ""
-	// emojiID := reaction.RelatesTo.Key
-	// if strings.HasPrefix(emojiID, "mxc://") {
-	// 	uri, _ := id.ParseContentURI(emojiID)
-	// 	emoji := portal.bridge.DB.Emoji.GetByMatrixURL(uri)
-	// 	if emoji == nil {
-	// 		portal.log.Errorfln("failed to find emoji for %s", emojiID)
-
-	// 		return
-	// 	}
-
-	// 	emojiID = emoji.APIName()
-	// }
-
-	// err := user.Session.MessageReactionAdd(portal.Key.ChannelID, discordID, emojiID)
-	// if err != nil {
-	// 	portal.log.Debugf("Failed to send reaction %s id:%s: %v", portal.Key, discordID, err)
-
-	// 	return
-	// }
-
-	dbReaction := portal.bridge.DB.Reaction.New()
-	dbReaction.Channel.TeamID = portal.Key.TeamID
-	dbReaction.Channel.UserID = portal.Key.UserID
-	dbReaction.Channel.ChannelID = portal.Key.ChannelID
-	dbReaction.MatrixEventID = evt.ID
-	dbReaction.SlackMessageID = slackID
-	// dbReaction.AuthorID = user.ID
-	dbReaction.MatrixName = reaction.RelatesTo.Key
-	dbReaction.SlackID = emojiID
-	dbReaction.Insert()
-}
-
-func (portal *Portal) handleMatrixRedaction(user *User, evt *event.Event) {
-	// if user.ID != portal.Key.Receiver {
-	// 	return
-	// }
-
-	// First look if we're redacting a message
-	message := portal.bridge.DB.Message.GetByMatrixID(portal.Key, evt.Redacts)
-	if message != nil {
-		// if message.SlackID != "" {
-		// 	err := user.Session.ChannelMessageDelete(portal.Key.ChannelID, message.SlackID)
-		// 	if err != nil {
-		// 		portal.log.Debugfln("Failed to delete discord message %s: %v", message.SlackID, err)
-		// 	} else {
-		// 		message.Delete()
-		// 	}
-		// }
-
-		return
-	}
-
-	// Now check if it's a reaction.
-	reaction := portal.bridge.DB.Reaction.GetByMatrixID(portal.Key, evt.Redacts)
-	if reaction != nil {
-		// if reaction.SlackID != "" {
-		// 	err := user.Session.MessageReactionRemove(portal.Key.ChannelID, reaction.SlackMessageID, reaction.SlackID, reaction.AuthorID)
-		// 	if err != nil {
-		// 		portal.log.Debugfln("Failed to delete reaction %s for message %s: %v", reaction.SlackID, reaction.SlackMessageID, err)
-		// 	} else {
-		// 		reaction.Delete()
-		// 	}
-		// }
-
-		return
-	}
-
-	portal.log.Warnfln("Failed to redact %s@%s: no event found", portal.Key, evt.Redacts)
 }
 
 func (portal *Portal) parseTimestamp(timestamp string) time.Time {
@@ -1208,11 +1217,16 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 		return
 	}
 
-	portal.log.Debugfln("Starting handling of %s by %s, subtype %s", msg.Msg.Timestamp, msg.Msg.User, msg.Msg.SubType)
+	var intent *appservice.IntentAPI
+	if msg.Msg.User == "" {
+		portal.log.Debugfln("Starting handling of %s (no sender), subtype %s", msg.Msg.Timestamp, msg.Msg.SubType)
+	} else {
+		portal.log.Debugfln("Starting handling of %s by %s, subtype %s", msg.Msg.Timestamp, msg.Msg.User, msg.Msg.SubType)
 
-	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.Msg.User)
-	puppet.UpdateInfo(user, portal.Key.UserID, nil)
-	intent := puppet.IntentFor(portal)
+		puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.Msg.User)
+		puppet.UpdateInfo(user, portal.Key.UserID, nil)
+		intent = puppet.IntentFor(portal)
+	}
 
 	switch msg.Msg.SubType {
 	case "", "me_message": // Regular messages and /me
@@ -1255,6 +1269,19 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 	case "channel_topic", "channel_purpose":
 		portal.UpdateInfo(user, userTeam, nil, false)
 		portal.log.Debugfln("Received %s update, updating portal topic", msg.Msg.SubType)
+	case "message_deleted":
+		// Slack doesn't tell us who deleted a message, so there is no intent here
+		message := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Msg.DeletedTimestamp)
+		if message == nil {
+			portal.log.Warnfln("Failed to redact %s: Matrix event not found", msg.Msg.DeletedTimestamp)
+			return
+		}
+		_, err := portal.MainIntent().RedactEvent(portal.MXID, message.MatrixID)
+		if err != nil {
+			portal.log.Errorln("Failed to redact %s: %v", msg.Msg.DeletedTimestamp, err)
+			return
+		}
+		message.Delete()
 	case "message_replied", "group_join", "group_leave", "channel_join", "channel_leave", "thread_broadcast": // Not yet an exhaustive list.
 		// These subtypes are simply ignored, because they're handled elsewhere/in other ways (Slack sends multiple info of these events)
 		portal.log.Debugfln("Received message subtype %s, which is ignored", msg.Msg.SubType)
