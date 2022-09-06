@@ -17,6 +17,8 @@
 package main
 
 import (
+	"net/url"
+
 	"maunium.net/go/mautrix/bridge/commands"
 )
 
@@ -106,7 +108,8 @@ func fnLoginToken(ce *WrappedCommandEvent) {
 		return
 	}
 
-	info, err := ce.User.TokenLogin(ce.Args[0], ce.Args[1])
+	cookieToken, _ := url.PathUnescape(ce.Args[1])
+	info, err := ce.User.TokenLogin(ce.Args[0], cookieToken)
 	if err != nil {
 		ce.Reply("Failed to log in with token: %v", err)
 	} else {
