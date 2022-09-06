@@ -155,17 +155,8 @@ func (ut *UserTeam) Upsert() {
 			SET slack_email=excluded.slack_email, team_name=excluded.team_name, token=excluded.token, cookie_token=excluded.cookie_token
 	`
 
-	var token sql.NullString
-	var cookieToken sql.NullString
-
-	if ut.Token != "" {
-		token.String = ut.Token
-		token.Valid = true
-	}
-	if ut.CookieToken != "" {
-		cookieToken.String = ut.CookieToken
-		cookieToken.Valid = true
-	}
+	token := sqlNullString(ut.Token)
+	cookieToken := sqlNullString(ut.CookieToken)
 
 	_, err := ut.db.Exec(query, ut.Key.MXID, ut.SlackEmail, ut.Key.SlackID, ut.TeamName, ut.Key.TeamID, token, cookieToken)
 

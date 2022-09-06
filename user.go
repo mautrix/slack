@@ -426,7 +426,7 @@ func (user *User) connectTeam(userTeam *database.UserTeam) error {
 
 	go user.slackMessageHandler(userTeam)
 
-	user.SyncChannels(userTeam, false)
+	user.UpdateTeam(userTeam, false)
 
 	return nil
 }
@@ -450,6 +450,48 @@ func (user *User) SyncChannels(userTeam *database.UserTeam, force bool) error {
 		}
 	}
 	return nil
+}
+
+func (user *User) UpdateTeam(userTeam *database.UserTeam, force bool) error {
+	user.log.Debugfln("Updating team info for team %s", userTeam.Key.TeamID)
+	currentTeamInfo := user.bridge.DB.TeamInfo.GetBySlackTeam(userTeam.Key.TeamID)
+	if currentTeamInfo == nil {
+		currentTeamInfo = user.bridge.DB.TeamInfo.New()
+		currentTeamInfo.TeamID = userTeam.Key.TeamID
+	}
+
+	teamInfo, err := userTeam.Client.GetTeamInfo()
+	if err != nil {
+		user.log.Errorfln("Error fetching info for team %s: %v", userTeam.Key.TeamID, err)
+		return err
+	}
+	changed := false
+
+	if currentTeamInfo.TeamName != teamInfo.Name {
+		currentTeamInfo.TeamName = teamInfo.Name
+		changed = true
+	}
+	if currentTeamInfo.TeamDomain != teamInfo.Domain {
+		currentTeamInfo.TeamDomain = teamInfo.Domain
+		changed = true
+	}
+	if currentTeamInfo.TeamUrl != teamInfo.URL {
+		currentTeamInfo.TeamUrl = teamInfo.URL
+		changed = true
+	}
+	if currentTeamInfo.Avatar != teamInfo.Icon["image_original"] {
+		avatar, err := uploadAvatar(user.bridge.AS.BotIntent(), teamInfo.Icon["image_original"].(string))
+		if err != nil {
+			user.log.Warnfln("Error uploading new team avatar for team %s: %v", userTeam.Key.TeamID, err)
+		} else {
+			currentTeamInfo.Avatar = teamInfo.Icon["image_original"].(string)
+			currentTeamInfo.AvatarUrl = avatar
+			changed = true
+		}
+	}
+
+	currentTeamInfo.Upsert()
+	return user.SyncChannels(userTeam, changed || force)
 }
 
 func (user *User) Connect() error {

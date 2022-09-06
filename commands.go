@@ -33,7 +33,7 @@ func (br *SlackBridge) RegisterCommands() {
 		cmdLogin,
 		cmdLoginToken,
 		cmdLogout,
-		cmdSyncChannels,
+		cmdSyncTeams,
 		cmdDeletePortal,
 	)
 }
@@ -142,22 +142,21 @@ func fnLogout(ce *WrappedCommandEvent) {
 	}
 }
 
-var cmdSyncChannels = &commands.FullHandler{
-	Func: wrapCommand(fnSyncChannels),
-	Name: "sync-channels",
+var cmdSyncTeams = &commands.FullHandler{
+	Func: wrapCommand(fnSyncTeams),
+	Name: "sync-teams",
 	Help: commands.HelpMeta{
 		Section:     commands.HelpSectionGeneral,
-		Description: "Synchronize channel information from Slack into Matrix",
+		Description: "Synchronize team information and channels from Slack into Matrix",
 	},
 	RequiresLogin: true,
 }
 
-func fnSyncChannels(ce *WrappedCommandEvent) {
-	ce.Log.Warnfln("%v", ce.User.Teams)
+func fnSyncTeams(ce *WrappedCommandEvent) {
 	for _, team := range ce.User.Teams {
-		ce.User.SyncChannels(team, true)
+		ce.User.UpdateTeam(team, true)
 	}
-	ce.Reply("Done syncing channels.")
+	ce.Reply("Done syncing teams.")
 }
 
 var cmdDeletePortal = &commands.FullHandler{

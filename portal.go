@@ -950,29 +950,18 @@ func (portal *Portal) getBridgeInfo() (string, event.BridgeEventContent) {
 		},
 	}
 
-	teamInfo := portal.bridge.DB.UserTeam.GetAllBySlackTeamID(portal.Key.TeamID)
-	if len(teamInfo) > 0 {
+	teamInfo := portal.bridge.DB.TeamInfo.GetBySlackTeam(portal.Key.TeamID)
+	if teamInfo != nil {
+		portal.log.Warnln(teamInfo)
 		bridgeInfo.Network = &event.BridgeInfoSection{
 			ID:          portal.Key.TeamID,
-			DisplayName: teamInfo[0].TeamName,
+			DisplayName: teamInfo.TeamName,
+			ExternalURL: teamInfo.TeamUrl,
+			AvatarURL:   teamInfo.AvatarUrl.CUString(),
 		}
 	}
 	var bridgeInfoStateKey = portal.getBridgeInfoStateKey()
-	// if portal.GuildID == "" {
-	// 	bridgeInfoStateKey = fmt.Sprintf("fi.mau.discord://discord/dm/%s", portal.Key.ChannelID)
-	// 	bridgeInfo.Channel.ExternalURL = fmt.Sprintf("https://discord.com/channels/@me/%s", portal.Key.ChannelID)
-	// } else {
-	// 	bridgeInfo.Network = &event.BridgeInfoSection{
-	// 		ID: portal.GuildID,
-	// 	}
-	// 	if portal.Guild != nil {
-	// 		bridgeInfo.Network.DisplayName = portal.Guild.Name
-	// 		bridgeInfo.Network.AvatarURL = portal.Guild.AvatarURL.CUString()
-	// 		// TODO is it possible to find the URL?
-	// 	}
-	// 	bridgeInfoStateKey = fmt.Sprintf("fi.mau.discord://discord/%s/%s", portal.GuildID, portal.Key.ChannelID)
-	// 	bridgeInfo.Channel.ExternalURL = fmt.Sprintf("https://discord.com/channels/%s/%s", portal.GuildID, portal.Key.ChannelID)
-	// }
+
 	return bridgeInfoStateKey, bridgeInfo
 }
 

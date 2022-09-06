@@ -17,6 +17,7 @@
 package database
 
 import (
+	"database/sql"
 	_ "embed"
 
 	_ "github.com/lib/pq"
@@ -38,6 +39,7 @@ type Database struct {
 	Message    *MessageQuery
 	Reaction   *ReactionQuery
 	Attachment *AttachmentQuery
+	TeamInfo   *TeamInfoQuery
 }
 
 func New(baseDB *dbutil.Database, log maulogger.Logger) *Database {
@@ -72,6 +74,10 @@ func New(baseDB *dbutil.Database, log maulogger.Logger) *Database {
 		db:  db,
 		log: log.Sub("Attachment"),
 	}
+	db.TeamInfo = &TeamInfoQuery{
+		db:  db,
+		log: log.Sub("TeamInfo"),
+	}
 
 	return db
 }
@@ -81,4 +87,14 @@ func strPtr(val string) *string {
 		return nil
 	}
 	return &val
+}
+
+func sqlNullString(val string) (ret sql.NullString) {
+	if val == "" {
+		return ret
+	} else {
+		ret.String = val
+		ret.Valid = true
+		return ret
+	}
 }
