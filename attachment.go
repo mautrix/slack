@@ -2,10 +2,7 @@ package main
 
 import (
 	"bytes"
-	// "fmt"
 	"image"
-	// "io"
-	// "net/http"
 	"strings"
 
 	"maunium.net/go/mautrix/crypto/attachment"
@@ -15,27 +12,6 @@ import (
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 )
-
-// func (portal *Portal) downloadDiscordAttachment(url string) ([]byte, error) {
-// 	req, err := http.NewRequest(http.MethodGet, url, nil)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	for key, value := range discordgo.DroidDownloadHeaders {
-// 		req.Header.Set(key, value)
-// 	}
-
-// 	resp, err := http.DefaultClient.Do(req)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	defer resp.Body.Close()
-// 	if resp.StatusCode > 300 {
-// 		data, _ := io.ReadAll(resp.Body)
-// 		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, data)
-// 	}
-// 	return io.ReadAll(resp.Body)
-// }
 
 func (portal *Portal) downloadMatrixAttachment(content *event.MessageEventContent) ([]byte, error) {
 	var file *event.EncryptedFileInfo
@@ -66,24 +42,12 @@ func (portal *Portal) downloadMatrixAttachment(content *event.MessageEventConten
 	return data, nil
 }
 
-func (portal *Portal) uploadMatrixAttachment(intent *appservice.IntentAPI, data []byte, content *event.MessageEventContent) error {
-	content.Info.Size = len(data)
-	if content.Info.Width == 0 && content.Info.Height == 0 && strings.HasPrefix(content.Info.MimeType, "image/") {
-		cfg, _, _ := image.DecodeConfig(bytes.NewReader(data))
-		content.Info.Width = cfg.Width
-		content.Info.Height = cfg.Height
-	}
+func (portal *Portal) uploadMedia(intent *appservice.IntentAPI, data []byte, content *event.MessageEventContent) error {
+	uploadMimeType, file := portal.encryptFileInPlace(data, content.Info.MimeType)
 
-	uploadMime := content.Info.MimeType
-	var file *attachment.EncryptedFile
-	if portal.Encrypted {
-		file = attachment.NewEncryptedFile()
-		file.EncryptInPlace(data)
-		uploadMime = "application/octet-stream"
-	}
 	req := mautrix.ReqUploadMedia{
 		ContentBytes: data,
-		ContentType:  uploadMime,
+		ContentType:  uploadMimeType,
 	}
 	var mxc id.ContentURI
 	if portal.bridge.Config.Homeserver.AsyncMedia {
@@ -101,13 +65,29 @@ func (portal *Portal) uploadMatrixAttachment(intent *appservice.IntentAPI, data 
 	}
 
 	if file != nil {
-		content.File = &event.EncryptedFileInfo{
-			EncryptedFile: *file,
-			URL:           mxc.CUString(),
-		}
+		file.URL = mxc.CUString()
+		content.File = file
 	} else {
 		content.URL = mxc.CUString()
 	}
 
+	content.Info.Size = len(data)
+	if content.Info.Width == 0 && content.Info.Height == 0 && strings.HasPrefix(content.Info.MimeType, "image/") {
+		cfg, _, _ := image.DecodeConfig(bytes.NewReader(data))
+		content.Info.Width, content.Info.Height = cfg.Width, cfg.Height
+	}
 	return nil
+}
+
+func (portal *Portal) encryptFileInPlace(data []byte, mimeType string) (string, *event.EncryptedFileInfo) {
+	if !portal.Encrypted {
+		return mimeType, nil
+	}
+
+	file := &event.EncryptedFileInfo{
+		EncryptedFile: *attachment.NewEncryptedFile(),
+		URL:           "",
+	}
+	file.EncryptInPlace(data)
+	return "application/octet-stream", file
 }

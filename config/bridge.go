@@ -138,8 +138,8 @@ type ChannelNameParams struct {
 }
 
 func (bc BridgeConfig) FormatChannelName(params ChannelNameParams) string {
-	if params.Type == database.ChannelTypeDM {
-		return params.Name // TODO: should there be a separate template for formatting a DM name as well?
+	if params.Type == database.ChannelTypeDM || params.Type == database.ChannelTypeGroupDM {
+		return ""
 	} else {
 		var buffer strings.Builder
 		_ = bc.channelNameTemplate.Execute(&buffer, params)

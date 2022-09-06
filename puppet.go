@@ -221,7 +221,6 @@ func (puppet *Puppet) updateName(source *User) bool {
 		err := puppet.DefaultIntent().SetDisplayName(newName)
 		if err == nil {
 			puppet.Name = newName
-			go puppet.updatePortalName()
 			puppet.Update()
 		} else {
 			puppet.log.Warnln("failed to set display name:", err)
@@ -231,20 +230,6 @@ func (puppet *Puppet) updateName(source *User) bool {
 	}
 
 	return false
-}
-
-func (puppet *Puppet) updatePortalName() {
-	puppet.updatePortalMeta(func(portal *Portal) {
-		if portal.MXID != "" {
-			_, err := portal.MainIntent().SetRoomName(portal.MXID, puppet.Name)
-			if err != nil {
-				portal.log.Warnln("Failed to set name:", err)
-			}
-		}
-
-		portal.Name = puppet.Name
-		portal.Update()
-	})
 }
 
 func (puppet *Puppet) updateAvatar(source *User) bool {
@@ -385,7 +370,7 @@ func (puppet *Puppet) UpdateAvatar(info *slack.User) bool {
 	return true
 }
 
-func (puppet *Puppet) UpdateInfo(source *User, sourceID string, info *slack.User) {
+func (puppet *Puppet) UpdateInfo(userTeam *database.UserTeam, info *slack.User) {
 	puppet.syncLock.Lock()
 	defer puppet.syncLock.Unlock()
 
@@ -395,13 +380,11 @@ func (puppet *Puppet) UpdateInfo(source *User, sourceID string, info *slack.User
 		}
 
 		var err error
-		puppet.log.Debugfln("Fetching info through team %s to update", puppet.TeamID)
-
-		userTeam := source.GetUserTeam(puppet.TeamID, sourceID)
+		puppet.log.Debugfln("Fetching info through team %s to update", userTeam.Key.TeamID)
 
 		info, err = userTeam.Client.GetUserInfo(puppet.UserID)
 		if err != nil {
-			puppet.log.Errorfln("Failed to fetch info through %s: %v", puppet.TeamID, err)
+			puppet.log.Errorfln("Failed to fetch info through %s: %v", userTeam.Key.TeamID, err)
 			return
 		}
 	}

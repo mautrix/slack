@@ -21,7 +21,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"image"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,7 +34,6 @@ import (
 	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/bridge"
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
-	"maunium.net/go/mautrix/crypto/attachment"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
@@ -214,7 +212,7 @@ func (portal *Portal) syncParticipants(source *User, sourceTeam *database.UserTe
 	for _, participant := range participants {
 		puppet := portal.bridge.GetPuppetByID(sourceTeam.Key.TeamID, participant)
 
-		puppet.UpdateInfo(source, participant, nil)
+		puppet.UpdateInfo(sourceTeam, nil)
 
 		user := portal.bridge.GetUserByID(sourceTeam.Key.TeamID, participant)
 		if user != nil {
@@ -253,7 +251,7 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	// TODO: bridge state stuff
 
 	plainName, err := portal.GetPlainName(channel, userTeam)
-	if err == nil {
+	if err == nil && plainName != "" {
 		formattedName := portal.bridge.Config.Bridge.FormatChannelName(config.ChannelNameParams{
 			Name: plainName,
 			Type: portal.getChannelType(channel),
@@ -305,7 +303,7 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		return err
 	}
 
-	portal.NameSet = true
+	portal.NameSet = portal.Name != ""
 	portal.TopicSet = true
 	portal.MXID = resp.RoomID
 	portal.bridge.portalsLock.Lock()
@@ -324,12 +322,13 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	portal.ensureUserInvited(user)
 	user.syncChatDoublePuppetDetails(portal, true)
 
-	members := channel.Members
-	if len(members) == 0 && channel.IsIM {
-		members = append(members, channel.User)
-		members = append(members, portal.Key.UserID)
+	var members []string
+	// no members are included in channels, only in group DMs
+	if portal.getChannelType(channel) == database.ChannelTypeDM {
+		members = []string{channel.User, portal.Key.UserID}
+	} else if portal.getChannelType(channel) == database.ChannelTypeGroupDM {
+		members = channel.Members
 	}
-
 	portal.syncParticipants(user, userTeam, members)
 
 	// if portal.IsPrivateChat() {
@@ -990,12 +989,12 @@ func (portal *Portal) getChannelType(channel *slack.Channel) database.ChannelTyp
 	}
 
 	// Slack Conversations structures are weird
-	if channel.IsChannel {
-		return database.ChannelTypeChannel
+	if channel.GroupConversation.Conversation.IsMpIM {
+		return database.ChannelTypeGroupDM
 	} else if channel.GroupConversation.Conversation.IsIM {
 		return database.ChannelTypeDM
-	} else if channel.GroupConversation.Conversation.IsMpIM {
-		return database.ChannelTypeGroupDM
+	} else if channel.IsChannel {
+		return database.ChannelTypeChannel
 	}
 
 	return database.ChannelTypeUnknown
@@ -1005,15 +1004,8 @@ func (portal *Portal) GetPlainName(meta *slack.Channel, sourceTeam *database.Use
 	channelType := portal.getChannelType(meta)
 	var plainName string
 
-	if channelType == database.ChannelTypeDM {
-		user, err := sourceTeam.Client.GetUserInfo(meta.User)
-		if err != nil {
-			portal.log.Warnfln("failed to lookup user %s: %w", user, err)
-			return "", err
-		} else {
-			portal.log.Debugfln("user: %#v", user)
-			plainName = user.RealName
-		}
+	if channelType == database.ChannelTypeDM || channelType == database.ChannelTypeGroupDM {
+		return "", nil
 	} else {
 		plainName = meta.Name
 	}
@@ -1030,7 +1022,7 @@ func (portal *Portal) UpdateNameDirect(name string) bool {
 	portal.log.Debugfln("Updating name %q -> %q", portal.Name, name)
 	portal.Name = name
 	portal.NameSet = false
-	if portal.MXID != "" {
+	if portal.MXID != "" && portal.Name != "" {
 		_, err := portal.MainIntent().SetRoomName(portal.MXID, portal.Name)
 		if err != nil {
 			portal.log.Warnln("Failed to update room name:", err)
@@ -1158,15 +1150,7 @@ func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, me
 		changed = true
 	}
 
-	switch portal.Type {
-	case database.ChannelTypeDM:
-		if portal.DMUserID != "" {
-			puppet := portal.bridge.GetPuppetByID(sourceTeam.Key.TeamID, portal.DMUserID)
-			puppet.UpdateInfo(source, portal.Key.UserID, nil)
-			changed = portal.UpdateAvatarFromPuppet(puppet) || changed
-			changed = portal.UpdateNameDirect(puppet.Name) || changed
-		}
-	default:
+	if portal.Type == database.ChannelTypeChannel {
 		changed = portal.UpdateName(meta, sourceTeam) || changed
 	}
 
@@ -1216,7 +1200,7 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 		portal.log.Debugfln("Starting handling of %s by %s, subtype %s", msg.Msg.Timestamp, msg.Msg.User, msg.Msg.SubType)
 
 		puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.Msg.User)
-		puppet.UpdateInfo(user, portal.Key.UserID, nil)
+		puppet.UpdateInfo(userTeam, nil)
 		intent = puppet.IntentFor(portal)
 	}
 
@@ -1332,54 +1316,4 @@ func (portal *Portal) addThreadMetadata(content *event.MessageEventContent, thre
 		}
 	}
 	return false, false
-}
-
-func (portal *Portal) uploadMedia(intent *appservice.IntentAPI, data []byte, content *event.MessageEventContent) error {
-	uploadMimeType, file := portal.encryptFileInPlace(data, content.Info.MimeType)
-
-	req := mautrix.ReqUploadMedia{
-		ContentBytes: data,
-		ContentType:  uploadMimeType,
-	}
-	var mxc id.ContentURI
-	if portal.bridge.Config.Homeserver.AsyncMedia {
-		uploaded, err := intent.UnstableUploadAsync(req)
-		if err != nil {
-			return err
-		}
-		mxc = uploaded.ContentURI
-	} else {
-		uploaded, err := intent.UploadMedia(req)
-		if err != nil {
-			return err
-		}
-		mxc = uploaded.ContentURI
-	}
-
-	if file != nil {
-		file.URL = mxc.CUString()
-		content.File = file
-	} else {
-		content.URL = mxc.CUString()
-	}
-
-	content.Info.Size = len(data)
-	if content.Info.Width == 0 && content.Info.Height == 0 && strings.HasPrefix(content.Info.MimeType, "image/") {
-		cfg, _, _ := image.DecodeConfig(bytes.NewReader(data))
-		content.Info.Width, content.Info.Height = cfg.Width, cfg.Height
-	}
-	return nil
-}
-
-func (portal *Portal) encryptFileInPlace(data []byte, mimeType string) (string, *event.EncryptedFileInfo) {
-	if !portal.Encrypted {
-		return mimeType, nil
-	}
-
-	file := &event.EncryptedFileInfo{
-		EncryptedFile: *attachment.NewEncryptedFile(),
-		URL:           "",
-	}
-	file.EncryptInPlace(data)
-	return "application/octet-stream", file
 }
