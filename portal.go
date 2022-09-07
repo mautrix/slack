@@ -933,25 +933,30 @@ func (portal *Portal) getBridgeInfoStateKey() string {
 	return fmt.Sprintf("fi.mau.slack://slackgo/%s/%s", portal.Key.TeamID, portal.Key.ChannelID)
 }
 
-func (portal *Portal) getBridgeInfo() (string, event.BridgeEventContent) {
-	bridgeInfo := event.BridgeEventContent{
-		BridgeBot: portal.bridge.Bot.UserID,
-		Creator:   portal.MainIntent().UserID,
-		Protocol: event.BridgeInfoSection{
-			ID:          "slackgo",
-			DisplayName: "Slack",
-			AvatarURL:   portal.bridge.Config.AppService.Bot.ParsedAvatar.CUString(),
-			ExternalURL: "https://slack.com/",
+func (portal *Portal) getBridgeInfo() (string, CustomBridgeInfoContent) {
+	bridgeInfo := CustomBridgeInfoContent{
+		BridgeEventContent: event.BridgeEventContent{
+			BridgeBot: portal.bridge.Bot.UserID,
+			Creator:   portal.MainIntent().UserID,
+			Protocol: event.BridgeInfoSection{
+				ID:          "slackgo",
+				DisplayName: "Slack",
+				AvatarURL:   portal.bridge.Config.AppService.Bot.ParsedAvatar.CUString(),
+				ExternalURL: "https://slack.com/",
+			},
+			Channel: event.BridgeInfoSection{
+				ID:          portal.Key.ChannelID,
+				DisplayName: portal.Name,
+			},
 		},
-		Channel: event.BridgeInfoSection{
-			ID:          portal.Key.ChannelID,
-			DisplayName: portal.Name,
-		},
+	}
+
+	if portal.Type == database.ChannelTypeDM || portal.Type == database.ChannelTypeGroupDM {
+		bridgeInfo.RoomType = "dm"
 	}
 
 	teamInfo := portal.bridge.DB.TeamInfo.GetBySlackTeam(portal.Key.TeamID)
 	if teamInfo != nil {
-		portal.log.Warnln(teamInfo)
 		bridgeInfo.Network = &event.BridgeInfoSection{
 			ID:          portal.Key.TeamID,
 			DisplayName: teamInfo.TeamName,
@@ -971,6 +976,7 @@ func (portal *Portal) UpdateBridgeInfo() {
 	}
 	portal.log.Debugln("Updating bridge info...")
 	stateKey, content := portal.getBridgeInfo()
+	portal.log.Warnfln("%v", portal.Type)
 	_, err := portal.MainIntent().SendStateEvent(portal.MXID, event.StateBridge, stateKey, content)
 	if err != nil {
 		portal.log.Warnln("Failed to update m.bridge:", err)
@@ -1100,19 +1106,26 @@ func (portal *Portal) UpdateTopicDirect(topic string) bool {
 }
 
 func (portal *Portal) getTopic(meta *slack.Channel, sourceTeam *database.UserTeam) string {
-	plainTopic := meta.Topic.Value
-	plainDescription := meta.Purpose.Value
+	switch portal.getChannelType(meta) {
+	case database.ChannelTypeDM, database.ChannelTypeGroupDM:
+		return ""
+	case database.ChannelTypeChannel:
+		plainTopic := meta.Topic.Value
+		plainDescription := meta.Purpose.Value
 
-	var topicParts []string
+		var topicParts []string
 
-	if plainTopic != "" {
-		topicParts = append(topicParts, fmt.Sprintf("Topic: %s", plainTopic))
+		if plainTopic != "" {
+			topicParts = append(topicParts, fmt.Sprintf("Topic: %s", plainTopic))
+		}
+		if plainDescription != "" {
+			topicParts = append(topicParts, fmt.Sprintf("Description: %s", plainDescription))
+		}
+
+		return strings.Join(topicParts, "\n")
+	default:
+		return ""
 	}
-	if plainDescription != "" {
-		topicParts = append(topicParts, fmt.Sprintf("Description: %s", plainDescription))
-	}
-
-	return strings.Join(topicParts, "\n")
 }
 
 func (portal *Portal) UpdateTopic(meta *slack.Channel, sourceTeam *database.UserTeam) bool {

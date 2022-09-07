@@ -431,24 +431,47 @@ func (user *User) connectTeam(userTeam *database.UserTeam) error {
 	return nil
 }
 
-func (user *User) SyncChannels(userTeam *database.UserTeam, force bool) error {
-	channels, _, err := userTeam.Client.GetConversations(&slack.GetConversationsParameters{})
+func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
+	channelInfo := map[string]slack.Channel{}
+
+	channels, _, err := userTeam.Client.GetConversations(&slack.GetConversationsParameters{
+		Types: []string{"public_channel", "private_channel", "im", "mpim"},
+	})
 	if err != nil {
 		user.log.Warnfln("Error fetching channels: %v", err)
 		return err
-	} else {
-		for _, channel := range channels {
-			if channel.IsMember {
-				key := database.NewPortalKey(userTeam.Key.TeamID, userTeam.Key.SlackID, channel.ID)
-				portal := user.bridge.GetPortalByID(key)
-				if portal.MXID != "" {
-					portal.UpdateInfo(user, userTeam, &channel, force)
-				} else {
-					portal.CreateMatrixRoom(user, userTeam, &channel)
-				}
-			}
+	}
+	for _, channel := range channels {
+		if channel.IsMember {
+			channelInfo[channel.ID] = channel
 		}
 	}
+
+	portals := user.bridge.DB.Portal.GetAllByID(userTeam.Key.TeamID, userTeam.Key.SlackID)
+	for _, dbPortal := range portals {
+		// First, go through all pre-existing portals and update their info
+		portal := user.bridge.GetPortalByID(dbPortal.Key)
+		channel := channelInfo[dbPortal.Key.ChannelID]
+		if portal.MXID != "" {
+			portal.UpdateInfo(user, userTeam, &channel, force)
+		} else {
+			portal.CreateMatrixRoom(user, userTeam, &channel)
+		}
+		// Delete already handled ones from the map
+		delete(channelInfo, dbPortal.Key.ChannelID)
+	}
+
+	for _, channel := range channelInfo {
+		// Remaining ones in the map are new channels that weren't handled yet
+		key := database.NewPortalKey(userTeam.Key.TeamID, userTeam.Key.SlackID, channel.ID)
+		portal := user.bridge.GetPortalByID(key)
+		if portal.MXID != "" {
+			portal.UpdateInfo(user, userTeam, &channel, force)
+		} else {
+			portal.CreateMatrixRoom(user, userTeam, &channel)
+		}
+	}
+
 	return nil
 }
 
@@ -491,7 +514,7 @@ func (user *User) UpdateTeam(userTeam *database.UserTeam, force bool) error {
 	}
 
 	currentTeamInfo.Upsert()
-	return user.SyncChannels(userTeam, changed || force)
+	return user.SyncPortals(userTeam, changed || force)
 }
 
 func (user *User) Connect() error {
