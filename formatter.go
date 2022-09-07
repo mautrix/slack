@@ -29,6 +29,8 @@ import (
 var escapeFixer = regexp.MustCompile(`\\(__[^_]|\*\*[^*])`)
 
 func (portal *Portal) renderSlackMarkdown(text string) event.MessageEventContent {
+	text = replaceShortcodesWithEmojis(text)
+
 	text = escapeFixer.ReplaceAllStringFunc(text, func(s string) string {
 		return s[:2] + `\` + s[2:]
 	})
