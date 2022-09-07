@@ -65,28 +65,21 @@ var cmdLogin = &commands.FullHandler{
 func fnLogin(ce *WrappedCommandEvent) {
 	if len(ce.Args) != 3 {
 		ce.Reply("**Usage**: $cmdprefix login <email> <domain> <password>")
-
-		ce.MainIntent().RedactEvent(ce.RoomID, ce.EventID)
-
 		return
 	}
 
 	if ce.User.IsLoggedInTeam(ce.Args[0], ce.Args[1]) {
 		ce.Reply("%s is already logged in to team %s", ce.Args[0], ce.Args[1])
-
-		ce.MainIntent().RedactEvent(ce.RoomID, ce.EventID)
-
 		return
 	}
 
 	err := ce.User.LoginTeam(ce.Args[0], ce.Args[1], ce.Args[2])
 	if err != nil {
 		ce.Reply("Failed to log in as %s for team %s: %v", ce.Args[0], ce.Args[1], err)
+		return
 	}
 
 	ce.Reply("Successfully logged into %s for team %s", ce.Args[0], ce.Args[1])
-
-	ce.MainIntent().RedactEvent(ce.RoomID, ce.EventID)
 }
 
 var cmdLoginToken = &commands.FullHandler{
@@ -102,9 +95,6 @@ var cmdLoginToken = &commands.FullHandler{
 func fnLoginToken(ce *WrappedCommandEvent) {
 	if len(ce.Args) != 2 {
 		ce.Reply("**Usage**: $cmdprefix login-token <token> <cookieToken>")
-
-		ce.MainIntent().RedactEvent(ce.RoomID, ce.EventID)
-
 		return
 	}
 
@@ -115,8 +105,6 @@ func fnLoginToken(ce *WrappedCommandEvent) {
 	} else {
 		ce.Reply("Successfully logged into %s for team %s", info.UserEmail, info.TeamName)
 	}
-
-	ce.MainIntent().RedactEvent(ce.RoomID, ce.EventID)
 }
 
 var cmdLogout = &commands.FullHandler{
