@@ -25,6 +25,15 @@ func shortcodeToEmoji(code string) string {
 	}
 }
 
+func emojiToShortcode(emoji string) string {
+	for code, e := range emojis {
+		if emoji == e {
+			return code
+		}
+	}
+	return ""
+}
+
 func init() {
 	json.Unmarshal(emojiFileData, &emojis)
 }

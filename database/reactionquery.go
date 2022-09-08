@@ -29,7 +29,7 @@ type ReactionQuery struct {
 const (
 	reactionSelect = "SELECT team_id, user_id, channel_id, slack_message_id," +
 		" matrix_event_id, author_id, matrix_name, matrix_url, " +
-		" slack_id FROM reaction"
+		" slack_name FROM reaction"
 )
 
 func (rq *ReactionQuery) New() *Reaction {
@@ -66,7 +66,7 @@ func (rq *ReactionQuery) getAll(query string, args ...interface{}) []*Reaction {
 }
 
 func (rq *ReactionQuery) GetBySlackID(key PortalKey, slackMessageID, slackID string) *Reaction {
-	query := reactionSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3 AND slack_message_id=$4 AND slack_id=$5"
+	query := reactionSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3 AND slack_message_id=$4 AND slack_name=$5"
 
 	return rq.get(query, key.TeamID, key.UserID, key.ChannelID, slackMessageID, slackID)
 }

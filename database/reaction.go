@@ -70,7 +70,7 @@ func (r *Reaction) Scan(row dbutil.Scannable) *Reaction {
 func (r *Reaction) Insert() {
 	query := "INSERT INTO reaction" +
 		" (team_id, user_id, channel_id, slack_message_id, matrix_event_id," +
-		"  author_id, matrix_name, matrix_url, slack_id)" +
+		"  author_id, matrix_name, matrix_url, slack_name)" +
 		" VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9);"
 
 	var slackID sql.NullString
@@ -101,7 +101,7 @@ func (r *Reaction) Update() {
 
 func (r *Reaction) Delete() {
 	query := "DELETE FROM reaction WHERE" +
-		" team_id=$1 AND user_id=$2 AND channel_id=$3 AND slack_message_id=$4 AND author_id=$5 AND slack_id=$6"
+		" team_id=$1 AND user_id=$2 AND channel_id=$3 AND slack_message_id=$4 AND author_id=$5 AND slack_name=$6"
 
 	var slackID sql.NullString
 	if r.SlackID != "" {

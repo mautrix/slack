@@ -474,38 +474,37 @@ func (portal *Portal) sendMatrixMessage(intent *appservice.IntentAPI, eventType 
 }
 
 func (portal *Portal) handleMatrixMessages(msg portalMatrixMessage) {
-	evtTS := time.UnixMilli(msg.evt.Timestamp)
-	timings := messageTimings{
-		initReceive:  msg.evt.Mautrix.ReceivedAt.Sub(evtTS),
-		decrypt:      msg.evt.Mautrix.DecryptionDuration,
-		portalQueue:  time.Since(msg.receivedAt),
-		totalReceive: time.Since(evtTS),
+	userTeam := msg.user.GetUserTeam(portal.Key.TeamID, portal.Key.UserID)
+	if userTeam == nil {
+		go portal.sendMessageMetrics(msg.evt, errUserNotLoggedIn, "Ignoring", nil)
+		return
 	}
 
 	switch msg.evt.Type {
 	case event.EventMessage:
-		portal.handleMatrixMessage(msg.user, msg.evt, timings)
+		portal.handleMatrixMessage(msg.user, userTeam, msg.evt, msg.receivedAt)
 	case event.EventRedaction:
 		portal.handleMatrixRedaction(msg.user, msg.evt)
 	case event.EventReaction:
-		portal.handleMatrixReaction(msg.user, msg.evt)
+		portal.handleMatrixReaction(userTeam, msg.evt)
 	default:
 		portal.log.Debugln("unknown event type", msg.evt.Type)
 	}
 }
 
-func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event, timings messageTimings) {
-	start := time.Now()
-	ms := metricSender{portal: portal, timings: &timings}
-
+func (portal *Portal) handleMatrixMessage(sender *User, userTeam *database.UserTeam, evt *event.Event, receivedAt time.Time) {
 	portal.slackMessageLock.Lock()
 	defer portal.slackMessageLock.Unlock()
 
-	userTeam := sender.GetUserTeam(portal.Key.TeamID, portal.Key.UserID)
-	if userTeam == nil {
-		go ms.sendMessageMetrics(evt, errUserNotLoggedIn, "Ignoring", true)
-		return
+	evtTS := time.UnixMilli(evt.Timestamp)
+	timings := messageTimings{
+		initReceive:  evt.Mautrix.ReceivedAt.Sub(evtTS),
+		decrypt:      evt.Mautrix.DecryptionDuration,
+		portalQueue:  time.Since(receivedAt),
+		totalReceive: time.Since(evtTS),
 	}
+	start := time.Now()
+	ms := metricSender{portal: portal, timings: &timings}
 
 	existing := portal.bridge.DB.Message.GetByMatrixID(portal.Key, evt.ID)
 	if existing != nil {
@@ -514,7 +513,7 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event, timing
 		return
 	}
 
-	messageAge := timings.totalReceive
+	messageAge := ms.timings.totalReceive
 	errorAfter := portal.bridge.Config.Bridge.MessageHandlingTimeout.ErrorAfter
 	deadline := portal.bridge.Config.Bridge.MessageHandlingTimeout.Deadline
 	isScheduled, _ := evt.Content.Raw["com.beeper.scheduled"].(bool)
@@ -544,11 +543,11 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event, timing
 		ctx, cancel = context.WithTimeout(ctx, deadline)
 		defer cancel()
 	}
-	timings.preproc = time.Since(start)
+	ms.timings.preproc = time.Since(start)
 
 	start = time.Now()
 	options, fileUpload, threadTs, err := portal.convertMatrixMessage(ctx, sender, userTeam, evt)
-	timings.convert = time.Since(start)
+	ms.timings.convert = time.Since(start)
 
 	start = time.Now()
 	var timestamp string
@@ -584,7 +583,7 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event, timing
 		}
 		timestamp = shareInfo.Ts
 	}
-	timings.totalSend = time.Since(start)
+	ms.timings.totalSend = time.Since(start)
 	go ms.sendMessageMetrics(evt, err, "Error sending", true)
 	// TODO: store these timings in some way
 
@@ -671,11 +670,7 @@ func (portal *Portal) convertMatrixMessage(ctx context.Context, sender *User, us
 	}
 }
 
-func (portal *Portal) handleMatrixReaction(user *User, evt *event.Event) {
-	// if user.ID != portal.Key.Receiver {
-	// 	return
-	// }
-
+func (portal *Portal) handleMatrixReaction(userTeam *database.UserTeam, evt *event.Event) {
 	reaction := evt.Content.AsReaction()
 	if reaction.RelatesTo.Type != event.RelAnnotation {
 		portal.log.Errorfln("Ignoring reaction %s due to unknown m.relates_to data", evt.ID)
@@ -712,8 +707,13 @@ func (portal *Portal) handleMatrixReaction(user *User, evt *event.Event) {
 		slackID = msg.SlackID
 	}
 
-	// Figure out if this is a custom emoji or not.
-	emojiID := ""
+	emojiID := emojiToShortcode(reaction.RelatesTo.Key)
+	if emojiID == "" {
+		portal.log.Errorfln("Couldn't find emoji shortcode for emoji %s", reaction.RelatesTo.Key)
+		return
+	}
+
+	// TODO: Figure out if this is a custom emoji or not.
 	// emojiID := reaction.RelatesTo.Key
 	// if strings.HasPrefix(emojiID, "mxc://") {
 	// 	uri, _ := id.ParseContentURI(emojiID)
@@ -727,12 +727,15 @@ func (portal *Portal) handleMatrixReaction(user *User, evt *event.Event) {
 	// 	emojiID = emoji.APIName()
 	// }
 
-	// err := user.Session.MessageReactionAdd(portal.Key.ChannelID, discordID, emojiID)
-	// if err != nil {
-	// 	portal.log.Debugf("Failed to send reaction %s id:%s: %v", portal.Key, discordID, err)
+	err := userTeam.Client.AddReaction(emojiID, slack.ItemRef{
+		Channel:   portal.Key.ChannelID,
+		Timestamp: slackID,
+	})
+	if err != nil {
+		portal.log.Debugf("Failed to send reaction %s id:%s: %v", portal.Key, slackID, err)
 
-	// 	return
-	// }
+		return
+	}
 
 	dbReaction := portal.bridge.DB.Reaction.New()
 	dbReaction.Channel.TeamID = portal.Key.TeamID
@@ -740,7 +743,7 @@ func (portal *Portal) handleMatrixReaction(user *User, evt *event.Event) {
 	dbReaction.Channel.ChannelID = portal.Key.ChannelID
 	dbReaction.MatrixEventID = evt.ID
 	dbReaction.SlackMessageID = slackID
-	// dbReaction.AuthorID = user.ID
+	dbReaction.AuthorID = userTeam.Key.MXID.String()
 	dbReaction.MatrixName = reaction.RelatesTo.Key
 	dbReaction.SlackID = emojiID
 	dbReaction.Insert()
