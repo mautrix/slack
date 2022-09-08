@@ -59,10 +59,10 @@ func (rq *ReactionQuery) getAll(query string, args ...interface{}) []*Reaction {
 	return reactions
 }
 
-func (rq *ReactionQuery) GetBySlackID(key PortalKey, slackAuthor, slackMessageID, slackID string) *Reaction {
+func (rq *ReactionQuery) GetBySlackID(key PortalKey, slackAuthor, slackMessageID, slackName string) *Reaction {
 	query := reactionSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3 AND author_id=$4 AND slack_message_id=$5 AND slack_name=$6"
 
-	return rq.get(query, key.TeamID, key.UserID, key.ChannelID, slackAuthor, slackMessageID, slackID)
+	return rq.get(query, key.TeamID, key.UserID, key.ChannelID, slackAuthor, slackMessageID, slackName)
 }
 
 func (rq *ReactionQuery) GetByMatrixID(key PortalKey, matrixEventID id.EventID) *Reaction {

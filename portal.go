@@ -1414,3 +1414,35 @@ func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTea
 	dbReaction.SlackName = msg.Reaction
 	dbReaction.Insert()
 }
+
+func (portal *Portal) HandleSlackReactionRemoved(user *User, userTeam *database.UserTeam, msg *slack.ReactionRemovedEvent) {
+	portal.slackMessageLock.Lock()
+	defer portal.slackMessageLock.Unlock()
+
+	if msg.Type != "reaction_removed" {
+		portal.log.Warnln("ignoring unknown message type:", msg.Type)
+		return
+	}
+
+	dbReaction := portal.bridge.DB.Reaction.GetBySlackID(portal.Key, msg.User, msg.Item.Timestamp, msg.Reaction)
+	if dbReaction == nil {
+		portal.log.Errorfln("Failed to redact reaction %v %s %s %s: reaction not found in database", portal.Key, msg.User, msg.Item.Timestamp, msg.Reaction)
+		return
+	}
+
+	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.User)
+	if puppet == nil {
+		portal.log.Errorfln("Not redacting reaction: can't find puppet for Slack user %s %s", portal.Key.TeamID, msg.User)
+		return
+	}
+	puppet.UpdateInfo(userTeam, nil)
+	intent := puppet.IntentFor(portal)
+
+	_, err := intent.RedactEvent(portal.MXID, dbReaction.MatrixEventID)
+	if err != nil {
+		portal.log.Errorfln("Failed to redact reaction %v %s %s %s: %v", portal.Key, msg.User, msg.Item.Timestamp, msg.Reaction, err)
+		return
+	}
+
+	dbReaction.Delete()
+}
