@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -29,6 +30,7 @@ import (
 	"github.com/gorilla/websocket"
 	log "maunium.net/go/maulogger/v2"
 
+	"maunium.net/go/mautrix/bridge/status"
 	"maunium.net/go/mautrix/id"
 )
 
@@ -58,6 +60,8 @@ func newProvisioningAPI(br *SlackBridge) *ProvisioningAPI {
 	r.HandleFunc("/ping", p.ping).Methods(http.MethodGet)
 	r.HandleFunc("/login", p.login).Methods(http.MethodPost)
 	r.HandleFunc("/logout", p.logout).Methods(http.MethodPost)
+	p.bridge.AS.Router.HandleFunc("/_matrix/app/com.beeper.asmux/ping", p.BridgeStatePing).Methods(http.MethodPost)
+	p.bridge.AS.Router.HandleFunc("/_matrix/app/com.beeper.bridge_state", p.BridgeStatePing).Methods(http.MethodPost)
 
 	return p
 }
@@ -142,28 +146,22 @@ var upgrader = websocket.Upgrader{
 
 // Handlers
 func (p *ProvisioningAPI) ping(w http.ResponseWriter, r *http.Request) {
-	panic("not implemented")
+	user := r.Context().Value("user").(*User)
 
-	/*user := r.Context().Value("user").(*User)
+	teams := map[string]interface{}{}
+	for _, team := range user.GetLoggedInTeams() {
+		teams[team.Key.TeamID] = map[string]string{
+			"user_id":    team.Key.SlackID,
+			"user_email": team.SlackEmail,
+			"team_name":  team.TeamName,
+		}
+	}
 
 	slackData := map[string]interface{}{
-		"logged_in": user.IsLoggedIn(),
-		"conn":      nil,
+		"logged_in_teams": teams,
 	}
 
 	user.Lock()
-	// if user.ID != "" {
-	// 	slackData["id"] = user.ID
-	// }
-
-	// if user.Client != nil {
-	// 	user.Lock()
-	// 	discord["conn"] = map[string]interface{}{
-	// 		"last_heartbeat_ack":  user.Session.LastHeartbeatAck,
-	// 		"last_heartbeat_sent": user.Session.LastHeartbeatSent,
-	// 	}
-	// 	user.Unlock()
-	// }
 
 	resp := map[string]interface{}{
 		"slack":           slackData,
@@ -173,86 +171,130 @@ func (p *ProvisioningAPI) ping(w http.ResponseWriter, r *http.Request) {
 
 	user.Unlock()
 
-	jsonResponse(w, http.StatusOK, resp)*/
+	jsonResponse(w, http.StatusOK, resp)
 }
 
 func (p *ProvisioningAPI) logout(w http.ResponseWriter, r *http.Request) {
-	panic("not implemented")
+	userID := r.URL.Query().Get("user_id")
+	user := p.bridge.GetUserByMXID(id.UserID(userID))
+	r.ParseForm()
 
-	/*user := r.Context().Value("user").(*User)
-	force := strings.ToLower(r.URL.Query().Get("force")) != "false"
-
-	if !user.IsLoggedIn() {
-		jsonResponse(w, http.StatusNotFound, Error{
-			Error:   "You're not logged in",
-			ErrCode: "not logged in",
+	slackId := r.Form.Get("slack_user_id")
+	if slackId == "" {
+		jsonResponse(w, http.StatusBadRequest, Error{
+			Error:   "No slack_user_id specified",
+			ErrCode: "No slack_user_id specified",
 		})
 
 		return
 	}
 
-	// if user.Client == nil {
-	// 	if force {
-	// 		jsonResponse(w, http.StatusOK, Response{true, "Logged out successfully."})
-	// 	} else {
-	// 		jsonResponse(w, http.StatusNotFound, Error{
-	// 			Error:   "You're not logged in",
-	// 			ErrCode: "not logged in",
-	// 		})
-	// 	}
+	teamId := r.Form.Get("slack_team_id")
+	if teamId == "" {
+		jsonResponse(w, http.StatusBadRequest, Error{
+			Error:   "No slack_team_id specified",
+			ErrCode: "No slack_team_id specified",
+		})
 
-	// 	return
-	// }
+		return
+	}
 
-	// err := user.Logout()
-	var err error
+	userTeam := user.GetUserTeam(teamId, slackId)
+	if userTeam == nil && !userTeam.IsLoggedIn() {
+		jsonResponse(w, http.StatusNotFound, Error{
+			Error:   "Not logged in",
+			ErrCode: "Not logged in",
+		})
+
+		return
+	}
+
+	err := user.LogoutUserTeam(userTeam)
+
 	if err != nil {
 		user.log.Warnln("Error while logging out:", err)
 
-		if !force {
-			jsonResponse(w, http.StatusInternalServerError, Error{
-				Error:   fmt.Sprintf("Unknown error while logging out: %v", err),
-				ErrCode: err.Error(),
-			})
+		jsonResponse(w, http.StatusInternalServerError, Error{
+			Error:   fmt.Sprintf("Unknown error while logging out: %v", err),
+			ErrCode: err.Error(),
+		})
 
-			return
-		}
+		return
 	}
 
-	jsonResponse(w, http.StatusOK, Response{true, "Logged out successfully."})*/
+	jsonResponse(w, http.StatusOK, Response{true, "Logged out successfully."})
 }
 
 func (p *ProvisioningAPI) login(w http.ResponseWriter, r *http.Request) {
-	panic("not implemented")
-	/* 	userID := r.URL.Query().Get("user_id")
-	   	user := p.bridge.GetUserByMXID(id.UserID(userID))
+	userID := r.URL.Query().Get("user_id")
+	user := p.bridge.GetUserByMXID(id.UserID(userID))
 
-	   	r.ParseForm()
+	r.ParseForm()
 
-	   	token := r.Form.Get("token")
-	   	if token == "" {
-	   		jsonResponse(w, http.StatusBadRequest, Error{
-	   			Error:   "No token specified",
-	   			ErrCode: "No token specified",
-	   		})
+	p.log.Warnln(r.Form)
+	token := r.Form.Get("token")
+	if token == "" {
+		jsonResponse(w, http.StatusBadRequest, Error{
+			Error:   "No token specified",
+			ErrCode: "No token specified",
+		})
 
-	   		return
-	   	}
+		return
+	}
 
-	   	info, err := user.TokenLogin(token)
-	   	if err != nil {
-	   		jsonResponse(w, http.StatusNotAcceptable, Error{
-	   			Error:   fmt.Sprintf("Failed to login: %s", err),
-	   			ErrCode: err.Error(),
-	   		})
+	cookieToken := r.Form.Get("cookietoken")
+	if cookieToken == "" {
+		jsonResponse(w, http.StatusBadRequest, Error{
+			Error:   "No cookietoken specified",
+			ErrCode: "No cookietoken specified",
+		})
+	}
 
-	   		return
-	   	}
+	info, err := user.TokenLogin(token, cookieToken)
+	if err != nil {
+		jsonResponse(w, http.StatusNotAcceptable, Error{
+			Error:   fmt.Sprintf("Failed to login: %s", err),
+			ErrCode: err.Error(),
+		})
 
-	   	jsonResponse(w, http.StatusCreated,
-	   		map[string]interface{}{
-	   			"success": true,
-	   			"teamid":  info.TeamID,
-	   			"userid":  info.UserID,
-	   		}) */
+		return
+	}
+
+	jsonResponse(w, http.StatusCreated,
+		map[string]interface{}{
+			"success": true,
+			"teamid":  info.TeamID,
+			"userid":  info.UserID,
+		})
+}
+
+func (p *ProvisioningAPI) BridgeStatePing(w http.ResponseWriter, r *http.Request) {
+	if !p.bridge.AS.CheckServerToken(w, r) {
+		return
+	}
+	userID := r.URL.Query().Get("user_id")
+	user := p.bridge.GetUserByMXID(id.UserID(userID))
+	var global status.BridgeState
+	global.StateEvent = status.StateRunning
+	global = global.Fill(nil)
+
+	resp := status.GlobalBridgeState{
+		BridgeState:  global,
+		RemoteStates: map[string]status.BridgeState{},
+	}
+
+	userTeams := user.GetLoggedInTeams()
+	for _, userTeam := range userTeams {
+		var remote status.BridgeState
+		if userTeam.IsLoggedIn() {
+			remote.StateEvent = status.StateConnected
+		} else {
+			remote.StateEvent = status.StateLoggedOut
+		}
+		remote = remote.Fill(userTeam)
+		resp.RemoteStates[remote.RemoteID] = remote
+	}
+
+	user.log.Debugfln("Responding bridge state in bridge status endpoint: %+v", resp)
+	jsonResponse(w, http.StatusOK, &resp)
 }

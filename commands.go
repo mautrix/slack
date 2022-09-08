@@ -124,8 +124,9 @@ func fnLogout(ce *WrappedCommandEvent) {
 
 		return
 	}
+	userTeam := ce.User.bridge.DB.UserTeam.GetBySlackTeam(ce.User.MXID, ce.Args[0], ce.Args[1])
 
-	err := ce.User.LogoutTeam(ce.Args[0], ce.Args[1])
+	err := ce.User.LogoutUserTeam(userTeam)
 	if err != nil {
 		ce.Reply("Error logging out: %v", err)
 	} else {

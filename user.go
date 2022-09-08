@@ -329,8 +329,7 @@ func (user *User) IsLoggedInTeam(email, team string) bool {
 	return false
 }
 
-func (user *User) LogoutTeam(email, team string) error {
-	userTeam := user.bridge.DB.UserTeam.GetBySlackTeam(user.MXID, email, team)
+func (user *User) LogoutUserTeam(userTeam *database.UserTeam) error {
 	if userTeam == nil || !userTeam.IsLoggedIn() {
 		return ErrNotLoggedIn
 	}
@@ -388,7 +387,7 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 		case *slack.InvalidAuthEvent:
 			user.log.Errorln("invalid authentication token")
 
-			user.LogoutTeam(userTeam.SlackEmail, userTeam.TeamName)
+			user.LogoutUserTeam(userTeam)
 			user.BridgeStates[userTeam.Key].Send(status.BridgeState{StateEvent: status.StateBadCredentials})
 
 			// TODO: Should drop a message in the management room
