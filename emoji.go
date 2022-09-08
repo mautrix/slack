@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"regexp"
+	"strings"
 )
 
 //go:embed resources/emoji.json
@@ -17,7 +18,9 @@ func replaceShortcodesWithEmojis(text string) string {
 }
 
 func shortcodeToEmoji(code string) string {
-	emoji, found := emojis[code[1:len(code)-1]]
+	strippedCode := strings.TrimPrefix(code, ":")
+	strippedCode = strings.TrimSuffix(code, ":")
+	emoji, found := emojis[strippedCode]
 	if found {
 		return emoji
 	} else {

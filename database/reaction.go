@@ -41,18 +41,18 @@ type Reaction struct {
 	MatrixName string
 	MatrixURL  string // Used for custom emoji
 
-	SlackID string // The id or unicode of the emoji for slack
+	SlackName string // The id or unicode of the emoji for slack
 }
 
 func (r *Reaction) Scan(row dbutil.Scannable) *Reaction {
-	var slackID sql.NullString
+	var slackName sql.NullString
 
 	err := row.Scan(
 		&r.Channel.TeamID, &r.Channel.UserID, &r.Channel.ChannelID,
 		&r.SlackMessageID, &r.MatrixEventID,
 		&r.AuthorID,
 		&r.MatrixName, &r.MatrixURL,
-		&slackID)
+		&slackName)
 
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -62,7 +62,7 @@ func (r *Reaction) Scan(row dbutil.Scannable) *Reaction {
 		return nil
 	}
 
-	r.SlackID = slackID.String
+	r.SlackName = slackName.String
 
 	return r
 }
@@ -73,10 +73,10 @@ func (r *Reaction) Insert() {
 		"  author_id, matrix_name, matrix_url, slack_name)" +
 		" VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9);"
 
-	var slackID sql.NullString
+	var slackName sql.NullString
 
-	if r.SlackID != "" {
-		slackID = sql.NullString{String: r.SlackID, Valid: true}
+	if r.SlackName != "" {
+		slackName = sql.NullString{String: r.SlackName, Valid: true}
 	}
 
 	_, err := r.db.Exec(
@@ -85,7 +85,7 @@ func (r *Reaction) Insert() {
 		r.SlackMessageID, r.MatrixEventID,
 		r.AuthorID,
 		r.MatrixName, r.MatrixURL,
-		slackID,
+		slackName,
 	)
 
 	if err != nil {
@@ -103,16 +103,16 @@ func (r *Reaction) Delete() {
 	query := "DELETE FROM reaction WHERE" +
 		" team_id=$1 AND user_id=$2 AND channel_id=$3 AND slack_message_id=$4 AND author_id=$5 AND slack_name=$6"
 
-	var slackID sql.NullString
-	if r.SlackID != "" {
-		slackID = sql.NullString{String: r.SlackID, Valid: true}
+	var slackName sql.NullString
+	if r.SlackName != "" {
+		slackName = sql.NullString{String: r.SlackName, Valid: true}
 	}
 
 	_, err := r.db.Exec(
 		query,
 		r.Channel.TeamID, r.Channel.UserID, r.Channel.ChannelID,
 		r.SlackMessageID, r.AuthorID,
-		slackID,
+		slackName,
 	)
 
 	if err != nil {

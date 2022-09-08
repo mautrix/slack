@@ -398,9 +398,14 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 		case *slack.MessageEvent:
 			key := database.NewPortalKey(userTeam.Key.TeamID, userTeam.Key.SlackID, event.Channel)
 			portal := user.bridge.GetPortalByID(key)
-
 			if portal != nil {
 				portal.HandleSlackMessage(user, userTeam, event)
+			}
+		case *slack.ReactionAddedEvent:
+			key := database.NewPortalKey(userTeam.Key.TeamID, userTeam.Key.SlackID, event.Item.Channel)
+			portal := user.bridge.GetPortalByID(key)
+			if portal != nil {
+				portal.HandleSlackReaction(user, userTeam, event)
 			}
 		case *slack.RTMError:
 			user.log.Errorln("rtm error:", event.Error())

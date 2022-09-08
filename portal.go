@@ -745,7 +745,7 @@ func (portal *Portal) handleMatrixReaction(userTeam *database.UserTeam, evt *eve
 	dbReaction.SlackMessageID = slackID
 	dbReaction.AuthorID = userTeam.Key.MXID.String()
 	dbReaction.MatrixName = reaction.RelatesTo.Key
-	dbReaction.SlackID = emojiID
+	dbReaction.SlackName = emojiID
 	dbReaction.Insert()
 }
 
@@ -776,13 +776,13 @@ func (portal *Portal) handleMatrixRedaction(user *User, evt *event.Event) {
 	// Now check if it's a reaction.
 	reaction := portal.bridge.DB.Reaction.GetByMatrixID(portal.Key, evt.Redacts)
 	if reaction != nil {
-		if reaction.SlackID != "" {
-			err := userTeam.Client.RemoveReaction(reaction.SlackID, slack.ItemRef{
+		if reaction.SlackName != "" {
+			err := userTeam.Client.RemoveReaction(reaction.SlackName, slack.ItemRef{
 				Channel:   portal.Key.ChannelID,
 				Timestamp: reaction.SlackMessageID,
 			})
 			if err != nil {
-				portal.log.Debugfln("Failed to delete reaction %s for message %s: %v", reaction.SlackID, reaction.SlackMessageID, err)
+				portal.log.Debugfln("Failed to delete reaction %s for message %s: %v", reaction.SlackName, reaction.SlackMessageID, err)
 			} else {
 				reaction.Delete()
 			}
@@ -1332,4 +1332,63 @@ func (portal *Portal) addThreadMetadata(content *event.MessageEventContent, thre
 		}
 	}
 	return false, false
+}
+
+func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTeam, msg *slack.ReactionAddedEvent) {
+	portal.slackMessageLock.Lock()
+	defer portal.slackMessageLock.Unlock()
+
+	if msg.Type != "reaction_added" {
+		portal.log.Warnln("ignoring unknown message type:", msg.Type)
+		return
+	}
+
+	portal.log.Debugfln("Handling Slack reaction: %s %s %s %s %s", portal.Key.TeamID, portal.Key.ChannelID, portal.Key.UserID, msg.Item.Timestamp, msg.Reaction)
+
+	if portal.MXID == "" {
+		portal.log.Warnfln("No Matrix portal created for room %s %s, not bridging reaction")
+	}
+
+	existing := portal.bridge.DB.Reaction.GetBySlackID(portal.Key, msg.User, msg.Item.Timestamp, msg.Reaction)
+	if existing != nil {
+		portal.log.Warnfln("Dropping duplicate reaction: %s %s %s %s %s", portal.Key.TeamID, portal.Key.ChannelID, portal.Key.UserID, msg.Item.Timestamp, msg.Reaction)
+		return
+	}
+
+	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.User)
+	if puppet == nil {
+		portal.log.Errorfln("Not sending reaction: can't find puppet for Slack user %s", msg.User)
+		return
+	}
+	puppet.UpdateInfo(userTeam, nil)
+	intent := puppet.IntentFor(portal)
+
+	targetMessage := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Item.Timestamp)
+	if targetMessage == nil {
+		portal.log.Errorfln("Not sending reaction: can't find Matrix message for %s %s %s", portal.Key.TeamID, portal.Key.ChannelID, msg.Item.Timestamp)
+		return
+	}
+
+	emoji := shortcodeToEmoji(msg.Reaction)
+
+	var content event.ReactionEventContent
+	content.RelatesTo = event.RelatesTo{
+		Type:    event.RelAnnotation,
+		EventID: targetMessage.MatrixID,
+		Key:     emoji,
+	}
+	resp, err := intent.SendMassagedMessageEvent(portal.MXID, event.EventReaction, &content, portal.parseTimestamp(msg.EventTimestamp).UnixMilli())
+	if err != nil {
+		portal.log.Errorfln("Failed to bridge reaction: %v", err)
+		return
+	}
+
+	dbReaction := portal.bridge.DB.Reaction.New()
+	dbReaction.Channel = portal.Key
+	dbReaction.SlackMessageID = msg.Item.Timestamp
+	dbReaction.MatrixEventID = resp.EventID
+	dbReaction.AuthorID = msg.User
+	dbReaction.MatrixName = emoji
+	dbReaction.SlackName = msg.Reaction
+	dbReaction.Insert()
 }

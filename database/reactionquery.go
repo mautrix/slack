@@ -39,12 +39,6 @@ func (rq *ReactionQuery) New() *Reaction {
 	}
 }
 
-func (rq *ReactionQuery) GetAllByDiscordID(key PortalKey, slackMessageID string) []*Reaction {
-	query := reactionSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3 AND slack_message_id=$4"
-
-	return rq.getAll(query, key.TeamID, key.UserID, key.ChannelID, slackMessageID)
-}
-
 func (rq *ReactionQuery) GetAllByMatrixID(key PortalKey, matrixEventID id.EventID) []*Reaction {
 	query := reactionSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3 AND matrix_event_id=$4"
 
@@ -65,10 +59,10 @@ func (rq *ReactionQuery) getAll(query string, args ...interface{}) []*Reaction {
 	return reactions
 }
 
-func (rq *ReactionQuery) GetBySlackID(key PortalKey, slackMessageID, slackID string) *Reaction {
-	query := reactionSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3 AND slack_message_id=$4 AND slack_name=$5"
+func (rq *ReactionQuery) GetBySlackID(key PortalKey, slackAuthor, slackMessageID, slackID string) *Reaction {
+	query := reactionSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3 AND author_id=$4 AND slack_message_id=$5 AND slack_name=$6"
 
-	return rq.get(query, key.TeamID, key.UserID, key.ChannelID, slackMessageID, slackID)
+	return rq.get(query, key.TeamID, key.UserID, key.ChannelID, slackAuthor, slackMessageID, slackID)
 }
 
 func (rq *ReactionQuery) GetByMatrixID(key PortalKey, matrixEventID id.EventID) *Reaction {
