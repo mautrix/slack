@@ -28,7 +28,7 @@ type AttachmentQuery struct {
 
 const (
 	attachmentSelect = "SELECT team_id, user_id, channel_id, " +
-		" discord_message_id, discord_attachment_id, matrix_event_id" +
+		" slack_message_id, slack_file_id, matrix_event_id" +
 		" FROM attachment"
 )
 
@@ -39,11 +39,11 @@ func (aq *AttachmentQuery) New() *Attachment {
 	}
 }
 
-func (aq *AttachmentQuery) GetAllByDiscordMessageID(key PortalKey, discordMessageID string) []*Attachment {
+func (aq *AttachmentQuery) GetAllBySlackMessageID(key PortalKey, slackMessageID string) []*Attachment {
 	query := attachmentSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3" +
-		" discord_message_id=$4"
+		" slack_message_id=$4"
 
-	return aq.getAll(query, key.TeamID, key.UserID, key.ChannelID, discordMessageID)
+	return aq.getAll(query, key.TeamID, key.UserID, key.ChannelID, slackMessageID)
 }
 
 func (aq *AttachmentQuery) getAll(query string, args ...interface{}) []*Attachment {
@@ -66,11 +66,11 @@ func (aq *AttachmentQuery) getAll(query string, args ...interface{}) []*Attachme
 	return attachments
 }
 
-func (aq *AttachmentQuery) GetByDiscordAttachmentID(key PortalKey, discordMessageID, discordID string) *Attachment {
+func (aq *AttachmentQuery) GetBySlackFileID(key PortalKey, slackMessageID, slackFileID string) *Attachment {
 	query := attachmentSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3" +
-		" AND discord_message_id=$4 AND discord_id=$5"
+		" AND slack_message_id=$4 AND slack_file_id=$5"
 
-	return aq.get(query, key.TeamID, key.UserID, key.ChannelID, discordMessageID, discordID)
+	return aq.get(query, key.TeamID, key.UserID, key.ChannelID, slackMessageID, slackFileID)
 }
 
 func (aq *AttachmentQuery) GetByMatrixID(key PortalKey, matrixEventID id.EventID) *Attachment {

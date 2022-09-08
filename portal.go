@@ -480,31 +480,32 @@ func (portal *Portal) handleMatrixMessages(msg portalMatrixMessage) {
 		return
 	}
 
+	evtTS := time.UnixMilli(msg.evt.Timestamp)
+	timings := messageTimings{
+		initReceive:  msg.evt.Mautrix.ReceivedAt.Sub(evtTS),
+		decrypt:      msg.evt.Mautrix.DecryptionDuration,
+		portalQueue:  time.Since(msg.receivedAt),
+		totalReceive: time.Since(evtTS),
+	}
+	ms := metricSender{portal: portal, timings: &timings}
+
 	switch msg.evt.Type {
 	case event.EventMessage:
-		portal.handleMatrixMessage(msg.user, userTeam, msg.evt, msg.receivedAt)
+		portal.handleMatrixMessage(msg.user, userTeam, msg.evt, &ms)
 	case event.EventRedaction:
 		portal.handleMatrixRedaction(msg.user, msg.evt)
 	case event.EventReaction:
-		portal.handleMatrixReaction(userTeam, msg.evt)
+		portal.handleMatrixReaction(userTeam, msg.evt, &ms)
 	default:
 		portal.log.Debugln("unknown event type", msg.evt.Type)
 	}
 }
 
-func (portal *Portal) handleMatrixMessage(sender *User, userTeam *database.UserTeam, evt *event.Event, receivedAt time.Time) {
+func (portal *Portal) handleMatrixMessage(sender *User, userTeam *database.UserTeam, evt *event.Event, ms *metricSender) {
 	portal.slackMessageLock.Lock()
 	defer portal.slackMessageLock.Unlock()
 
-	evtTS := time.UnixMilli(evt.Timestamp)
-	timings := messageTimings{
-		initReceive:  evt.Mautrix.ReceivedAt.Sub(evtTS),
-		decrypt:      evt.Mautrix.DecryptionDuration,
-		portalQueue:  time.Since(receivedAt),
-		totalReceive: time.Since(evtTS),
-	}
 	start := time.Now()
-	ms := metricSender{portal: portal, timings: &timings}
 
 	existing := portal.bridge.DB.Message.GetByMatrixID(portal.Key, evt.ID)
 	if existing != nil {
@@ -670,11 +671,14 @@ func (portal *Portal) convertMatrixMessage(ctx context.Context, sender *User, us
 	}
 }
 
-func (portal *Portal) handleMatrixReaction(userTeam *database.UserTeam, evt *event.Event) {
+func (portal *Portal) handleMatrixReaction(userTeam *database.UserTeam, evt *event.Event, ms *metricSender) {
+	portal.slackMessageLock.Lock()
+	defer portal.slackMessageLock.Unlock()
+
 	reaction := evt.Content.AsReaction()
 	if reaction.RelatesTo.Type != event.RelAnnotation {
 		portal.log.Errorfln("Ignoring reaction %s due to unknown m.relates_to data", evt.ID)
-
+		ms.sendMessageMetrics(evt, errUnexpectedRelatesTo, "Error sending", true)
 		return
 	}
 
@@ -696,20 +700,22 @@ func (portal *Portal) handleMatrixReaction(userTeam *database.UserTeam, evt *eve
 	// table to keep them in sync and to avoid sending duplicates to Slack.
 	if msg == nil {
 		attachment := portal.bridge.DB.Attachment.GetByMatrixID(portal.Key, reaction.RelatesTo.EventID)
-		slackID = attachment.SlackMessageID
-	} else {
-		if msg.SlackID == "" {
-			portal.log.Debugf("Message %s has not yet been sent to slack", reaction.RelatesTo.EventID)
-
-			return
+		if attachment != nil {
+			slackID = attachment.SlackMessageID
 		}
-
+	} else {
 		slackID = msg.SlackID
+	}
+	if msg.SlackID == "" {
+		portal.log.Debugf("Message %s has not yet been sent to slack", reaction.RelatesTo.EventID)
+		ms.sendMessageMetrics(evt, errReactionTargetNotFound, "Error sending", true)
+		return
 	}
 
 	emojiID := emojiToShortcode(reaction.RelatesTo.Key)
 	if emojiID == "" {
-		portal.log.Errorfln("Couldn't find emoji shortcode for emoji %s", reaction.RelatesTo.Key)
+		portal.log.Errorfln("Couldn't find shortcode for emoji %s", reaction.RelatesTo.Key)
+		ms.sendMessageMetrics(evt, errEmojiShortcodeNotFound, "Error sending", true)
 		return
 	}
 
@@ -731,9 +737,9 @@ func (portal *Portal) handleMatrixReaction(userTeam *database.UserTeam, evt *eve
 		Channel:   portal.Key.ChannelID,
 		Timestamp: slackID,
 	})
+	ms.sendMessageMetrics(evt, err, "Error sending", true)
 	if err != nil {
-		portal.log.Debugf("Failed to send reaction %s id:%s: %v", portal.Key, slackID, err)
-
+		portal.log.Debugfln("Failed to send reaction %s id:%s: %v", portal.Key, slackID, err)
 		return
 	}
 
@@ -743,13 +749,17 @@ func (portal *Portal) handleMatrixReaction(userTeam *database.UserTeam, evt *eve
 	dbReaction.Channel.ChannelID = portal.Key.ChannelID
 	dbReaction.MatrixEventID = evt.ID
 	dbReaction.SlackMessageID = slackID
-	dbReaction.AuthorID = userTeam.Key.MXID.String()
+	dbReaction.AuthorID = userTeam.Key.SlackID
 	dbReaction.MatrixName = reaction.RelatesTo.Key
 	dbReaction.SlackName = emojiID
 	dbReaction.Insert()
+	portal.log.Debugfln("Inserted reaction %v %s %s %s %s into database", dbReaction.Channel, dbReaction.MatrixEventID, dbReaction.SlackMessageID, dbReaction.AuthorID, dbReaction.SlackName)
 }
 
 func (portal *Portal) handleMatrixRedaction(user *User, evt *event.Event) {
+	portal.slackMessageLock.Lock()
+	defer portal.slackMessageLock.Unlock()
+
 	userTeam := user.GetUserTeam(portal.Key.TeamID, portal.Key.UserID)
 	if userTeam == nil {
 		go portal.sendMessageMetrics(evt, errUserNotLoggedIn, "Ignoring", nil)
@@ -768,8 +778,9 @@ func (portal *Portal) handleMatrixRedaction(user *User, evt *event.Event) {
 				message.Delete()
 			}
 			go portal.sendMessageMetrics(evt, err, "Error sending", nil)
+		} else {
+			go portal.sendMessageMetrics(evt, errTargetNotFound, "Error sending", nil)
 		}
-
 		return
 	}
 
@@ -781,19 +792,24 @@ func (portal *Portal) handleMatrixRedaction(user *User, evt *event.Event) {
 				Channel:   portal.Key.ChannelID,
 				Timestamp: reaction.SlackMessageID,
 			})
-			if err != nil {
+			if err != nil && err.Error() != "no_reaction" {
 				portal.log.Debugfln("Failed to delete reaction %s for message %s: %v", reaction.SlackName, reaction.SlackMessageID, err)
+			} else if err.Error() == "no_reaction" {
+				portal.log.Warnfln("Didn't delete Slack reaction %s for message %s: reaction doesn't exist on Slack", reaction.SlackName, reaction.SlackMessageID)
+				reaction.Delete()
+				err = nil // not reporting an error for this
 			} else {
 				reaction.Delete()
 			}
 			go portal.sendMessageMetrics(evt, err, "Error sending", nil)
+		} else {
+			go portal.sendMessageMetrics(evt, errUnknownEmoji, "Error sending", nil)
 		}
-
 		return
 	}
 
 	portal.log.Warnfln("Failed to redact %s@%s: no event found", portal.Key, evt.Redacts)
-	go portal.sendMessageMetrics(evt, errTargetNotFound, "Error sending", nil)
+	go portal.sendMessageMetrics(evt, errReactionTargetNotFound, "Error sending", nil)
 }
 
 func (portal *Portal) HandleMatrixLeave(brSender bridge.User) {
@@ -1253,6 +1269,12 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 				portal.log.Warnfln("Failed to send media message %s to matrix: %v", msg.Msg.Timestamp, err)
 				continue
 			}
+			attachment := portal.bridge.DB.Attachment.New()
+			attachment.Channel = portal.Key
+			attachment.SlackFileID = file.ID
+			attachment.SlackMessageID = msg.Timestamp
+			attachment.MatrixEventID = resp.EventID
+			attachment.Insert()
 			//portal.markMessageHandled(nil, msg.Msg.Timestamp, msg.Msg.ThreadTimestamp, resp.EventID, msg.Msg.User)
 			lastEventId = &resp.EventID
 		}
@@ -1343,7 +1365,7 @@ func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTea
 		return
 	}
 
-	portal.log.Debugfln("Handling Slack reaction: %s %s %s %s %s", portal.Key.TeamID, portal.Key.ChannelID, portal.Key.UserID, msg.Item.Timestamp, msg.Reaction)
+	portal.log.Debugfln("Handling Slack reaction: %v %s %s", portal.Key, msg.Item.Timestamp, msg.Reaction)
 
 	if portal.MXID == "" {
 		portal.log.Warnfln("No Matrix portal created for room %s %s, not bridging reaction")
