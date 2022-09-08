@@ -433,17 +433,19 @@ func (user *User) connectTeam(userTeam *database.UserTeam) error {
 func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 	channelInfo := map[string]slack.Channel{}
 
-	channels, _, err := userTeam.Client.GetConversations(&slack.GetConversationsParameters{
-		Types: []string{"public_channel", "private_channel", "im", "mpim"},
-	})
-	if err != nil {
-		user.log.Warnfln("Error fetching channels: %v", err)
-		return err
-	}
-	for _, channel := range channels {
-		if channel.IsMember {
+	if !strings.HasPrefix(userTeam.Token, "xoxs") {
+		// TODO: use pagination to make sure we get everything!
+		channels, _, err := userTeam.Client.GetConversationsForUser(&slack.GetConversationsForUserParameters{
+			Types: []string{"public_channel", "private_channel", "mpim"},
+		})
+		if err != nil {
+			user.log.Warnfln("Error fetching channels: %v", err)
+		}
+		for _, channel := range channels {
 			channelInfo[channel.ID] = channel
 		}
+	} else {
+		user.log.Warnfln("Not fetching channels for user %s %s: xoxs token type not supported", userTeam.Key.TeamID, userTeam.Key.SlackID)
 	}
 
 	portals := user.bridge.DB.Portal.GetAllByID(userTeam.Key.TeamID, userTeam.Key.SlackID)

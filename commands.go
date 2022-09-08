@@ -32,7 +32,7 @@ type WrappedCommandEvent struct {
 func (br *SlackBridge) RegisterCommands() {
 	proc := br.CommandProcessor.(*commands.Processor)
 	proc.AddHandlers(
-		cmdLogin,
+		cmdLoginPassword,
 		cmdLoginToken,
 		cmdLogout,
 		cmdSyncTeams,
@@ -52,9 +52,9 @@ func wrapCommand(handler func(*WrappedCommandEvent)) func(*commands.Event) {
 	}
 }
 
-var cmdLogin = &commands.FullHandler{
-	Func: wrapCommand(fnLogin),
-	Name: "login",
+var cmdLoginPassword = &commands.FullHandler{
+	Func: wrapCommand(fnLoginPassword),
+	Name: "login-password",
 	Help: commands.HelpMeta{
 		Section:     commands.HelpSectionAuth,
 		Description: "Link the bridge to a Slack account",
@@ -62,9 +62,9 @@ var cmdLogin = &commands.FullHandler{
 	},
 }
 
-func fnLogin(ce *WrappedCommandEvent) {
+func fnLoginPassword(ce *WrappedCommandEvent) {
 	if len(ce.Args) != 3 {
-		ce.Reply("**Usage**: $cmdprefix login <email> <domain> <password>")
+		ce.Reply("**Usage**: $cmdprefix login-password <email> <domain> <password>")
 		return
 	}
 
