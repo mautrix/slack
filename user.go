@@ -269,8 +269,8 @@ func (user *User) syncChatDoublePuppetDetails(portal *Portal, justCreated bool) 
 	// TODO sync mute status
 }
 
-func (user *User) login(info *auth.Info) error {
-	if user.TeamLoggedIn(info.UserEmail, info.TeamName) {
+func (user *User) login(info *auth.Info, force bool) error {
+	if user.TeamLoggedIn(info.UserEmail, info.TeamName) && !force {
 		return fmt.Errorf("%s is already logged into team %s with %s", user.MXID, info.TeamName, info.UserEmail)
 	}
 
@@ -303,7 +303,7 @@ func (user *User) LoginTeam(email, team, password string) error {
 		return err
 	}
 
-	return user.login(info)
+	return user.login(info, false)
 }
 
 func (user *User) TokenLogin(token string, cookieToken string) (*auth.Info, error) {
@@ -312,7 +312,7 @@ func (user *User) TokenLogin(token string, cookieToken string) (*auth.Info, erro
 		return nil, err
 	}
 
-	return info, user.login(info)
+	return info, user.login(info, true)
 }
 
 func (user *User) IsLoggedIn() bool {

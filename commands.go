@@ -57,7 +57,7 @@ var cmdLoginPassword = &commands.FullHandler{
 	Name: "login-password",
 	Help: commands.HelpMeta{
 		Section:     commands.HelpSectionAuth,
-		Description: "Link the bridge to a Slack account",
+		Description: "Link the bridge to a Slack account (legacy password login)",
 		Args:        "<email> <domain> <password>",
 	},
 }
@@ -80,6 +80,7 @@ func fnLoginPassword(ce *WrappedCommandEvent) {
 	}
 
 	ce.Reply("Successfully logged into %s for team %s", ce.Args[0], ce.Args[1])
+	ce.Reply("Note: with legacy password login, your conversations will only be bridged once messages arrive in them through Slack. Use the `login-token` command if you want your joined conversations to be immediately bridged (you don't need to logout first).")
 }
 
 var cmdLoginToken = &commands.FullHandler{
@@ -88,7 +89,7 @@ var cmdLoginToken = &commands.FullHandler{
 	Help: commands.HelpMeta{
 		Section:     commands.HelpSectionAuth,
 		Description: "Link the bridge to a Slack account",
-		Args:        "<token>",
+		Args:        "<token> <cookieToken>",
 	},
 }
 
