@@ -322,11 +322,15 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	portal.ensureUserInvited(user)
 	user.syncChatDoublePuppetDetails(portal, true)
 
+	channelType := portal.getChannelType(channel)
 	var members []string
 	// no members are included in channels, only in group DMs
-	if portal.getChannelType(channel) == database.ChannelTypeDM {
+	switch channelType {
+	case database.ChannelTypeChannel:
+		members = portal.getChannelMembers(userTeam, 3) // TODO: this just fetches 3 members so channels don't have to look like DMs
+	case database.ChannelTypeDM:
 		members = []string{channel.User, portal.Key.UserID}
-	} else if portal.getChannelType(channel) == database.ChannelTypeGroupDM {
+	case database.ChannelTypeGroupDM:
 		members = channel.Members
 	}
 	portal.syncParticipants(user, userTeam, members)
@@ -350,6 +354,19 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	portal.FillMessages(user, userTeam, 1, "")
 
 	return nil
+}
+
+func (portal *Portal) getChannelMembers(userTeam *database.UserTeam, limit int) []string {
+	members, _, err := userTeam.Client.GetUsersInConversation(&slack.GetUsersInConversationParameters{
+		ChannelID: portal.Key.ChannelID,
+		Limit:     limit,
+	})
+	if err != nil {
+		portal.log.Errorfln("Error fetching channel members for %v: %v", portal.Key, err)
+		return nil
+	}
+	return members
+
 }
 
 func (portal *Portal) FillMessages(user *User, userteam *database.UserTeam, limit int, latest string) error {
@@ -1195,33 +1212,34 @@ func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, me
 	return meta
 }
 
-func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam, msg *slack.MessageEvent) {
+// Returns bool: whether or not this resulted in a Matrix message in the room
+func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam, msg *slack.MessageEvent) bool {
 	portal.slackMessageLock.Lock()
 	defer portal.slackMessageLock.Unlock()
 
 	if msg.Msg.Type != "message" {
 		portal.log.Warnln("ignoring unknown message type:", msg.Msg.Type)
-		return
+		return false
 	}
 
 	if portal.MXID == "" {
 		channel, err := userTeam.Client.GetConversationInfo(msg.Channel, true)
 		if err != nil {
 			portal.log.Errorln("failed to lookup channel info:", err)
-			return
+			return false
 		}
 
 		portal.log.Debugln("Creating Matrix room from incoming message")
 		if err := portal.CreateMatrixRoom(user, userTeam, channel); err != nil {
 			portal.log.Errorln("Failed to create portal room:", err)
-			return
+			return false
 		}
 	}
 
 	existing := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Msg.Timestamp)
 	if existing != nil {
 		portal.log.Debugln("Dropping duplicate message:", msg.Msg.Timestamp)
-		return
+		return false
 	}
 
 	var intent *appservice.IntentAPI
@@ -1292,7 +1310,7 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 			resp, err := portal.sendMatrixMessage(intent, event.EventMessage, &content, nil, ts.UnixMilli())
 			if err != nil {
 				portal.log.Warnfln("Failed to send message %s to matrix: %v", msg.Msg.Timestamp, err)
-				return
+				return false
 			}
 
 			//portal.markMessageHandled(nil, msg.Msg.Timestamp, msg.Msg.ThreadTimestamp, resp.EventID, msg.Msg.User)
@@ -1303,6 +1321,7 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 			// This means you can't react or reply to the earlier of these messages. Needs to be fixed in DB schema
 			portal.markMessageHandled(nil, msg.Msg.Timestamp, msg.Msg.ThreadTimestamp, *lastEventId, msg.Msg.User)
 			go portal.sendDeliveryReceipt(*lastEventId)
+			return true
 		}
 	case "channel_topic", "channel_purpose":
 		portal.UpdateInfo(user, userTeam, nil, false)
@@ -1312,20 +1331,19 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 		message := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Msg.DeletedTimestamp)
 		if message == nil {
 			portal.log.Warnfln("Failed to redact %s: Matrix event not found", msg.Msg.DeletedTimestamp)
-			return
 		}
 		_, err := portal.MainIntent().RedactEvent(portal.MXID, message.MatrixID)
 		if err != nil {
 			portal.log.Errorln("Failed to redact %s: %v", msg.Msg.DeletedTimestamp, err)
-			return
 		}
 		message.Delete()
 	case "message_replied", "group_join", "group_leave", "channel_join", "channel_leave", "thread_broadcast": // Not yet an exhaustive list.
 		// These subtypes are simply ignored, because they're handled elsewhere/in other ways (Slack sends multiple info of these events)
 		portal.log.Debugfln("Received message subtype %s, which is ignored", msg.Msg.SubType)
 	default:
-		portal.log.Debugfln("Received unknown message subtype %s", msg.Msg.SubType)
+		portal.log.Warnfln("Received unknown message subtype %s", msg.Msg.SubType)
 	}
+	return false
 }
 
 func (portal *Portal) addThreadMetadata(content *event.MessageEventContent, threadTs string) (hasThread bool, hasReply bool) {

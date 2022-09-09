@@ -19,7 +19,7 @@ func replaceShortcodesWithEmojis(text string) string {
 
 func shortcodeToEmoji(code string) string {
 	strippedCode := strings.TrimPrefix(code, ":")
-	strippedCode = strings.TrimSuffix(code, ":")
+	strippedCode = strings.TrimSuffix(strippedCode, ":")
 	emoji, found := emojis[strippedCode]
 	if found {
 		return emoji
