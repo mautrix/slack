@@ -375,7 +375,7 @@ func (portal *Portal) FillMessages(user *User, userteam *database.UserTeam, limi
 		portal.log.Debugfln("Received %d messages from Slack when filling", len(messages.Messages))
 		for _, message := range messages.Messages {
 			if message.Type == "message" {
-				portal.log.Debugfln("Filling in message %v at timestamp %s", message, message.Timestamp)
+				portal.log.Debugfln("Filling in message %s", message.Timestamp)
 				messageEvent := slack.MessageEvent(message)
 				portal.HandleSlackMessage(user, userteam, &messageEvent)
 				if portal.parseTimestamp(message.Timestamp).Before(portal.parseTimestamp(earliestHandled)) {
@@ -794,7 +794,7 @@ func (portal *Portal) handleMatrixRedaction(user *User, evt *event.Event) {
 			})
 			if err != nil && err.Error() != "no_reaction" {
 				portal.log.Debugfln("Failed to delete reaction %s for message %s: %v", reaction.SlackName, reaction.SlackMessageID, err)
-			} else if err.Error() == "no_reaction" {
+			} else if err != nil && err.Error() == "no_reaction" {
 				portal.log.Warnfln("Didn't delete Slack reaction %s for message %s: reaction doesn't exist on Slack", reaction.SlackName, reaction.SlackMessageID)
 				reaction.Delete()
 				err = nil // not reporting an error for this
@@ -995,7 +995,6 @@ func (portal *Portal) UpdateBridgeInfo() {
 	}
 	portal.log.Debugln("Updating bridge info...")
 	stateKey, content := portal.getBridgeInfo()
-	portal.log.Warnfln("%v", portal.Type)
 	_, err := portal.MainIntent().SendStateEvent(portal.MXID, event.StateBridge, stateKey, content)
 	if err != nil {
 		portal.log.Warnln("Failed to update m.bridge:", err)
