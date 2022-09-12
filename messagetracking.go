@@ -32,8 +32,6 @@ import (
 )
 
 var (
-	errUserNotConnected            = errors.New("you are not connected to Slack")
-	errDifferentUser               = errors.New("user is not the recipient of this private chat portal")
 	errUserNotLoggedIn             = errors.New("user is not logged in to this Slack team")
 	errMNoticeDisabled             = errors.New("bridging m.notice messages is disabled")
 	errUnexpectedParsedContentType = errors.New("unexpected parsed content type")

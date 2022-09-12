@@ -179,16 +179,6 @@ func (p *ProvisioningAPI) logout(w http.ResponseWriter, r *http.Request) {
 	user := p.bridge.GetUserByMXID(id.UserID(userID))
 	r.ParseForm()
 
-	slackId := r.Form.Get("slack_user_id")
-	if slackId == "" {
-		jsonResponse(w, http.StatusBadRequest, Error{
-			Error:   "No slack_user_id specified",
-			ErrCode: "No slack_user_id specified",
-		})
-
-		return
-	}
-
 	teamId := r.Form.Get("slack_team_id")
 	if teamId == "" {
 		jsonResponse(w, http.StatusBadRequest, Error{
@@ -199,8 +189,8 @@ func (p *ProvisioningAPI) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userTeam := user.GetUserTeam(teamId, slackId)
-	if userTeam == nil && !userTeam.IsLoggedIn() {
+	userTeam := user.GetUserTeam(teamId)
+	if userTeam == nil || !userTeam.IsLoggedIn() {
 		jsonResponse(w, http.StatusNotFound, Error{
 			Error:   "Not logged in",
 			ErrCode: "Not logged in",

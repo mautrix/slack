@@ -30,7 +30,7 @@ func (uq *UserQuery) New() *User {
 	return &User{
 		db:    uq.db,
 		log:   uq.log,
-		Teams: map[UserTeamKey]*UserTeam{},
+		Teams: map[string]*UserTeam{},
 	}
 }
 

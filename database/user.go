@@ -35,7 +35,7 @@ type User struct {
 	ManagementRoom id.RoomID
 
 	TeamsLock sync.Mutex
-	Teams     map[UserTeamKey]*UserTeam
+	Teams     map[string]*UserTeam
 }
 
 func (user *User) loadTeams() {
@@ -43,7 +43,7 @@ func (user *User) loadTeams() {
 	defer user.TeamsLock.Unlock()
 
 	for _, userTeam := range user.db.UserTeam.GetAllByMXIDWithToken(user.MXID) {
-		user.Teams[userTeam.Key] = userTeam
+		user.Teams[userTeam.Key.TeamID] = userTeam
 	}
 }
 

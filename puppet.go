@@ -208,7 +208,7 @@ func (puppet *Puppet) updatePortalMeta(meta func(portal *Portal)) {
 }
 
 func (puppet *Puppet) updateName(source *User) bool {
-	userTeam := source.GetUserTeam(puppet.TeamID, puppet.UserID)
+	userTeam := source.GetUserTeam(puppet.TeamID)
 	user, err := userTeam.Client.GetUserInfo(puppet.UserID)
 	if err != nil {
 		puppet.log.Warnln("failed to get user from id:", err)

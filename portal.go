@@ -489,11 +489,6 @@ func (portal *Portal) sendMatrixMessage(intent *appservice.IntentAPI, eventType 
 }
 
 func (portal *Portal) handleMatrixMessages(msg portalMatrixMessage) {
-	userTeam := msg.user.GetUserTeam(portal.Key.TeamID, portal.Key.UserID)
-	if userTeam == nil {
-		go portal.sendMessageMetrics(msg.evt, errUserNotLoggedIn, "Ignoring", nil)
-		return
-	}
 
 	evtTS := time.UnixMilli(msg.evt.Timestamp)
 	timings := messageTimings{
@@ -506,21 +501,27 @@ func (portal *Portal) handleMatrixMessages(msg portalMatrixMessage) {
 
 	switch msg.evt.Type {
 	case event.EventMessage:
-		portal.handleMatrixMessage(msg.user, userTeam, msg.evt, &ms)
+		portal.handleMatrixMessage(msg.user, msg.evt, &ms)
 	case event.EventRedaction:
 		portal.handleMatrixRedaction(msg.user, msg.evt)
 	case event.EventReaction:
-		portal.handleMatrixReaction(userTeam, msg.evt, &ms)
+		portal.handleMatrixReaction(msg.user, msg.evt, &ms)
 	default:
 		portal.log.Debugln("unknown event type", msg.evt.Type)
 	}
 }
 
-func (portal *Portal) handleMatrixMessage(sender *User, userTeam *database.UserTeam, evt *event.Event, ms *metricSender) {
+func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event, ms *metricSender) {
 	portal.slackMessageLock.Lock()
 	defer portal.slackMessageLock.Unlock()
 
 	start := time.Now()
+
+	userTeam := sender.GetUserTeam(portal.Key.TeamID)
+	if userTeam == nil {
+		go ms.sendMessageMetrics(evt, errUserNotLoggedIn, "Ignoring", true)
+		return
+	}
 
 	existing := portal.bridge.DB.Message.GetByMatrixID(portal.Key, evt.ID)
 	if existing != nil {
@@ -589,6 +590,7 @@ func (portal *Portal) handleMatrixMessage(sender *User, userTeam *database.UserT
 			return
 		}
 		var shareInfo slack.ShareFileInfo
+		// Slack puts the channel message info after uploading a file in either file.shares.private or file.shares.public
 		if info, found := file.Shares.Private[portal.Key.ChannelID]; found && len(info) > 0 {
 			shareInfo = info[0]
 		} else if info, found := file.Shares.Public[portal.Key.ChannelID]; found && len(info) > 0 {
@@ -608,7 +610,7 @@ func (portal *Portal) handleMatrixMessage(sender *User, userTeam *database.UserT
 		dbMsg.Channel = portal.Key
 		dbMsg.SlackID = timestamp
 		dbMsg.MatrixID = evt.ID
-		dbMsg.AuthorID = portal.Key.UserID
+		dbMsg.AuthorID = userTeam.Key.SlackID
 		dbMsg.SlackThreadID = threadTs
 		dbMsg.Insert()
 	}
@@ -686,9 +688,15 @@ func (portal *Portal) convertMatrixMessage(ctx context.Context, sender *User, us
 	}
 }
 
-func (portal *Portal) handleMatrixReaction(userTeam *database.UserTeam, evt *event.Event, ms *metricSender) {
+func (portal *Portal) handleMatrixReaction(sender *User, evt *event.Event, ms *metricSender) {
 	portal.slackMessageLock.Lock()
 	defer portal.slackMessageLock.Unlock()
+
+	userTeam := sender.GetUserTeam(portal.Key.TeamID)
+	if userTeam == nil {
+		go ms.sendMessageMetrics(evt, errUserNotLoggedIn, "Ignoring", true)
+		return
+	}
 
 	reaction := evt.Content.AsReaction()
 	if reaction.RelatesTo.Type != event.RelAnnotation {
@@ -775,7 +783,7 @@ func (portal *Portal) handleMatrixRedaction(user *User, evt *event.Event) {
 	portal.slackMessageLock.Lock()
 	defer portal.slackMessageLock.Unlock()
 
-	userTeam := user.GetUserTeam(portal.Key.TeamID, portal.Key.UserID)
+	userTeam := user.GetUserTeam(portal.Key.TeamID)
 	if userTeam == nil {
 		go portal.sendMessageMetrics(evt, errUserNotLoggedIn, "Ignoring", nil)
 		return

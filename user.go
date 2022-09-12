@@ -51,7 +51,7 @@ type User struct {
 	bridge *SlackBridge
 	log    log.Logger
 
-	BridgeStates map[database.UserTeamKey]*bridge.BridgeStateQueue
+	BridgeStates map[string]*bridge.BridgeStateQueue
 
 	PermissionLevel bridgeconfig.PermissionLevel
 }
@@ -156,7 +156,7 @@ func (br *SlackBridge) NewUser(dbUser *database.User) *User {
 	}
 
 	user.PermissionLevel = br.Config.Bridge.Permissions.Get(user.MXID)
-	user.BridgeStates = make(map[database.UserTeamKey]*bridge.BridgeStateQueue)
+	user.BridgeStates = make(map[string]*bridge.BridgeStateQueue)
 
 	return user
 }
@@ -287,7 +287,7 @@ func (user *User) login(info *auth.Info, force bool) error {
 	// We minimize the time we hold the lock because SyncTeams also needs the
 	// lock.
 	user.TeamsLock.Lock()
-	user.Teams[userTeam.Key] = userTeam
+	user.Teams[userTeam.Key.TeamID] = userTeam
 	user.TeamsLock.Unlock()
 
 	user.User.SyncTeams()
@@ -344,7 +344,7 @@ func (user *User) LogoutUserTeam(userTeam *database.UserTeam) error {
 
 	if userTeam.RTM != nil {
 		if err := userTeam.RTM.Disconnect(); err != nil {
-			user.BridgeStates[userTeam.Key].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: err.Error()})
+			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: err.Error()})
 			return err
 		}
 	}
@@ -352,7 +352,7 @@ func (user *User) LogoutUserTeam(userTeam *database.UserTeam) error {
 	userTeam.Client = nil
 
 	user.TeamsLock.Lock()
-	delete(user.Teams, userTeam.Key)
+	delete(user.Teams, userTeam.Key.TeamID)
 	user.TeamsLock.Unlock()
 
 	userTeam.Token = ""
@@ -370,7 +370,7 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 		switch event := msg.Data.(type) {
 		case *slack.ConnectingEvent:
 			user.log.Debugfln("connecting: attempt %d", event.Attempt)
-			user.BridgeStates[userTeam.Key].Send(status.BridgeState{StateEvent: status.StateConnecting})
+			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateConnecting})
 		case *slack.ConnectedEvent:
 			// Update all of our values according to what the server has for us.
 			userTeam.Key.SlackID = event.Info.User.ID
@@ -381,7 +381,7 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 
 			user.tryAutomaticDoublePuppeting(userTeam)
 
-			user.BridgeStates[userTeam.Key].Send(status.BridgeState{StateEvent: status.StateConnected})
+			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateConnected})
 			user.log.Infofln("connected to team %s as %s", userTeam.TeamName, userTeam.SlackEmail)
 		case *slack.HelloEvent:
 			// Ignored for now
@@ -389,7 +389,7 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 			user.log.Errorln("invalid authentication token")
 
 			user.LogoutUserTeam(userTeam)
-			user.BridgeStates[userTeam.Key].Send(status.BridgeState{StateEvent: status.StateBadCredentials})
+			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateBadCredentials})
 
 			// TODO: Should drop a message in the management room
 
@@ -416,7 +416,7 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 			}
 		case *slack.RTMError:
 			user.log.Errorln("rtm error:", event.Error())
-			user.BridgeStates[userTeam.Key].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: event.Error()})
+			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: event.Error()})
 		default:
 			user.log.Warnln("unknown message", msg)
 		}
@@ -557,7 +557,7 @@ func (user *User) disconnectTeam(userTeam *database.UserTeam) error {
 	if userTeam.RTM != nil {
 		if err := userTeam.RTM.Disconnect(); err != nil {
 			user.log.Errorfln("Error disconnecting RTM for %s: %v", userTeam.Key, err)
-			user.BridgeStates[userTeam.Key].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: err.Error()})
+			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: err.Error()})
 			return err
 		}
 	}
@@ -582,17 +582,11 @@ func (user *User) Disconnect() error {
 	return nil
 }
 
-func (user *User) GetUserTeam(teamID, userID string) *database.UserTeam {
+func (user *User) GetUserTeam(teamID string) *database.UserTeam {
 	user.TeamsLock.Lock()
 	defer user.TeamsLock.Unlock()
 
-	key := database.UserTeamKey{
-		MXID:    user.MXID,
-		TeamID:  teamID,
-		SlackID: userID,
-	}
-
-	if userTeam, found := user.Teams[key]; found {
+	if userTeam, found := user.Teams[teamID]; found {
 		return userTeam
 	}
 

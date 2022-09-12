@@ -26,6 +26,7 @@ All endpoints below require the provisioning shared secret in the `Authorization
 
 ### Required query parameters
 
+* `user_id`: Matrix ID of user
 * `token`: Slack client token (starts with `xoxc-`, stored in the Slack client in local storage: `localConfig_v2/teams/TEAM_ID/token`)
 * `cookietoken`: Slack cookie token (starts with `xoxd-`, stored in the Slack client in the `d` cookie)
 
@@ -43,5 +44,5 @@ All endpoints below require the provisioning shared secret in the `Authorization
 
 ### Required query parameters
 
-* `slack_user_id`: ID of this user on this Slack team
+* `user_id`: Matrix ID of user
 * `slack_team_id`: ID of this Slack team
