@@ -41,7 +41,7 @@ func (aq *AttachmentQuery) New() *Attachment {
 
 func (aq *AttachmentQuery) GetAllBySlackMessageID(key PortalKey, slackMessageID string) []*Attachment {
 	query := attachmentSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3" +
-		" slack_message_id=$4"
+		" AND slack_message_id=$4"
 
 	return aq.getAll(query, key.TeamID, key.UserID, key.ChannelID, slackMessageID)
 }

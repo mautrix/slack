@@ -622,34 +622,23 @@ func (portal *Portal) convertMatrixMessage(ctx context.Context, sender *User, us
 		return nil, nil, "", errUnexpectedParsedContentType
 	}
 
-	// TODO
-	// if content.RelatesTo != nil && content.RelatesTo.Type == event.RelReplace {
-	// 	existing := portal.bridge.DB.Message.GetByMatrixID(portal.Key, content.RelatesTo.EventID)
-
-	// 	if existing != nil && existing.SlackID != "" {
-	// 		// we don't have anything to save for the update message right now
-	// 		// as we're not tracking edited timestamps.
-	// 		_, err := sender.Client.ChannelMessageEdit(portal.Key.ChannelID,
-	// 			existing.SlackID, content.NewContent.Body)
-	// 		if err != nil {
-	// 			portal.log.Errorln("Failed to update message %s: %v", existing.SlackID, err)
-
-	// 			return
-	// 		}
-	// 	}
-
-	// 	return
-	// }
-
-	// fetch the root ID via Matrix thread
-	if content.RelatesTo != nil && content.RelatesTo.Type == event.RelThread {
+	contentBody := content.Body
+	var existingTs string
+	if content.RelatesTo != nil && content.RelatesTo.Type == event.RelReplace { // fetch the slack original TS for editing purposes
+		existing := portal.bridge.DB.Message.GetByMatrixID(portal.Key, content.RelatesTo.EventID)
+		if existing != nil && existing.SlackID != "" {
+			existingTs = existing.SlackID
+			contentBody = content.NewContent.Body
+		} else {
+			portal.log.Errorfln("Matrix message %s is an edit, but can't find the original Slack message ID", evt.ID)
+			return nil, nil, "", errTargetNotFound
+		}
+	} else if content.RelatesTo != nil && content.RelatesTo.Type == event.RelThread { // fetch the thread root ID via Matrix thread
 		rootMessage := portal.bridge.DB.Message.GetByMatrixID(portal.Key, content.RelatesTo.GetThreadParent())
 		if rootMessage != nil {
 			threadTs = rootMessage.SlackID
 		}
-	}
-	// if the first method failed, try via Matrix reply
-	if threadTs == "" && content.RelatesTo != nil && content.RelatesTo.InReplyTo != nil {
+	} else if threadTs == "" && content.RelatesTo != nil && content.RelatesTo.InReplyTo != nil { // if the first method failed, try via Matrix reply
 		parentMessage := portal.bridge.DB.Message.GetByMatrixID(portal.Key, content.GetReplyTo())
 		if parentMessage != nil {
 			if parentMessage.SlackThreadID != "" {
@@ -662,25 +651,32 @@ func (portal *Portal) convertMatrixMessage(ctx context.Context, sender *User, us
 
 	switch content.MsgType {
 	case event.MsgText, event.MsgEmote, event.MsgNotice:
-		options = []slack.MsgOption{slack.MsgOptionText(content.Body, false)}
+		options = []slack.MsgOption{slack.MsgOptionText(contentBody, false)}
 		if threadTs != "" {
 			options = append(options, slack.MsgOptionTS(threadTs))
+		}
+		if existingTs != "" {
+			options = append(options, slack.MsgOptionUpdate(existingTs))
 		}
 		if content.MsgType == event.MsgEmote {
 			options = append(options, slack.MsgOptionMeMessage())
 		}
 		return options, nil, threadTs, nil
 	case event.MsgAudio, event.MsgFile, event.MsgImage, event.MsgVideo:
+		if len(options) != 0 {
+			portal.log.Warnfln("")
+		}
 		data, err := portal.downloadMatrixAttachment(content)
 		if err != nil {
 			portal.log.Errorfln("Failed to download matrix attachment: %v", err)
 			return nil, nil, "", errMediaDownloadFailed
 		}
 		fileUpload = &slack.FileUploadParameters{
-			Filename: content.Body,
-			Filetype: content.Info.MimeType,
-			Reader:   bytes.NewReader(data),
-			Channels: []string{portal.Key.ChannelID},
+			Filename:        content.Body,
+			Filetype:        content.Info.MimeType,
+			Reader:          bytes.NewReader(data),
+			Channels:        []string{portal.Key.ChannelID},
+			ThreadTimestamp: threadTs,
 		}
 		return nil, fileUpload, threadTs, nil
 	default:
