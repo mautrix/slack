@@ -424,11 +424,14 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 
 func (user *User) connectTeam(userTeam *database.UserTeam) error {
 	user.log.Debugfln("connecting %s to team %s", userTeam.SlackEmail, userTeam.TeamName)
-	if userTeam.CookieToken != "" {
-		userTeam.Client = slack.New(userTeam.Token, slack.OptionCookie("d", userTeam.CookieToken))
-	} else {
-		userTeam.Client = slack.New(userTeam.Token)
+	slackOptions := []slack.Option{
+		slack.OptionLog(SlackgoLogger{user.log.Sub(fmt.Sprintf("SlackGo/%s-%s", userTeam.Key.TeamID, userTeam.Key.SlackID))}),
+		slack.OptionDebug(user.bridge.Config.Logging.PrintLevel <= 0),
 	}
+	if userTeam.CookieToken != "" {
+		slackOptions = append(slackOptions, slack.OptionCookie("d", userTeam.CookieToken))
+	}
+	userTeam.Client = slack.New(userTeam.Token, slackOptions...)
 
 	userTeam.RTM = userTeam.Client.NewRTM()
 

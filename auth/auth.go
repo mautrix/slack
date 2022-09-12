@@ -163,7 +163,7 @@ func LoginPassword(l log.Logger, email, team, password string) (*Info, error) {
 }
 
 func LoginToken(token string, cookieToken string) (*Info, error) {
-	client := slack.New(token, slack.OptionCookie("d", cookieToken), slack.OptionDebug(true))
+	client := slack.New(token, slack.OptionCookie("d", cookieToken))
 
 	clientBoot, err := client.ClientBoot()
 	if err != nil {
