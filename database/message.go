@@ -80,13 +80,3 @@ func (m *Message) Delete() {
 		m.log.Warnfln("Failed to delete %s@%s: %v", m.Channel, m.SlackID, err)
 	}
 }
-
-func (m *Message) UpdateMatrixID(mxid id.EventID) {
-	query := "UPDATE message SET matrix_message_id=$1 WHERE team_id=$2 AND user_id=$3 AND channel_id=$4 AND slack_message_id=$5"
-	m.MatrixID = mxid
-
-	_, err := m.db.Exec(query, m.MatrixID, m.Channel.TeamID, m.Channel.UserID, m.Channel.ChannelID, m.SlackID)
-	if err != nil {
-		m.log.Warnfln("Failed to update %s@%s: %v", m.Channel, m.SlackID, err)
-	}
-}
