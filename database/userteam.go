@@ -18,6 +18,7 @@ package database
 
 import (
 	"database/sql"
+	"fmt"
 
 	log "maunium.net/go/maulogger/v2"
 
@@ -90,6 +91,10 @@ type UserTeamKey struct {
 	MXID    id.UserID
 	SlackID string
 	TeamID  string
+}
+
+func (utk UserTeamKey) String() string {
+	return fmt.Sprintf("%s-%s", utk.TeamID, utk.SlackID)
 }
 
 type UserTeam struct {

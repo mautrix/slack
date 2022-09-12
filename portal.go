@@ -1123,7 +1123,7 @@ func (portal *Portal) UpdateTopicDirect(topic string) bool {
 		return false
 	}
 
-	portal.log.Debugfln("Updating topic %q -> %q", portal.Topic, topic)
+	portal.log.Debugfln("Updating topic for room %s", portal.Key.ChannelID)
 	portal.Topic = topic
 	portal.TopicSet = false
 	if portal.MXID != "" {
@@ -1165,8 +1165,6 @@ func (portal *Portal) UpdateTopic(meta *slack.Channel, sourceTeam *database.User
 	matrixTopic := portal.getTopic(meta, sourceTeam)
 
 	changed := portal.Topic != matrixTopic
-
-	portal.log.Debugfln("Setting Matrix topic to %s", matrixTopic)
 	return portal.UpdateTopicDirect(matrixTopic) || changed
 }
 

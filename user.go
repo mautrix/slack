@@ -365,6 +365,7 @@ func (user *User) LogoutUserTeam(userTeam *database.UserTeam) error {
 }
 
 func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
+	user.log.Debugfln("Start receiving Slack events for %s", userTeam.Key)
 	for msg := range userTeam.RTM.IncomingEvents {
 		switch event := msg.Data.(type) {
 		case *slack.ConnectingEvent:
@@ -420,12 +421,13 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 			user.log.Warnln("unknown message", msg)
 		}
 	}
+	user.log.Errorfln("Slack RTM for %s unexpectedly disconnected!", userTeam.Key)
 }
 
 func (user *User) connectTeam(userTeam *database.UserTeam) error {
-	user.log.Debugfln("connecting %s to team %s", userTeam.SlackEmail, userTeam.TeamName)
+	user.log.Infofln("Connecting %s to Slack userteam %s (%s)", user.MXID, userTeam.Key, userTeam.TeamName)
 	slackOptions := []slack.Option{
-		slack.OptionLog(SlackgoLogger{user.log.Sub(fmt.Sprintf("SlackGo/%s-%s", userTeam.Key.TeamID, userTeam.Key.SlackID))}),
+		slack.OptionLog(SlackgoLogger{user.log.Sub(fmt.Sprintf("SlackGo/%s", userTeam.Key))}),
 		slack.OptionDebug(user.bridge.Config.Logging.PrintLevel <= 0),
 	}
 	if userTeam.CookieToken != "" {
@@ -459,7 +461,7 @@ func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 			channelInfo[channel.ID] = channel
 		}
 	} else {
-		user.log.Warnfln("Not fetching channels for user %s %s: xoxs token type can't fetch user's joined channels", userTeam.Key.TeamID, userTeam.Key.SlackID)
+		user.log.Warnfln("Not fetching channels for userteam %s: xoxs token type can't fetch user's joined channels", userTeam.Key)
 	}
 
 	portals := user.bridge.DB.Portal.GetAllByID(userTeam.Key.TeamID, userTeam.Key.SlackID)
@@ -536,12 +538,12 @@ func (user *User) Connect() error {
 	user.Lock()
 	defer user.Unlock()
 
-	user.log.Debugln("connecting to slack")
-
+	user.log.Infofln("Connecting Slack teams for user %s", user.MXID)
 	for key, userTeam := range user.Teams {
 		user.BridgeStates[key] = user.bridge.NewBridgeStateQueue(userTeam, user.log)
 		err := user.connectTeam(userTeam)
 		if err != nil {
+			user.log.Errorfln("Error connecting to Slack userteam %s: %v", userTeam.Key, err)
 			// TODO: more detailed error state
 			user.BridgeStates[key].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: err.Error()})
 		}
@@ -551,14 +553,17 @@ func (user *User) Connect() error {
 }
 
 func (user *User) disconnectTeam(userTeam *database.UserTeam) error {
+	user.log.Infofln("Disconnecting Slack userteam %s", userTeam.Key)
 	if userTeam.RTM != nil {
 		if err := userTeam.RTM.Disconnect(); err != nil {
+			user.log.Errorfln("Error disconnecting RTM for %s: %v", userTeam.Key, err)
 			user.BridgeStates[userTeam.Key].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: err.Error()})
 			return err
 		}
 	}
 
 	userTeam.Client = nil
+	user.log.Debugfln("Slack client for %s set to nil!", userTeam.Key)
 
 	return nil
 }
@@ -567,9 +572,9 @@ func (user *User) Disconnect() error {
 	user.Lock()
 	defer user.Unlock()
 
-	for key, userTeam := range user.Teams {
+	user.log.Infofln("Disconnecting Slack teams for user %s", user.MXID)
+	for _, userTeam := range user.Teams {
 		if err := user.disconnectTeam(userTeam); err != nil {
-			user.BridgeStates[key].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: err.Error()})
 			return err
 		}
 	}
