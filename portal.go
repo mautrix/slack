@@ -1173,6 +1173,7 @@ func (portal *Portal) UpdateTopic(meta *slack.Channel, sourceTeam *database.User
 }
 
 func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, meta *slack.Channel, force bool) *slack.Channel {
+	portal.log.Debugfln("Updating info for portal %s", portal.Key)
 	changed := false
 
 	if meta == nil {

@@ -128,7 +128,7 @@ func (bc BridgeConfig) FormatUsername(userid string) string {
 
 func (bc BridgeConfig) FormatDisplayname(user *slack.User) string {
 	var buffer strings.Builder
-	_ = bc.displaynameTemplate.Execute(&buffer, user)
+	_ = bc.displaynameTemplate.Execute(&buffer, user.Profile)
 	return buffer.String()
 }
 
