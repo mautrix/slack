@@ -111,9 +111,7 @@ func (p *ProvisioningAPI) authMiddleware(h http.Handler) http.Handler {
 		auth := r.Header.Get("Authorization")
 
 		// Special case the login endpoint
-		if strings.HasPrefix(auth, "Bearer ") {
-			auth = auth[len("Bearer "):]
-		}
+		auth = strings.TrimPrefix(auth, "Bearer ")
 
 		if auth != p.bridge.Config.Bridge.Provisioning.SharedSecret {
 			jsonResponse(w, http.StatusForbidden, map[string]interface{}{
@@ -130,7 +128,7 @@ func (p *ProvisioningAPI) authMiddleware(h http.Handler) http.Handler {
 		start := time.Now()
 		wWrap := &responseWrap{w, 200}
 		h.ServeHTTP(wWrap, r.WithContext(context.WithValue(r.Context(), "user", user)))
-		duration := time.Now().Sub(start).Seconds()
+		duration := time.Since(start).Seconds()
 
 		p.log.Infofln("%s %s from %s took %.2f seconds and returned status %d", r.Method, r.URL.Path, user.MXID, duration, wWrap.statusCode)
 	})

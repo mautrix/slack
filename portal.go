@@ -1486,3 +1486,18 @@ func (portal *Portal) HandleSlackReactionRemoved(user *User, userTeam *database.
 
 	dbReaction.Delete()
 }
+
+func (portal *Portal) HandleSlackTyping(user *User, userTeam *database.UserTeam, msg *slack.UserTypingEvent) {
+	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.User)
+	if puppet == nil {
+		portal.log.Errorfln("Not sending typing status: can't find puppet for Slack user %s", msg.User)
+		return
+	}
+	puppet.UpdateInfo(userTeam, nil)
+	intent := puppet.IntentFor(portal)
+
+	_, err := intent.UserTyping(portal.MXID, true, time.Duration(time.Second*3))
+	if err != nil {
+		portal.log.Errorfln("Error sending typing status to Matrix: %v", err)
+	}
+}
