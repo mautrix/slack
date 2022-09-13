@@ -59,6 +59,9 @@ type Portal struct {
 	matrixMessages chan portalMatrixMessage
 
 	slackMessageLock sync.Mutex
+
+	currentlyTyping     []id.UserID
+	currentlyTypingLock sync.Mutex
 }
 
 func (portal *Portal) IsEncrypted() bool {
@@ -183,6 +186,7 @@ func (br *SlackBridge) NewPortal(dbPortal *database.Portal) *Portal {
 	}
 
 	go portal.messageLoop()
+	go portal.slackRepeatTypingUpdater()
 
 	return portal
 }
@@ -829,6 +833,56 @@ func (portal *Portal) handleMatrixRedaction(user *User, evt *event.Event) {
 
 	portal.log.Warnfln("Failed to redact %s@%s: no event found", portal.Key, evt.Redacts)
 	go portal.sendMessageMetrics(evt, errReactionTargetNotFound, "Error sending", nil)
+}
+
+func typingDiff(prev, new []id.UserID) (started []id.UserID) {
+OuterNew:
+	for _, userID := range new {
+		for _, previousUserID := range prev {
+			if userID == previousUserID {
+				continue OuterNew
+			}
+		}
+		started = append(started, userID)
+	}
+	return
+}
+
+func (portal *Portal) HandleMatrixTyping(newTyping []id.UserID) {
+	portal.currentlyTypingLock.Lock()
+	defer portal.currentlyTypingLock.Unlock()
+	startedTyping := typingDiff(portal.currentlyTyping, newTyping)
+	portal.currentlyTyping = newTyping
+	for _, userID := range startedTyping {
+		userTeam := portal.bridge.GetUserByMXID(userID).GetUserTeam(portal.Key.TeamID)
+		if userTeam != nil && userTeam.IsLoggedIn() {
+			portal.sendSlackTyping(userTeam)
+		}
+	}
+}
+
+func (portal *Portal) sendSlackTyping(userTeam *database.UserTeam) {
+	typing := userTeam.RTM.NewTypingMessage(portal.Key.ChannelID)
+	userTeam.RTM.SendMessage(typing)
+}
+
+func (portal *Portal) slackRepeatTypingUpdater() {
+	for {
+		time.Sleep(3 * time.Second)
+		portal.sendSlackRepeatTyping()
+	}
+}
+
+func (portal *Portal) sendSlackRepeatTyping() {
+	portal.currentlyTypingLock.Lock()
+	defer portal.currentlyTypingLock.Unlock()
+
+	for _, userID := range portal.currentlyTyping {
+		userTeam := portal.bridge.GetUserByMXID(userID).GetUserTeam(portal.Key.TeamID)
+		if userTeam != nil && userTeam.IsLoggedIn() {
+			portal.sendSlackTyping(userTeam)
+		}
+	}
 }
 
 func (portal *Portal) HandleMatrixLeave(brSender bridge.User) {
@@ -1498,6 +1552,6 @@ func (portal *Portal) HandleSlackTyping(user *User, userTeam *database.UserTeam,
 
 	_, err := intent.UserTyping(portal.MXID, true, time.Duration(time.Second*3))
 	if err != nil {
-		portal.log.Errorfln("Error sending typing status to Matrix: %v", err)
+		portal.log.Warnfln("Error sending typing status to Matrix: %v", err)
 	}
 }

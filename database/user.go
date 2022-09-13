@@ -18,7 +18,6 @@ package database
 
 import (
 	"database/sql"
-	"strings"
 	"sync"
 
 	log "maunium.net/go/maulogger/v2"
@@ -70,18 +69,8 @@ func (u *User) SyncTeams() {
 		userteam.Upsert()
 	}
 
-	// Figure out what teams we're still aware of (logged in or not)
-	teamids := make([]string, len(u.Teams))
-	idx := 0
-	for _, team := range u.Teams {
-		teamids[idx] = team.Key.TeamID
-		idx++
-	}
-
-	// Use the list of known teams to deleted the unknown teams from the
-	// database.
-	query := "DELETE FROM user_team WHERE mxid=$1 AND team_id NOT IN "
-	query += "(\"" + strings.Join(teamids, "\", \"") + "\")"
+	// Delete not logged in teams from the database.
+	query := "DELETE FROM user_team WHERE mxid=$1 AND token=NULL"
 
 	_, err := u.db.Exec(query, u.MXID)
 	if err != nil {
