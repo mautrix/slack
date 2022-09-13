@@ -1377,9 +1377,10 @@ func (portal *Portal) HandleSlackTextMessage(user *User, userTeam *database.User
 			content.MsgType = event.MsgEmote
 		}
 
-		portal.addThreadMetadata(&content, msg.ThreadTimestamp)
 		if editExisting != nil {
 			content.SetEdit(editExisting.MatrixID)
+		} else {
+			portal.addThreadMetadata(&content, msg.ThreadTimestamp)
 		}
 
 		resp, err := portal.sendMatrixMessage(intent, event.EventMessage, &content, nil, ts.UnixMilli())
