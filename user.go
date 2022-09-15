@@ -638,7 +638,7 @@ func (user *User) GetUserTeam(teamID string) *database.UserTeam {
 // 	user.log.Debugln("Updating m.direct list on homeserver")
 
 // 	var err error
-// 	if user.bridge.Config.Homeserver.Asmux {
+// 	if user.bridge.Config.Homeserver.Software {
 // 		urlPath := intent.BuildURL(mautrix.ClientURLPath{"unstable", "com.beeper.asmux", "dms"})
 // 		_, err = intent.MakeFullRequest(mautrix.FullRequest{
 // 			Method:      method,
