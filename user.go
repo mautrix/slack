@@ -525,12 +525,12 @@ func (user *User) UpdateTeam(userTeam *database.UserTeam, force bool) error {
 		currentTeamInfo.TeamUrl = teamInfo.URL
 		changed = true
 	}
-	if currentTeamInfo.Avatar != teamInfo.Icon["image_original"] {
-		avatar, err := uploadAvatar(user.bridge.AS.BotIntent(), teamInfo.Icon["image_original"].(string))
+	if teamInfo.Icon["image_230"] != nil && currentTeamInfo.Avatar != teamInfo.Icon["image_230"] {
+		avatar, err := uploadAvatar(user.bridge.AS.BotIntent(), teamInfo.Icon["image_230"].(string))
 		if err != nil {
 			user.log.Warnfln("Error uploading new team avatar for team %s: %v", userTeam.Key.TeamID, err)
 		} else {
-			currentTeamInfo.Avatar = teamInfo.Icon["image_original"].(string)
+			currentTeamInfo.Avatar = teamInfo.Icon["image_230"].(string)
 			currentTeamInfo.AvatarUrl = avatar
 			changed = true
 		}
