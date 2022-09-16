@@ -73,7 +73,8 @@ func fnLoginPassword(ce *WrappedCommandEvent) {
 		return
 	}
 
-	err := ce.User.LoginTeam(ce.Args[0], ce.Args[1], ce.Args[2])
+	user := ce.Bridge.GetUserByMXID(ce.User.MXID)
+	err := user.LoginTeam(ce.Args[0], ce.Args[1], ce.Args[2])
 	if err != nil {
 		ce.Reply("Failed to log in as %s for team %s: %v", ce.Args[0], ce.Args[1], err)
 		return
@@ -100,7 +101,9 @@ func fnLoginToken(ce *WrappedCommandEvent) {
 	}
 
 	cookieToken, _ := url.PathUnescape(ce.Args[1])
-	info, err := ce.User.TokenLogin(ce.Args[0], cookieToken)
+
+	user := ce.Bridge.GetUserByMXID(ce.User.MXID)
+	info, err := user.TokenLogin(ce.Args[0], cookieToken)
 	if err != nil {
 		ce.Reply("Failed to log in with token: %v", err)
 	} else {

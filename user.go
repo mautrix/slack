@@ -123,13 +123,17 @@ func (br *SlackBridge) loadUser(dbUser *database.User, mxid *id.UserID) *User {
 }
 
 func (br *SlackBridge) GetUserByMXID(userID id.UserID) *User {
-	// TODO: check if puppet
+	_, isPuppet := br.ParsePuppetMXID(userID)
+	if isPuppet || userID == br.Bot.UserID {
+		return nil
+	}
 
 	br.usersLock.Lock()
 	defer br.usersLock.Unlock()
 
 	user, ok := br.usersByMXID[userID]
 	if !ok {
+		br.Log.Debugfln("User %s not present in usersByMXID map!", userID)
 		return br.loadUser(br.DB.User.GetByMXID(userID), &userID)
 	}
 
@@ -292,9 +296,11 @@ func (user *User) login(info *auth.Info, force bool) error {
 
 	user.User.SyncTeams()
 
-	user.log.Debugln("logged into %s successfully", info.TeamName)
+	user.log.Debugfln("logged into %s successfully", info.TeamName)
 
-	return user.connectTeam(userTeam)
+	user.bridge.usersByID[fmt.Sprintf("%s-%s", userTeam.Key.TeamID, userTeam.Key.SlackID)] = user
+	err := user.connectTeam(userTeam)
+	return err
 }
 
 func (user *User) LoginTeam(email, team, password string) error {
@@ -380,8 +386,8 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 			userTeam.Upsert()
 
 			user.tryAutomaticDoublePuppeting(userTeam)
-
 			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateConnected})
+
 			user.log.Infofln("connected to team %s as %s", userTeam.TeamName, userTeam.SlackEmail)
 		case *slack.HelloEvent:
 			// Ignored for now
@@ -428,6 +434,7 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 		}
 	}
 	user.log.Errorfln("Slack RTM for %s unexpectedly disconnected!", userTeam.Key)
+	user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: "Disconnected for unknown reason"})
 }
 
 func (user *User) connectTeam(userTeam *database.UserTeam) error {
@@ -546,6 +553,7 @@ func (user *User) Connect() error {
 
 	user.log.Infofln("Connecting Slack teams for user %s", user.MXID)
 	for key, userTeam := range user.Teams {
+		user.bridge.usersByID[fmt.Sprintf("%s-%s", userTeam.Key.TeamID, userTeam.Key.SlackID)] = user
 		user.BridgeStates[key] = user.bridge.NewBridgeStateQueue(userTeam, user.log)
 		err := user.connectTeam(userTeam)
 		if err != nil {

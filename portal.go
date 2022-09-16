@@ -526,6 +526,10 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event, ms *me
 		go ms.sendMessageMetrics(evt, errUserNotLoggedIn, "Ignoring", true)
 		return
 	}
+	if userTeam.Client == nil {
+		portal.log.Errorfln("Client for userteam %s is nil!", userTeam.Key)
+		return
+	}
 
 	existing := portal.bridge.DB.Message.GetByMatrixID(portal.Key, evt.ID)
 	if existing != nil {
@@ -667,9 +671,6 @@ func (portal *Portal) convertMatrixMessage(ctx context.Context, sender *User, us
 		}
 		return options, nil, threadTs, nil
 	case event.MsgAudio, event.MsgFile, event.MsgImage, event.MsgVideo:
-		if len(options) != 0 {
-			portal.log.Warnfln("")
-		}
 		data, err := portal.downloadMatrixAttachment(content)
 		if err != nil {
 			portal.log.Errorfln("Failed to download matrix attachment: %v", err)
@@ -862,8 +863,12 @@ func (portal *Portal) HandleMatrixTyping(newTyping []id.UserID) {
 }
 
 func (portal *Portal) sendSlackTyping(userTeam *database.UserTeam) {
-	typing := userTeam.RTM.NewTypingMessage(portal.Key.ChannelID)
-	userTeam.RTM.SendMessage(typing)
+	if userTeam.RTM != nil {
+		typing := userTeam.RTM.NewTypingMessage(portal.Key.ChannelID)
+		userTeam.RTM.SendMessage(typing)
+	} else {
+		portal.log.Debugfln("RTM for userteam %s not connected!", userTeam.Key)
+	}
 }
 
 func (portal *Portal) slackRepeatTypingUpdater() {
@@ -1308,7 +1313,6 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 		portal.HandleSlackFiles(user, userTeam, msg)
 		return portal.HandleSlackTextMessage(user, userTeam, &msg.Msg, nil)
 	case "message_changed":
-		portal.log.Warnfln("%s %s %s %s", msg.User, msg.SubMessage.User, msg.Timestamp, msg.SubMessage.Timestamp)
 		return portal.HandleSlackTextMessage(user, userTeam, msg.SubMessage, existing)
 	case "channel_topic", "channel_purpose":
 		portal.UpdateInfo(user, userTeam, nil, false)
