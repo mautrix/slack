@@ -298,6 +298,7 @@ func (user *User) login(info *auth.Info, force bool) error {
 
 	user.log.Debugfln("logged into %s successfully", info.TeamName)
 
+	user.BridgeStates[info.TeamID] = user.bridge.NewBridgeStateQueue(userTeam, user.log)
 	user.bridge.usersByID[fmt.Sprintf("%s-%s", userTeam.Key.TeamID, userTeam.Key.SlackID)] = user
 	err := user.connectTeam(userTeam)
 	return err
