@@ -35,7 +35,7 @@ import (
 )
 
 const (
-	SecWebSocketProtocol = "com.gitlab.beeper.discord"
+	SecWebSocketProtocol = "com.gitlab.beeper.slack"
 )
 
 type ProvisioningAPI struct {
@@ -175,19 +175,29 @@ func (p *ProvisioningAPI) ping(w http.ResponseWriter, r *http.Request) {
 func (p *ProvisioningAPI) logout(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("user_id")
 	user := p.bridge.GetUserByMXID(id.UserID(userID))
-	r.ParseForm()
 
-	teamId := r.Form.Get("slack_team_id")
-	if teamId == "" {
+	var data struct {
+		SlackTeamId string
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&data)
+	if err != nil {
 		jsonResponse(w, http.StatusBadRequest, Error{
-			Error:   "No slack_team_id specified",
-			ErrCode: "No slack_team_id specified",
+			Error:   "Invalid JSON",
+			ErrCode: "Invalid JSON",
 		})
-
 		return
 	}
 
-	userTeam := user.GetUserTeam(teamId)
+	if data.SlackTeamId == "" {
+		jsonResponse(w, http.StatusBadRequest, Error{
+			Error:   "Missing field slack_team_id",
+			ErrCode: "Missing field slack_team_id",
+		})
+		return
+	}
+
+	userTeam := user.GetUserTeam(data.SlackTeamId)
 	if userTeam == nil || !userTeam.IsLoggedIn() {
 		jsonResponse(w, http.StatusNotFound, Error{
 			Error:   "Not logged in",
@@ -197,7 +207,7 @@ func (p *ProvisioningAPI) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := user.LogoutUserTeam(userTeam)
+	err = user.LogoutUserTeam(userTeam)
 
 	if err != nil {
 		user.log.Warnln("Error while logging out:", err)
@@ -217,28 +227,37 @@ func (p *ProvisioningAPI) login(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("user_id")
 	user := p.bridge.GetUserByMXID(id.UserID(userID))
 
-	r.ParseForm()
+	var data struct {
+		Token       string
+		Cookietoken string
+	}
 
-	p.log.Warnln(r.Form)
-	token := r.Form.Get("token")
-	if token == "" {
+	err := json.NewDecoder(r.Body).Decode(&data)
+	if err != nil {
 		jsonResponse(w, http.StatusBadRequest, Error{
-			Error:   "No token specified",
-			ErrCode: "No token specified",
+			Error:   "Invalid JSON",
+			ErrCode: "Invalid JSON",
 		})
-
 		return
 	}
 
-	cookieToken := r.Form.Get("cookietoken")
-	if cookieToken == "" {
+	if data.Token == "" {
 		jsonResponse(w, http.StatusBadRequest, Error{
-			Error:   "No cookietoken specified",
-			ErrCode: "No cookietoken specified",
+			Error:   "Missing field token",
+			ErrCode: "Missing field token",
 		})
+		return
 	}
 
-	info, err := user.TokenLogin(token, cookieToken)
+	if data.Cookietoken == "" {
+		jsonResponse(w, http.StatusBadRequest, Error{
+			Error:   "Missing field cookietoken",
+			ErrCode: "Missing field cookietoken",
+		})
+		return
+	}
+
+	info, err := user.TokenLogin(data.Token, data.Cookietoken)
 	if err != nil {
 		jsonResponse(w, http.StatusNotAcceptable, Error{
 			Error:   fmt.Sprintf("Failed to login: %s", err),

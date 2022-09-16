@@ -24,11 +24,14 @@ All endpoints below require the provisioning shared secret in the `Authorization
 
 ## POST `/_matrix/provision/v1/login`
 
-### Required query parameters
+### Body format
 
-* `user_id`: Matrix ID of user
-* `token`: Slack client token (starts with `xoxc-`, stored in the Slack client in local storage: `localConfig_v2/teams/TEAM_ID/token`)
-* `cookietoken`: Slack cookie token (starts with `xoxd-`, stored in the Slack client in the `d` cookie)
+```
+{
+    "token": "xoxc-client token",
+    "cookietoken": "xoxd-cookie token"
+}
+```
 
 ### Success response format
 
@@ -42,7 +45,12 @@ All endpoints below require the provisioning shared secret in the `Authorization
 
 ## POST `/_matrix/provision/v1/logout`
 
-### Required query parameters
+### Body format
 
-* `user_id`: Matrix ID of user
-* `slack_team_id`: ID of this Slack team
+```
+{
+    "slack_team_id": "Slack team ID"
+}
+```
+
+Returns 200 on successful logout.
