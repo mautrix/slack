@@ -2,7 +2,7 @@
 
 All endpoints below require the provisioning shared secret in the `Authorization` HTTP header, and the Matrix user ID of the bridge user in the `user_id` query parameter.
 
-## GET `/_matrix/provision/ping`
+## GET `/_matrix/provision/v1/ping`
 
 ### Success response format
 
@@ -22,7 +22,7 @@ All endpoints below require the provisioning shared secret in the `Authorization
 }
 ```
 
-## POST `/_matrix/provision/login`
+## POST `/_matrix/provision/v1/login`
 
 ### Required query parameters
 
@@ -40,7 +40,7 @@ All endpoints below require the provisioning shared secret in the `Authorization
 }
 ```
 
-## POST `/_matrix/provision/logout`
+## POST `/_matrix/provision/v1/logout`
 
 ### Required query parameters
 
