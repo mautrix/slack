@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -257,10 +258,11 @@ func (p *ProvisioningAPI) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := user.TokenLogin(data.Token, data.Cookietoken)
+	cookieToken, _ := url.PathUnescape(data.Cookietoken)
+	info, err := user.TokenLogin(data.Token, cookieToken)
 	if err != nil {
 		jsonResponse(w, http.StatusNotAcceptable, Error{
-			Error:   fmt.Sprintf("Failed to login: %s", err),
+			Error:   fmt.Sprintf("Slack login error: %s", err),
 			ErrCode: err.Error(),
 		})
 
