@@ -79,6 +79,25 @@ func (portal *Portal) ReceiveMatrixEvent(user bridge.User, evt *event.Event) {
 	}
 }
 
+func (portal *Portal) HandleMatrixReadReceipt(sender bridge.User, eventID id.EventID, receiptTimestamp time.Time) {
+	//portal.handleMatrixReadReceipt(sender.(*User), eventID, receiptTimestamp, true)
+	userTeam := sender.(*User).GetUserTeam(portal.Key.TeamID)
+
+	portal.markSlackRead(sender.(*User), userTeam, eventID)
+}
+
+func (portal *Portal) markSlackRead(user *User, userTeam *database.UserTeam, eventID id.EventID) {
+	if !userTeam.IsConnected() {
+		portal.log.Debugfln("Not marking Slack conversation %s as read by %s: not connected to Slack", portal.Key, user.MXID)
+		return
+	}
+
+	message := portal.bridge.DB.Message.GetByMatrixID(portal.Key, eventID)
+
+	userTeam.Client.MarkConversation(portal.Key.ChannelID, message.SlackID)
+	portal.log.Debugfln("Marked message %s as read by %s in portal %s", message.SlackID, user.MXID, portal.Key)
+}
+
 var _ bridge.Portal = (*Portal)(nil)
 
 var (
@@ -855,9 +874,12 @@ func (portal *Portal) HandleMatrixTyping(newTyping []id.UserID) {
 	startedTyping := typingDiff(portal.currentlyTyping, newTyping)
 	portal.currentlyTyping = newTyping
 	for _, userID := range startedTyping {
-		userTeam := portal.bridge.GetUserByMXID(userID).GetUserTeam(portal.Key.TeamID)
-		if userTeam != nil && userTeam.IsLoggedIn() {
-			portal.sendSlackTyping(userTeam)
+		user := portal.bridge.GetUserByMXID(userID)
+		if user != nil {
+			userTeam := user.GetUserTeam(portal.Key.TeamID)
+			if userTeam != nil && userTeam.IsLoggedIn() {
+				portal.sendSlackTyping(userTeam)
+			}
 		}
 	}
 }
@@ -883,9 +905,12 @@ func (portal *Portal) sendSlackRepeatTyping() {
 	defer portal.currentlyTypingLock.Unlock()
 
 	for _, userID := range portal.currentlyTyping {
-		userTeam := portal.bridge.GetUserByMXID(userID).GetUserTeam(portal.Key.TeamID)
-		if userTeam != nil && userTeam.IsLoggedIn() {
-			portal.sendSlackTyping(userTeam)
+		user := portal.bridge.GetUserByMXID(userID)
+		if user != nil {
+			userTeam := user.GetUserTeam(portal.Key.TeamID)
+			if userTeam != nil && userTeam.IsConnected() {
+				portal.sendSlackTyping(userTeam)
+			}
 		}
 	}
 }

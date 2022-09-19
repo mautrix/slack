@@ -129,6 +129,10 @@ func (ut *UserTeam) IsLoggedIn() bool {
 	return ut.Token != ""
 }
 
+func (ut *UserTeam) IsConnected() bool {
+	return ut.Client != nil && ut.RTM != nil
+}
+
 func (ut *UserTeam) Scan(row dbutil.Scannable) *UserTeam {
 	var token sql.NullString
 	var cookieToken sql.NullString
