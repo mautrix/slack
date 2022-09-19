@@ -32,10 +32,13 @@ import (
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/format"
+	"maunium.net/go/mautrix/id"
 	"maunium.net/go/mautrix/util"
 )
 
 var escapeFixer = regexp.MustCompile(`\\(__[^_]|\*\*[^*])`)
+
+const mentionedUsersContextKey = "fi.mau.slack.mentioned_users"
 
 func (portal *Portal) renderSlackMarkdown(text string) event.MessageEventContent {
 	text = replaceShortcodesWithEmojis(text)
@@ -93,6 +96,32 @@ func (portal *Portal) renderSlackFile(file slack.File) event.MessageEventContent
 	}
 
 	return content
+}
+
+func (bridge *SlackBridge) ParseMatrix(html string) string {
+	return bridge.MatrixHTMLParser.Parse(html, nil)
+}
+
+func NewParser(bridge *SlackBridge) *format.HTMLParser {
+	return &format.HTMLParser{
+		TabsToSpaces: 4,
+		Newline:      "\n",
+
+		PillConverter: func(displayname, mxid, eventID string, _ format.Context) string {
+			if mxid[0] == '@' {
+				puppet := bridge.GetPuppetByMXID(id.UserID(mxid))
+				if puppet != nil {
+					return fmt.Sprintf("<@%s>", puppet.UserID)
+				}
+			}
+			return mxid
+		},
+		BoldConverter:           func(text string, _ format.Context) string { return fmt.Sprintf("*%s*", text) },
+		ItalicConverter:         func(text string, _ format.Context) string { return fmt.Sprintf("_%s_", text) },
+		StrikethroughConverter:  func(text string, _ format.Context) string { return fmt.Sprintf("~%s~", text) },
+		MonospaceConverter:      func(text string, _ format.Context) string { return fmt.Sprintf("`%s`", text) },
+		MonospaceBlockConverter: func(text, language string, _ format.Context) string { return fmt.Sprintf("```%s```", text) },
+	}
 }
 
 type astSlackTag struct {

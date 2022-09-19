@@ -123,7 +123,7 @@ func (br *SlackBridge) loadUser(dbUser *database.User, mxid *id.UserID) *User {
 }
 
 func (br *SlackBridge) GetUserByMXID(userID id.UserID) *User {
-	_, isPuppet := br.ParsePuppetMXID(userID)
+	_, _, isPuppet := br.ParsePuppetMXID(userID)
 	if isPuppet || userID == br.Bot.UserID {
 		return nil
 	}

@@ -653,13 +653,12 @@ func (portal *Portal) convertMatrixMessage(ctx context.Context, sender *User, us
 		return nil, nil, "", errUnexpectedParsedContentType
 	}
 
-	contentBody := content.Body
 	var existingTs string
 	if content.RelatesTo != nil && content.RelatesTo.Type == event.RelReplace { // fetch the slack original TS for editing purposes
 		existing := portal.bridge.DB.Message.GetByMatrixID(portal.Key, content.RelatesTo.EventID)
 		if existing != nil && existing.SlackID != "" {
 			existingTs = existing.SlackID
-			contentBody = content.NewContent.Body
+			content = content.NewContent
 		} else {
 			portal.log.Errorfln("Matrix message %s is an edit, but can't find the original Slack message ID", evt.ID)
 			return nil, nil, "", errTargetNotFound
@@ -682,7 +681,11 @@ func (portal *Portal) convertMatrixMessage(ctx context.Context, sender *User, us
 
 	switch content.MsgType {
 	case event.MsgText, event.MsgEmote, event.MsgNotice:
-		options = []slack.MsgOption{slack.MsgOptionText(contentBody, false)}
+		if content.Format == event.FormatHTML {
+			options = []slack.MsgOption{slack.MsgOptionText(portal.bridge.ParseMatrix(content.FormattedBody), false)}
+		} else {
+			options = []slack.MsgOption{slack.MsgOptionText(content.Body, false)}
+		}
 		if threadTs != "" {
 			options = append(options, slack.MsgOptionTS(threadTs))
 		}
@@ -1022,7 +1025,7 @@ func (portal *Portal) getMatrixUsers() ([]id.UserID, error) {
 
 	var users []id.UserID
 	for userID := range members.Joined {
-		_, isPuppet := portal.bridge.ParsePuppetMXID(userID)
+		_, _, isPuppet := portal.bridge.ParsePuppetMXID(userID)
 		if !isPuppet && userID != portal.bridge.Bot.UserID {
 			users = append(users, userID)
 		}

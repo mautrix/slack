@@ -64,11 +64,11 @@ func (br *SlackBridge) NewPuppet(dbPuppet *database.Puppet) *Puppet {
 	}
 }
 
-func (br *SlackBridge) ParsePuppetMXID(mxid id.UserID) (string, bool) {
+func (br *SlackBridge) ParsePuppetMXID(mxid id.UserID) (string, string, bool) {
 	if userIDRegex == nil {
 		pattern := fmt.Sprintf(
 			"^@%s:%s$",
-			br.Config.Bridge.FormatUsername("([A-Z0-9-]+)"),
+			br.Config.Bridge.FormatUsername("([A-Z0-9]+)-([A-Z0-9]+)"),
 			br.Config.Homeserver.Domain,
 		)
 
@@ -76,25 +76,20 @@ func (br *SlackBridge) ParsePuppetMXID(mxid id.UserID) (string, bool) {
 	}
 
 	match := userIDRegex.FindStringSubmatch(string(mxid))
-	if len(match) == 2 {
-		return match[1], true
+	if len(match) == 3 {
+		return match[1], match[2], true
 	}
 
-	return "", false
+	return "", "", false
 }
 
 func (br *SlackBridge) GetPuppetByMXID(mxid id.UserID) *Puppet {
-	id, ok := br.ParsePuppetMXID(mxid)
+	team, id, ok := br.ParsePuppetMXID(mxid)
 	if !ok {
 		return nil
 	}
 
-	br.Log.Errorfln("GetPuppetByMXID: id=%s", id)
-
-	panic("can we avoid this for now?")
-
-	// return br.GetPuppetByID(id)
-	//return nil
+	return br.GetPuppetByID(team, id)
 }
 
 func (br *SlackBridge) GetPuppetByID(teamID, userID string) *Puppet {

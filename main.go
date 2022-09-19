@@ -22,6 +22,7 @@ import (
 
 	"maunium.net/go/mautrix/bridge"
 	"maunium.net/go/mautrix/bridge/commands"
+	"maunium.net/go/mautrix/format"
 	"maunium.net/go/mautrix/id"
 	"maunium.net/go/mautrix/util/configupgrade"
 
@@ -47,6 +48,8 @@ type SlackBridge struct {
 	DB     *database.Database
 
 	provisioning *ProvisioningAPI
+
+	MatrixHTMLParser *format.HTMLParser
 
 	usersByMXID map[id.UserID]*User
 	usersByID   map[string]*User // the key is teamID-userID
@@ -81,6 +84,8 @@ func (br *SlackBridge) Init() {
 	br.RegisterCommands()
 
 	br.DB = database.New(br.Bridge.DB, br.Log.Sub("Database"))
+
+	br.MatrixHTMLParser = NewParser(br)
 }
 
 func (br *SlackBridge) Start() {
@@ -114,7 +119,7 @@ func (br *SlackBridge) GetIUser(mxid id.UserID, create bool) bridge.User {
 }
 
 func (br *SlackBridge) IsGhost(mxid id.UserID) bool {
-	_, isGhost := br.ParsePuppetMXID(mxid)
+	_, _, isGhost := br.ParsePuppetMXID(mxid)
 	return isGhost
 }
 
