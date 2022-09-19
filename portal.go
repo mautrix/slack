@@ -93,6 +93,10 @@ func (portal *Portal) markSlackRead(user *User, userTeam *database.UserTeam, eve
 	}
 
 	message := portal.bridge.DB.Message.GetByMatrixID(portal.Key, eventID)
+	if message == nil {
+		portal.log.Debugfln("Not marking Slack channel for portal %s as read: unknown message", portal.Key)
+		return
+	}
 
 	userTeam.Client.MarkConversation(portal.Key.ChannelID, message.SlackID)
 	portal.log.Debugfln("Marked message %s as read by %s in portal %s", message.SlackID, user.MXID, portal.Key)
@@ -1582,5 +1586,27 @@ func (portal *Portal) HandleSlackTyping(user *User, userTeam *database.UserTeam,
 	_, err := intent.UserTyping(portal.MXID, true, time.Duration(time.Second*3))
 	if err != nil {
 		portal.log.Warnfln("Error sending typing status to Matrix: %v", err)
+	}
+}
+
+func (portal *Portal) HandleSlackChannelMarked(user *User, userTeam *database.UserTeam, msg *slack.ChannelMarkedEvent) {
+	puppet := portal.bridge.GetPuppetByCustomMXID(user.MXID)
+	if puppet == nil {
+		portal.log.Errorfln("Not sending typing status: can't find puppet for Slack user %s", msg.User)
+		return
+	}
+	puppet.UpdateInfo(userTeam, nil)
+	intent := puppet.IntentFor(portal)
+
+	message := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Timestamp)
+
+	if message == nil {
+		portal.log.Debugfln("Couldn't mark portal %s as read: no Matrix room", portal.Key)
+		return
+	}
+
+	err := intent.MarkRead(portal.MXID, message.MatrixID)
+	if err != nil {
+		portal.log.Warnfln("Error marking Matrix room %s as read by %s: %v", portal.MXID, intent.UserID, err)
 	}
 }
