@@ -1,10 +1,10 @@
 # Features & roadmap
 
 * Matrix → Slack
-    * [ ] Message content
+    * [x] Message content
         * [x] Plain text
-        * [ ] Formatted text
-        * [ ] User pings
+        * [x] Formatted text
+        * [x] User pings
         * [x] Media and files
         * [x] Edits
         * [x] Threads
@@ -12,7 +12,7 @@
     * [x] Reactions
     * [x] Typing status
     * [x] Message redaction
-    * [ ] Mark room as read
+    * [x] Mark room as read
 * Slack → Matrix
     * [ ] Message content
         * [x] Plain text
@@ -27,7 +27,7 @@
         * [ ] Custom Slack emoji
     * [x] Typing status
     * [x] Message deletion
-    * [ ] Reading message history
+    * [ ] Reading pre-login message history
     * [x] Conversation types
         * [x] Channel (including Slack Connect)
         * [x] Group DM
@@ -41,7 +41,7 @@
         * [ ] Name
         * [x] Topic
         * [x] Description
-    * [ ] Mark conversation as read
+    * [x] Mark conversation as read
 * Misc
     * [x] Automatic portal creation
         * [x] On login (with token, not with password)
@@ -50,3 +50,4 @@
     * [ ] Creating DM by inviting user to Matrix room
     * [x] Using your own Matrix account for messages sent from your Slack client
     * [ ] Shared channel portals (bug to be fixed)
+    * [ ] Using relay bot to bridge to Slack
