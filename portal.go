@@ -254,7 +254,7 @@ func (portal *Portal) syncParticipants(source *User, sourceTeam *database.UserTe
 	}
 }
 
-func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, channel *slack.Channel) error {
+func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, channel *slack.Channel, fill bool) error {
 	portal.roomCreateLock.Lock()
 	defer portal.roomCreateLock.Unlock()
 
@@ -378,7 +378,9 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		portal.Update()
 	}
 
-	portal.FillMessages(user, userTeam, 1, "")
+	if fill {
+		go portal.FillMessages(user, userTeam, 1, "")
+	}
 
 	return nil
 }
@@ -546,6 +548,7 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event, ms *me
 
 	userTeam := sender.GetUserTeam(portal.Key.TeamID)
 	if userTeam == nil {
+		portal.log.Warnfln("User %s not logged into team %s", sender.MXID, portal.Key.TeamID)
 		go ms.sendMessageMetrics(evt, errUserNotLoggedIn, "Ignoring", true)
 		return
 	}
@@ -1322,7 +1325,7 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 		}
 
 		portal.log.Debugln("Creating Matrix room from incoming message")
-		if err := portal.CreateMatrixRoom(user, userTeam, channel); err != nil {
+		if err := portal.CreateMatrixRoom(user, userTeam, channel, false); err != nil {
 			portal.log.Errorln("Failed to create portal room:", err)
 			return false
 		}
@@ -1546,6 +1549,9 @@ func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTea
 }
 
 func (portal *Portal) HandleSlackReactionRemoved(user *User, userTeam *database.UserTeam, msg *slack.ReactionRemovedEvent) {
+	if portal.MXID == "" {
+		return
+	}
 	portal.slackMessageLock.Lock()
 	defer portal.slackMessageLock.Unlock()
 
@@ -1578,6 +1584,9 @@ func (portal *Portal) HandleSlackReactionRemoved(user *User, userTeam *database.
 }
 
 func (portal *Portal) HandleSlackTyping(user *User, userTeam *database.UserTeam, msg *slack.UserTypingEvent) {
+	if portal.MXID == "" {
+		return
+	}
 	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.User)
 	if puppet == nil {
 		portal.log.Errorfln("Not sending typing status: can't find puppet for Slack user %s", msg.User)
@@ -1593,6 +1602,9 @@ func (portal *Portal) HandleSlackTyping(user *User, userTeam *database.UserTeam,
 }
 
 func (portal *Portal) HandleSlackChannelMarked(user *User, userTeam *database.UserTeam, msg *slack.ChannelMarkedEvent) {
+	if portal.MXID == "" {
+		return
+	}
 	puppet := portal.bridge.GetPuppetByCustomMXID(user.MXID)
 	if puppet == nil {
 		portal.log.Errorfln("Not sending typing status: can't find puppet for Slack user %s", msg.User)

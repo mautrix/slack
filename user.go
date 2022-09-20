@@ -492,7 +492,7 @@ func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 		if portal.MXID != "" {
 			portal.UpdateInfo(user, userTeam, &channel, force)
 		} else {
-			portal.CreateMatrixRoom(user, userTeam, &channel)
+			portal.CreateMatrixRoom(user, userTeam, &channel, true)
 		}
 		// Delete already handled ones from the map
 		delete(channelInfo, dbPortal.Key.ChannelID)
@@ -505,7 +505,7 @@ func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 		if portal.MXID != "" {
 			portal.UpdateInfo(user, userTeam, &channel, force)
 		} else {
-			portal.CreateMatrixRoom(user, userTeam, &channel)
+			portal.CreateMatrixRoom(user, userTeam, &channel, true)
 		}
 	}
 
