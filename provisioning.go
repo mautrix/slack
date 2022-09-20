@@ -58,9 +58,9 @@ func newProvisioningAPI(br *SlackBridge) *ProvisioningAPI {
 
 	r.Use(p.authMiddleware)
 
-	r.HandleFunc("/ping", p.ping).Methods(http.MethodGet)
-	r.HandleFunc("/login", p.login).Methods(http.MethodPost)
-	r.HandleFunc("/logout", p.logout).Methods(http.MethodPost)
+	r.HandleFunc("/v1/ping", p.ping).Methods(http.MethodGet)
+	r.HandleFunc("/v1/login", p.login).Methods(http.MethodPost)
+	r.HandleFunc("/v1/logout", p.logout).Methods(http.MethodPost)
 	p.bridge.AS.Router.HandleFunc("/_matrix/app/com.beeper.asmux/ping", p.BridgeStatePing).Methods(http.MethodPost)
 	p.bridge.AS.Router.HandleFunc("/_matrix/app/com.beeper.bridge_state", p.BridgeStatePing).Methods(http.MethodPost)
 
