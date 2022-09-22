@@ -10,15 +10,23 @@ All endpoints below require the provisioning shared secret in the `Authorization
 {
     "management_room": "Management room ID for this user",
     "mxid": "Matrix ID of this user",
-    "slack": {
-        "logged_in_teams": {
-            "SLACK_TEAM_ID": {
-                "user_id": "Slack user ID of this user on this team",
-                "user_email": "Email address of this user on this team",
-                "team_name": "Name of this Slack team"
-            }
+    "puppets": [
+        {
+            "puppetId": "TEAMID-USERID",
+            "puppetMxid": "Matrix ID of user",
+            "data": {
+                "team": {
+                    "id": "TEAMID",
+                    "name": "Name of Slack team"
+                },
+                "self": {
+                    "id": "USERID",
+                    "name": "Name of Slack user"
+                }
+            },
+            "userId": "USERID"
         }
-    }
+    ]
 }
 ```
 

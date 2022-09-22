@@ -147,23 +147,29 @@ var upgrader = websocket.Upgrader{
 func (p *ProvisioningAPI) ping(w http.ResponseWriter, r *http.Request) {
 	user := r.Context().Value("user").(*User)
 
-	teams := map[string]interface{}{}
+	puppets := []interface{}{}
 	for _, team := range user.GetLoggedInTeams() {
-		teams[team.Key.TeamID] = map[string]string{
-			"user_id":    team.Key.SlackID,
-			"user_email": team.SlackEmail,
-			"team_name":  team.TeamName,
-		}
-	}
-
-	slackData := map[string]interface{}{
-		"logged_in_teams": teams,
+		puppets = append(puppets, map[string]interface{}{
+			"puppetId":   team.Key.String(),
+			"puppetMxid": user.MXID,
+			"userId":     team.Key.SlackID,
+			"data": map[string]interface{}{
+				"team": map[string]string{
+					"id":   team.Key.SlackID,
+					"name": team.TeamName,
+				},
+				"self": map[string]string{
+					"id":   team.Key.String(),
+					"name": team.SlackEmail,
+				},
+			},
+		})
 	}
 
 	user.Lock()
 
 	resp := map[string]interface{}{
-		"slack":           slackData,
+		"puppets":         puppets,
 		"management_room": user.ManagementRoom,
 		"mxid":            user.MXID,
 	}
