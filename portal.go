@@ -354,6 +354,7 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	// no members are included in channels, only in group DMs
 	switch channelType {
 	case database.ChannelTypeChannel:
+		user.updateChatMute(portal, true)
 		members = portal.getChannelMembers(userTeam, 3) // TODO: this just fetches 3 members so channels don't have to look like DMs
 	case database.ChannelTypeDM:
 		members = []string{channel.User, portal.Key.UserID}

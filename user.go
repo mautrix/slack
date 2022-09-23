@@ -33,6 +33,7 @@ import (
 	"maunium.net/go/mautrix/bridge/status"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
+	"maunium.net/go/mautrix/pushrules"
 
 	"go.mau.fi/mautrix-slack/auth"
 	"go.mau.fi/mautrix-slack/database"
@@ -731,4 +732,24 @@ func (user *User) ensureInvited(intent *appservice.IntentAPI, roomID id.RoomID, 
 	}
 
 	return ret
+}
+
+func (user *User) updateChatMute(portal *Portal, muted bool) {
+	if len(portal.MXID) == 0 {
+		return
+	}
+	intent := user.GetIDoublePuppet().CustomIntent()
+	var err error
+	if muted {
+		user.log.Debugfln("Muting portal %s...", portal.MXID)
+		err = intent.PutPushRule("global", pushrules.RoomRule, string(portal.MXID), &mautrix.ReqPutPushRule{
+			Actions: []pushrules.PushActionType{pushrules.ActionDontNotify},
+		})
+	} else {
+		user.log.Debugfln("Unmuting portal %s...", portal.MXID)
+		err = intent.DeletePushRule("global", pushrules.RoomRule, string(portal.MXID))
+	}
+	if err != nil && !errors.Is(err, mautrix.MNotFound) {
+		user.log.Warnfln("Failed to update push rule for %s through double puppet: %v", portal.MXID, err)
+	}
 }
