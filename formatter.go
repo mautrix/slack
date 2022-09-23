@@ -241,7 +241,6 @@ func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source [
 	case *astSlackUserMention:
 		puppet := r.portal.bridge.GetPuppetByID(r.portal.Key.TeamID, node.userID)
 		if puppet != nil && puppet.MXID != "" {
-			r.portal.log.Infofln("%v", puppet.Puppet)
 			_, _ = fmt.Fprintf(w, `<a href="https://matrix.to/#/%s">%s</a>`, puppet.MXID, puppet.Name)
 		} else { // TODO: get puppet info if not exist
 			if node.label != "" {
@@ -267,6 +266,13 @@ func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source [
 			}
 		}
 		return
+	case *astSlackURL:
+		label := node.label
+		if label == "" {
+			label = node.url
+		}
+		_, _ = fmt.Fprintf(w, `<a href="%s">%s</a>`, node.url, label)
+		return
 	}
 	stringifiable, ok := n.(mautrix.Stringifiable)
 	if ok {
@@ -283,9 +289,9 @@ type SlackTag struct {
 
 func (e *SlackTag) Extend(m goldmark.Markdown) {
 	m.Parser().AddOptions(parser.WithInlineParsers(
-		goldmarkUtil.Prioritized(defaultSlackTagParser, 600),
+		goldmarkUtil.Prioritized(defaultSlackTagParser, 150),
 	))
 	m.Renderer().AddOptions(renderer.WithNodeRenderers(
-		goldmarkUtil.Prioritized(&slackTagHTMLRenderer{e.Portal}, 600),
+		goldmarkUtil.Prioritized(&slackTagHTMLRenderer{e.Portal}, 150),
 	))
 }
