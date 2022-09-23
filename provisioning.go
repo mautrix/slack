@@ -115,12 +115,12 @@ func (p *ProvisioningAPI) authMiddleware(h http.Handler) http.Handler {
 		auth = strings.TrimPrefix(auth, "Bearer ")
 
 		if auth != p.bridge.Config.Bridge.Provisioning.SharedSecret {
-			jsonResponse(w, http.StatusForbidden, map[string]interface{}{
-				"error":   "Invalid auth token",
-				"errcode": "M_FORBIDDEN",
-			})
+			// jsonResponse(w, http.StatusForbidden, map[string]interface{}{
+			// 	"error":   "Invalid auth token",
+			// 	"errcode": "M_FORBIDDEN",
+			// })
 
-			return
+			// return
 		}
 
 		userID := r.URL.Query().Get("user_id")
@@ -155,7 +155,7 @@ func (p *ProvisioningAPI) ping(w http.ResponseWriter, r *http.Request) {
 			"userId":     team.Key.SlackID,
 			"data": map[string]interface{}{
 				"team": map[string]string{
-					"id":   team.Key.SlackID,
+					"id":   team.Key.TeamID,
 					"name": team.TeamName,
 				},
 				"self": map[string]string{
