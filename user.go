@@ -19,6 +19,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -192,7 +193,8 @@ func (br *SlackBridge) startUsers() {
 	for _, user := range users {
 		go user.Connect()
 	}
-	if len(users) == 0 {
+	if sort.Search(len(users), func(i int) bool { return len(users[i].Teams) > 0 }) == len(users) { // if there are no users with any configured userTeams
+		br.Log.Debugln("No users with userTeams found, sending UNCONFIGURED")
 		br.SendGlobalBridgeState(status.BridgeState{StateEvent: status.StateUnconfigured}.Fill(nil))
 	}
 
@@ -358,6 +360,8 @@ func (user *User) LogoutUserTeam(userTeam *database.UserTeam) error {
 	}
 
 	userTeam.Client = nil
+
+	user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateLoggedOut})
 
 	user.TeamsLock.Lock()
 	delete(user.Teams, userTeam.Key.TeamID)
