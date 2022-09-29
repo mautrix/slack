@@ -19,6 +19,7 @@ package main
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 
 	log "maunium.net/go/maulogger/v2"
@@ -168,7 +169,7 @@ func (br *SlackBridge) dbPuppetsToPuppets(dbPuppets []*database.Puppet) []*Puppe
 
 func (br *SlackBridge) FormatPuppetMXID(did string) id.UserID {
 	return id.NewUserID(
-		br.Config.Bridge.FormatUsername(did),
+		br.Config.Bridge.FormatUsername(strings.ToLower(did)),
 		br.Config.Homeserver.Domain,
 	)
 }
