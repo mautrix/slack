@@ -489,7 +489,7 @@ func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 		user.log.Warnfln("Not fetching channels for userteam %s: xoxs token type can't fetch user's joined channels", userTeam.Key)
 	}
 
-	portals := user.bridge.DB.Portal.GetAllByID(userTeam.Key.TeamID, userTeam.Key.SlackID)
+	portals := user.bridge.DB.Portal.GetAllForUserTeam(userTeam.Key)
 	for _, dbPortal := range portals {
 		// First, go through all pre-existing portals and update their info
 		portal := user.bridge.GetPortalByID(dbPortal.Key)

@@ -170,8 +170,8 @@ func (br *SlackBridge) GetAllIPortals() (iportals []bridge.Portal) {
 	return iportals
 }
 
-func (br *SlackBridge) GetAllPortalsByID(teamID, userID string) []*Portal {
-	return br.dbPortalsToPortals(br.DB.Portal.GetAllByID(teamID, userID))
+func (br *SlackBridge) GetAllPortalsForUserTeam(utk database.UserTeamKey) []*Portal {
+	return br.dbPortalsToPortals(br.DB.Portal.GetAllForUserTeam(utk))
 }
 
 func (br *SlackBridge) GetDMPortalsWith(otherUserID string) []*Portal {
@@ -337,6 +337,12 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	portal.bridge.portalsByMXID[portal.MXID] = portal
 	portal.bridge.portalsLock.Unlock()
 	portal.Update()
+
+	channelType := portal.getChannelType(channel)
+	if channelType == database.ChannelTypeDM {
+		portal.Key.UserID = userTeam.Key.SlackID
+		portal.UpdateUserID()
+	}
 	portal.log.Infoln("Matrix room created:", portal.MXID)
 
 	if portal.Encrypted && portal.IsPrivateChat() {
@@ -349,7 +355,6 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	portal.ensureUserInvited(user)
 	user.syncChatDoublePuppetDetails(portal, true)
 
-	channelType := portal.getChannelType(channel)
 	var members []string
 	// no members are included in channels, only in group DMs
 	switch channelType {
@@ -455,17 +460,17 @@ func (portal *Portal) markMessageHandled(slackID string, slackThreadID string, m
 	return msg
 }
 
-func (portal *Portal) sendMediaFailedMessage(intent *appservice.IntentAPI, bridgeErr error) {
-	content := &event.MessageEventContent{
-		Body:    fmt.Sprintf("Failed to bridge media: %v", bridgeErr),
-		MsgType: event.MsgNotice,
-	}
+// func (portal *Portal) sendMediaFailedMessage(intent *appservice.IntentAPI, bridgeErr error) {
+// 	content := &event.MessageEventContent{
+// 		Body:    fmt.Sprintf("Failed to bridge media: %v", bridgeErr),
+// 		MsgType: event.MsgNotice,
+// 	}
 
-	_, err := portal.sendMatrixMessage(intent, event.EventMessage, content, nil, time.Now().UTC().UnixMilli())
-	if err != nil {
-		portal.log.Warnfln("failed to send error message to matrix: %v", err)
-	}
-}
+// 	_, err := portal.sendMatrixMessage(intent, event.EventMessage, content, nil, time.Now().UTC().UnixMilli())
+// 	if err != nil {
+// 		portal.log.Warnfln("failed to send error message to matrix: %v", err)
+// 	}
+// }
 
 func (portal *Portal) encrypt(intent *appservice.IntentAPI, content *event.Content, eventType event.Type) (event.Type, error) {
 	if !portal.Encrypted || portal.bridge.Crypto == nil {
@@ -1331,6 +1336,7 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 			return false
 		}
 	}
+	portal.InsertUser(userTeam.Key)
 
 	existing := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Msg.Timestamp)
 	if existing != nil && msg.Msg.SubType != "message_changed" { // Slack reuses the same message ID on message edits

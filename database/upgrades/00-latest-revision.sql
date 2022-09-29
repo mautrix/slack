@@ -1,8 +1,8 @@
--- v1: Initial revision
+-- v1 -> v6: Latest revision
 
 CREATE TABLE portal (
 	team_id    TEXT,
-	user_id    TEXT,
+	user_id    TEXT DEFAULT '',
 	channel_id TEXT,
 	mxid       TEXT UNIQUE,
 
@@ -62,8 +62,19 @@ CREATE TABLE "user_team" (
 	team_id TEXT NOT NULL,
 
 	token TEXT,
+    cookie_token TEXT,
 
 	PRIMARY KEY(mxid, slack_id, team_id)
+);
+
+CREATE TABLE user_team_portal (
+    matrix_user_id TEXT NOT NULL,
+    slack_user_id TEXT NOT NULL,
+    slack_team_id TEXT NOT NULL,
+    portal_user_id TEXT NOT NULL,
+    portal_channel_id TEXT NOT NULL,
+    FOREIGN KEY(matrix_user_id, slack_user_id, slack_team_id) REFERENCES "user_team"(mxid, slack_id, team_id) ON DELETE CASCADE,
+    FOREIGN KEY(slack_team_id, portal_user_id, portal_channel_id) REFERENCES portal(team_id, user_id, channel_id) ON DELETE CASCADE
 );
 
 CREATE TABLE message (
@@ -72,6 +83,7 @@ CREATE TABLE message (
 	channel_id TEXT NOT NULL,
 
 	slack_message_id TEXT NOT NULL,
+    slack_thread_id TEXT,
 	matrix_message_id  TEXT NOT NULL UNIQUE,
 
 	author_id TEXT   NOT NULL,
@@ -104,10 +116,19 @@ CREATE TABLE attachment (
 	user_id    TEXT NOT NULL,
 	channel_id TEXT NOT NULL,
 
-	slack_id TEXT NOT NULL,
-
+	slack_message_id TEXT NOT NULL,
+    slack_file_id TEXT NOT NULL,
 	matrix_event_id TEXT NOT NULL UNIQUE,
 
-	PRIMARY KEY(slack_id, matrix_event_id),
+	PRIMARY KEY(slack_message_id, slack_file_id, matrix_event_id),
 	FOREIGN KEY(team_id, user_id, channel_id) REFERENCES portal(team_id, user_id, channel_id) ON DELETE CASCADE
+);
+
+CREATE TABLE "team_info" (
+    team_id TEXT NOT NULL UNIQUE,
+    team_domain TEXT,
+    team_url TEXT,
+    team_name TEXT,
+    avatar TEXT,
+    avatar_url TEXT
 );
