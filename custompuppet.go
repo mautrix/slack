@@ -254,7 +254,7 @@ func (puppet *Puppet) tryRelogin(cause error, action string) bool {
 
 	puppet.log.Debugfln("Trying to relogin after '%v' while %s", cause, action)
 
-	accessToken, err := puppet.loginWithSharedSecret(puppet.CustomMXID)
+	accessToken, err := puppet.loginWithSharedSecret(puppet.CustomMXID, puppet.TeamID)
 	if err != nil {
 		puppet.log.Errorfln("Failed to relogin after '%v' while %s: %v", cause, action, err)
 
@@ -291,7 +291,7 @@ func (puppet *Puppet) stopSyncing() {
 	puppet.customIntent.StopSync()
 }
 
-func (puppet *Puppet) loginWithSharedSecret(mxid id.UserID) (string, error) {
+func (puppet *Puppet) loginWithSharedSecret(mxid id.UserID, teamID string) (string, error) {
 	_, homeserver, _ := mxid.Parse()
 
 	puppet.log.Debugfln("Logging into %s with shared secret", mxid)
@@ -305,7 +305,7 @@ func (puppet *Puppet) loginWithSharedSecret(mxid id.UserID) (string, error) {
 
 	req := mautrix.ReqLogin{
 		Identifier:               mautrix.UserIdentifier{Type: mautrix.IdentifierTypeUser, User: string(mxid)},
-		DeviceID:                 "Slack Bridge",
+		DeviceID:                 id.DeviceID(fmt.Sprintf("Slack Bridge %s", teamID)),
 		InitialDeviceDisplayName: "Slack Bridge",
 	}
 	if loginSecret == "appservice" {

@@ -246,7 +246,7 @@ func (user *User) tryAutomaticDoublePuppeting(userTeam *database.UserTeam) {
 		return
 	}
 
-	accessToken, err := puppet.loginWithSharedSecret(user.MXID)
+	accessToken, err := puppet.loginWithSharedSecret(user.MXID, userTeam.Key.TeamID)
 	if err != nil {
 		user.log.Warnln("Failed to login with shared secret:", err)
 
