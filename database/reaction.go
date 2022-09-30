@@ -48,7 +48,7 @@ func (r *Reaction) Scan(row dbutil.Scannable) *Reaction {
 	var slackName sql.NullString
 
 	err := row.Scan(
-		&r.Channel.TeamID, &r.Channel.UserID, &r.Channel.ChannelID,
+		&r.Channel.TeamID, &r.Channel.ChannelID,
 		&r.SlackMessageID, &r.MatrixEventID,
 		&r.AuthorID,
 		&r.MatrixName, &r.MatrixURL,
@@ -69,9 +69,9 @@ func (r *Reaction) Scan(row dbutil.Scannable) *Reaction {
 
 func (r *Reaction) Insert() {
 	query := "INSERT INTO reaction" +
-		" (team_id, user_id, channel_id, slack_message_id, matrix_event_id," +
+		" (team_id, channel_id, slack_message_id, matrix_event_id," +
 		"  author_id, matrix_name, matrix_url, slack_name)" +
-		" VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9);"
+		" VALUES($1, $2, $3, $4, $5, $6, $7, $8);"
 
 	var slackName sql.NullString
 
@@ -81,7 +81,7 @@ func (r *Reaction) Insert() {
 
 	_, err := r.db.Exec(
 		query,
-		r.Channel.TeamID, r.Channel.UserID, r.Channel.ChannelID,
+		r.Channel.TeamID, r.Channel.ChannelID,
 		r.SlackMessageID, r.MatrixEventID,
 		r.AuthorID,
 		r.MatrixName, r.MatrixURL,
@@ -101,7 +101,7 @@ func (r *Reaction) Update() {
 
 func (r *Reaction) Delete() {
 	query := "DELETE FROM reaction WHERE" +
-		" team_id=$1 AND user_id=$2 AND channel_id=$3 AND slack_message_id=$4 AND author_id=$5 AND slack_name=$6"
+		" team_id=$1 AND channel_id=$2 AND slack_message_id=$3 AND author_id=$4 AND slack_name=$5"
 
 	var slackName sql.NullString
 	if r.SlackName != "" {
@@ -110,7 +110,7 @@ func (r *Reaction) Delete() {
 
 	_, err := r.db.Exec(
 		query,
-		r.Channel.TeamID, r.Channel.UserID, r.Channel.ChannelID,
+		r.Channel.TeamID, r.Channel.ChannelID,
 		r.SlackMessageID, r.AuthorID,
 		slackName,
 	)

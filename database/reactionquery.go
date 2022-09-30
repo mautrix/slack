@@ -27,7 +27,7 @@ type ReactionQuery struct {
 }
 
 const (
-	reactionSelect = "SELECT team_id, user_id, channel_id, slack_message_id," +
+	reactionSelect = "SELECT team_id, channel_id, slack_message_id," +
 		" matrix_event_id, author_id, matrix_name, matrix_url, " +
 		" slack_name FROM reaction"
 )
@@ -40,9 +40,9 @@ func (rq *ReactionQuery) New() *Reaction {
 }
 
 func (rq *ReactionQuery) GetAllByMatrixID(key PortalKey, matrixEventID id.EventID) []*Reaction {
-	query := reactionSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3 AND matrix_event_id=$4"
+	query := reactionSelect + " WHERE team_id=$1 AND channel_id=$2 AND matrix_event_id=$3"
 
-	return rq.getAll(query, key.TeamID, key.UserID, key.ChannelID, matrixEventID)
+	return rq.getAll(query, key.TeamID, key.ChannelID, matrixEventID)
 }
 
 func (rq *ReactionQuery) getAll(query string, args ...interface{}) []*Reaction {
@@ -60,15 +60,15 @@ func (rq *ReactionQuery) getAll(query string, args ...interface{}) []*Reaction {
 }
 
 func (rq *ReactionQuery) GetBySlackID(key PortalKey, slackAuthor, slackMessageID, slackName string) *Reaction {
-	query := reactionSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3 AND author_id=$4 AND slack_message_id=$5 AND slack_name=$6"
+	query := reactionSelect + " WHERE team_id=$1 AND channel_id=$2 AND author_id=$3 AND slack_message_id=$4 AND slack_name=$5"
 
-	return rq.get(query, key.TeamID, key.UserID, key.ChannelID, slackAuthor, slackMessageID, slackName)
+	return rq.get(query, key.TeamID, key.ChannelID, slackAuthor, slackMessageID, slackName)
 }
 
 func (rq *ReactionQuery) GetByMatrixID(key PortalKey, matrixEventID id.EventID) *Reaction {
-	query := reactionSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3 AND matrix_event_id=$4"
+	query := reactionSelect + " WHERE team_id=$1 AND channel_id=$2 AND matrix_event_id=$3"
 
-	return rq.get(query, key.TeamID, key.UserID, key.ChannelID, matrixEventID)
+	return rq.get(query, key.TeamID, key.ChannelID, matrixEventID)
 }
 
 func (rq *ReactionQuery) get(query string, args ...interface{}) *Reaction {

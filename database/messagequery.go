@@ -27,7 +27,7 @@ type MessageQuery struct {
 }
 
 const (
-	messageSelect = "SELECT team_id, user_id, channel_id, slack_message_id," +
+	messageSelect = "SELECT team_id, channel_id, slack_message_id," +
 		" matrix_message_id, author_id, slack_thread_id FROM message"
 )
 
@@ -39,9 +39,9 @@ func (mq *MessageQuery) New() *Message {
 }
 
 func (mq *MessageQuery) GetAll(key PortalKey) []*Message {
-	query := messageSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3"
+	query := messageSelect + " WHERE team_id=$1 AND channel_id=$2"
 
-	rows, err := mq.db.Query(query, key.TeamID, key.UserID, key.ChannelID)
+	rows, err := mq.db.Query(query, key.TeamID, key.ChannelID)
 	if err != nil || rows == nil {
 		return nil
 	}
@@ -55,10 +55,10 @@ func (mq *MessageQuery) GetAll(key PortalKey) []*Message {
 }
 
 func (mq *MessageQuery) GetBySlackID(key PortalKey, slackID string) *Message {
-	query := messageSelect + " WHERE team_id=$1 AND user_id=$2" +
-		" AND channel_id=$3 AND slack_message_id=$4"
+	query := messageSelect + " WHERE team_id=$1" +
+		" AND channel_id=$2 AND slack_message_id=$3"
 
-	row := mq.db.QueryRow(query, key.TeamID, key.UserID, key.ChannelID, slackID)
+	row := mq.db.QueryRow(query, key.TeamID, key.ChannelID, slackID)
 	if row == nil {
 		mq.log.Debugfln("failed to find existing message for slack_id` %s", slackID)
 		return nil
@@ -68,9 +68,9 @@ func (mq *MessageQuery) GetBySlackID(key PortalKey, slackID string) *Message {
 }
 
 func (mq *MessageQuery) GetByMatrixID(key PortalKey, matrixID id.EventID) *Message {
-	query := messageSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3 AND matrix_message_id=$4"
+	query := messageSelect + " WHERE team_id=$1 AND channel_id=$2 AND matrix_message_id=$3"
 
-	row := mq.db.QueryRow(query, key.TeamID, key.UserID, key.ChannelID, matrixID)
+	row := mq.db.QueryRow(query, key.TeamID, key.ChannelID, matrixID)
 	if row == nil {
 		return nil
 	}

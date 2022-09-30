@@ -73,7 +73,7 @@ type Portal struct {
 func (p *Portal) Scan(row dbutil.Scannable) *Portal {
 	var mxid, dmUserID, avatarURL, firstEventID sql.NullString
 
-	err := row.Scan(&p.Key.TeamID, &p.Key.UserID, &p.Key.ChannelID, &mxid,
+	err := row.Scan(&p.Key.TeamID, &p.Key.ChannelID, &mxid,
 		&p.Type, &dmUserID, &p.PlainName, &p.Name, &p.NameSet, &p.Topic,
 		&p.TopicSet, &p.Avatar, &avatarURL, &p.AvatarSet, &firstEventID,
 		&p.Encrypted)
@@ -124,29 +124,20 @@ func (p *Portal) Update() {
 		" mxid=$1, type=$2, dm_user_id=$3, plain_name=$4, name=$5, name_set=$6," +
 		" topic=$7, topic_set=$8, avatar=$9, avatar_url=$10, avatar_set=$11," +
 		" first_event_id=$12, encrypted=$13" +
-		" WHERE team_id=$14 AND user_id=$15 AND channel_id=$16"
+		" WHERE team_id=$14 AND channel_id=$15"
 
 	_, err := p.db.Exec(query, p.mxidPtr(), p.Type, p.DMUserID, p.PlainName,
 		p.Name, p.NameSet, p.Topic, p.TopicSet, p.Avatar, p.AvatarURL.String(),
-		p.AvatarSet, p.FirstEventID.String(), p.Encrypted, p.Key.TeamID,
-		p.Key.UserID, p.Key.ChannelID)
+		p.AvatarSet, p.FirstEventID.String(), p.Encrypted, p.Key.TeamID, p.Key.ChannelID)
 
 	if err != nil {
 		p.log.Warnfln("Failed to update %s: %v", p.Key, err)
 	}
 }
 
-func (p *Portal) UpdateUserID() {
-	query := "UPDATE portal SET user_id=$1 WHERE team_id=$2 AND channel_id=$3"
-	_, err := p.db.Exec(query, p.Key.UserID, p.Key.TeamID, p.Key.ChannelID)
-	if err != nil {
-		p.log.Warnfln("Failed to update userid for %s: %v", p.Key, err)
-	}
-}
-
 func (p *Portal) Delete() {
-	query := "DELETE FROM portal WHERE team_id=$1 AND user_id=$2 AND channel_id=$3"
-	_, err := p.db.Exec(query, p.Key.TeamID, p.Key.UserID, p.Key.ChannelID)
+	query := "DELETE FROM portal WHERE team_id=$1 AND channel_id=$2"
+	_, err := p.db.Exec(query, p.Key.TeamID, p.Key.ChannelID)
 	if err != nil {
 		p.log.Warnfln("Failed to delete %s: %v", p.Key, err)
 	}
@@ -154,11 +145,11 @@ func (p *Portal) Delete() {
 
 func (p *Portal) InsertUser(utk UserTeamKey) {
 	query := "INSERT INTO user_team_portal" +
-		" (matrix_user_id, slack_user_id, slack_team_id, portal_user_id, portal_channel_id)" +
-		" VALUES ($1, $2, $3, $4, $5)" +
+		" (matrix_user_id, slack_user_id, slack_team_id, portal_channel_id)" +
+		" VALUES ($1, $2, $3, $4)" +
 		" ON CONFLICT DO NOTHING"
 
-	_, err := p.db.Exec(query, utk.MXID, utk.SlackID, utk.TeamID, p.Key.UserID, p.Key.ChannelID)
+	_, err := p.db.Exec(query, utk.MXID, utk.SlackID, utk.TeamID, p.Key.ChannelID)
 	if err != nil {
 		p.log.Warnfln("Failed to insert userteam %s: %v", utk, err)
 	}
@@ -166,8 +157,8 @@ func (p *Portal) InsertUser(utk UserTeamKey) {
 
 func (p *Portal) DeleteUser(utk UserTeamKey) {
 	query := "DELETE FROM user_team_portal WHERE matrix_user_id=$1 AND slack_user_id=$2" +
-		" slack_team_id=$3 AND portal_user_id=$4 AND portal_channel_id=$5"
-	_, err := p.db.Exec(query, utk.MXID, utk.SlackID, utk.TeamID, p.Key.UserID, p.Key.ChannelID)
+		" slack_team_id=$3 AND portal_channel_id=$4"
+	_, err := p.db.Exec(query, utk.MXID, utk.SlackID, utk.TeamID, p.Key.ChannelID)
 	if err != nil {
 		p.log.Warnfln("Failed to delete userteam %s: %v", utk, err)
 	}

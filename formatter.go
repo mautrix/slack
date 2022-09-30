@@ -253,7 +253,6 @@ func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source [
 	case *astSlackChannelMention:
 		portal := r.portal.bridge.DB.Portal.GetByID(database.PortalKey{
 			TeamID:    r.portal.Key.TeamID,
-			UserID:    r.portal.Key.UserID,
 			ChannelID: node.channelID,
 		})
 		if portal != nil && portal.MXID != "" {

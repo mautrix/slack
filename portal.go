@@ -338,11 +338,8 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	portal.bridge.portalsLock.Unlock()
 	portal.Update()
 
-	channelType := portal.getChannelType(channel)
-	if channelType == database.ChannelTypeDM {
-		portal.Key.UserID = userTeam.Key.SlackID
-		portal.UpdateUserID()
-	}
+	portal.InsertUser(userTeam.Key)
+
 	portal.log.Infoln("Matrix room created:", portal.MXID)
 
 	if portal.Encrypted && portal.IsPrivateChat() {
@@ -355,6 +352,7 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	portal.ensureUserInvited(user)
 	user.syncChatDoublePuppetDetails(portal, true)
 
+	channelType := portal.getChannelType(channel)
 	var members []string
 	// no members are included in channels, only in group DMs
 	switch channelType {
@@ -362,7 +360,7 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		user.updateChatMute(portal, true)
 		members = portal.getChannelMembers(userTeam, 3) // TODO: this just fetches 3 members so channels don't have to look like DMs
 	case database.ChannelTypeDM:
-		members = []string{channel.User, portal.Key.UserID}
+		members = []string{channel.User, userTeam.Key.SlackID}
 	case database.ChannelTypeGroupDM:
 		members = channel.Members
 	}
@@ -803,9 +801,7 @@ func (portal *Portal) handleMatrixReaction(sender *User, evt *event.Event, ms *m
 	}
 
 	dbReaction := portal.bridge.DB.Reaction.New()
-	dbReaction.Channel.TeamID = portal.Key.TeamID
-	dbReaction.Channel.UserID = portal.Key.UserID
-	dbReaction.Channel.ChannelID = portal.Key.ChannelID
+	dbReaction.Channel = portal.Key
 	dbReaction.MatrixEventID = evt.ID
 	dbReaction.SlackMessageID = slackID
 	dbReaction.AuthorID = userTeam.Key.SlackID
@@ -1336,7 +1332,6 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 			return false
 		}
 	}
-	portal.InsertUser(userTeam.Key)
 
 	existing := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Msg.Timestamp)
 	if existing != nil && msg.Msg.SubType != "message_changed" { // Slack reuses the same message ID on message edits
@@ -1546,7 +1541,7 @@ func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTea
 
 	existing := portal.bridge.DB.Reaction.GetBySlackID(portal.Key, msg.User, msg.Item.Timestamp, msg.Reaction)
 	if existing != nil {
-		portal.log.Warnfln("Dropping duplicate reaction: %s %s %s %s %s", portal.Key.TeamID, portal.Key.ChannelID, portal.Key.UserID, msg.Item.Timestamp, msg.Reaction)
+		portal.log.Warnfln("Dropping duplicate reaction: %s %s %s", portal.Key, msg.Item.Timestamp, msg.Reaction)
 		return
 	}
 

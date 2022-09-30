@@ -27,7 +27,7 @@ type AttachmentQuery struct {
 }
 
 const (
-	attachmentSelect = "SELECT team_id, user_id, channel_id, " +
+	attachmentSelect = "SELECT team_id, channel_id, " +
 		" slack_message_id, slack_file_id, matrix_event_id" +
 		" FROM attachment"
 )
@@ -40,10 +40,10 @@ func (aq *AttachmentQuery) New() *Attachment {
 }
 
 func (aq *AttachmentQuery) GetAllBySlackMessageID(key PortalKey, slackMessageID string) []*Attachment {
-	query := attachmentSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3" +
-		" AND slack_message_id=$4"
+	query := attachmentSelect + " WHERE team_id=$1 AND channel_id=$2" +
+		" AND slack_message_id=$3"
 
-	return aq.getAll(query, key.TeamID, key.UserID, key.ChannelID, slackMessageID)
+	return aq.getAll(query, key.TeamID, key.ChannelID, slackMessageID)
 }
 
 func (aq *AttachmentQuery) getAll(query string, args ...interface{}) []*Attachment {
@@ -67,16 +67,16 @@ func (aq *AttachmentQuery) getAll(query string, args ...interface{}) []*Attachme
 }
 
 func (aq *AttachmentQuery) GetBySlackFileID(key PortalKey, slackMessageID, slackFileID string) *Attachment {
-	query := attachmentSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3" +
-		" AND slack_message_id=$4 AND slack_file_id=$5"
+	query := attachmentSelect + " WHERE team_id=$1 AND channel_id=$2" +
+		" AND slack_message_id=$3 AND slack_file_id=$4"
 
-	return aq.get(query, key.TeamID, key.UserID, key.ChannelID, slackMessageID, slackFileID)
+	return aq.get(query, key.TeamID, key.ChannelID, slackMessageID, slackFileID)
 }
 
 func (aq *AttachmentQuery) GetByMatrixID(key PortalKey, matrixEventID id.EventID) *Attachment {
-	query := attachmentSelect + " WHERE team_id=$1 AND user_id=$2 AND channel_id=$3 AND matrix_event_id=$4"
+	query := attachmentSelect + " WHERE team_id=$1 AND channel_id=$2 AND matrix_event_id=$3"
 
-	return aq.get(query, key.TeamID, key.UserID, key.ChannelID, matrixEventID)
+	return aq.get(query, key.TeamID, key.ChannelID, matrixEventID)
 }
 
 func (aq *AttachmentQuery) get(query string, args ...interface{}) *Attachment {
