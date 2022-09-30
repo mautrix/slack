@@ -31,10 +31,11 @@ import (
 )
 
 type BridgeConfig struct {
-	UsernameTemplate      string `yaml:"username_template"`
-	DisplaynameTemplate   string `yaml:"displayname_template"`
-	ChannelNameTemplate   string `yaml:"channel_name_template"`
-	PrivateChatPortalMeta bool   `yaml:"private_chat_portal_meta"`
+	UsernameTemplate       string `yaml:"username_template"`
+	DisplaynameTemplate    string `yaml:"displayname_template"`
+	BotDisplaynameTemplate string `yaml:"bot_displayname_template"`
+	ChannelNameTemplate    string `yaml:"channel_name_template"`
+	PrivateChatPortalMeta  bool   `yaml:"private_chat_portal_meta"`
 
 	CommandPrefix string `yaml:"command_prefix"`
 
@@ -73,9 +74,10 @@ type BridgeConfig struct {
 
 	Permissions bridgeconfig.PermissionConfig `yaml:"permissions"`
 
-	usernameTemplate    *template.Template `yaml:"-"`
-	displaynameTemplate *template.Template `yaml:"-"`
-	channelNameTemplate *template.Template `yaml:"-"`
+	usernameTemplate       *template.Template `yaml:"-"`
+	displaynameTemplate    *template.Template `yaml:"-"`
+	botDisplaynameTemplate *template.Template `yaml:"-"`
+	channelNameTemplate    *template.Template `yaml:"-"`
 }
 
 type umBridgeConfig BridgeConfig
@@ -94,6 +96,11 @@ func (bc *BridgeConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	}
 
 	bc.displaynameTemplate, err = template.New("displayname").Parse(bc.DisplaynameTemplate)
+	if err != nil {
+		return err
+	}
+
+	bc.botDisplaynameTemplate, err = template.New("bot_displayname").Parse(bc.BotDisplaynameTemplate)
 	if err != nil {
 		return err
 	}
@@ -129,6 +136,12 @@ func (bc BridgeConfig) FormatUsername(userid string) string {
 func (bc BridgeConfig) FormatDisplayname(user *slack.User) string {
 	var buffer strings.Builder
 	_ = bc.displaynameTemplate.Execute(&buffer, user.Profile)
+	return buffer.String()
+}
+
+func (bc BridgeConfig) FormatBotDisplayname(bot *slack.Bot) string {
+	var buffer strings.Builder
+	_ = bc.botDisplaynameTemplate.Execute(&buffer, bot)
 	return buffer.String()
 }
 

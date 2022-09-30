@@ -27,6 +27,7 @@ func DoUpgrade(helper *up.Helper) {
 
 	helper.Copy(up.Str, "bridge", "username_template")
 	helper.Copy(up.Str, "bridge", "displayname_template")
+	helper.Copy(up.Str, "bridge", "bot_displayname_template")
 	helper.Copy(up.Str, "bridge", "channel_name_template")
 	helper.Copy(up.Int, "bridge", "portal_message_buffer")
 	helper.Copy(up.Bool, "bridge", "delivery_receipts")

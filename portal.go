@@ -1351,7 +1351,7 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 	}
 
 	switch msg.Msg.SubType {
-	case "", "me_message": // Regular messages and /me
+	case "", "me_message", "bot_message": // Regular messages and /me
 		portal.HandleSlackFiles(user, userTeam, msg)
 		return portal.HandleSlackTextMessage(user, userTeam, &msg.Msg, nil)
 	case "message_changed":
@@ -1419,8 +1419,17 @@ func (portal *Portal) addThreadMetadata(content *event.MessageEventContent, thre
 }
 
 func (portal *Portal) HandleSlackFiles(user *User, userTeam *database.UserTeam, msg *slack.MessageEvent) {
-	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.Msg.User)
-	puppet.UpdateInfo(userTeam, nil)
+	var puppet *Puppet
+	if msg.User != "" {
+		puppet = portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.User)
+		puppet.UpdateInfo(userTeam, nil)
+	} else if msg.BotID != "" {
+		puppet = portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.BotID)
+		puppet.UpdateInfoBot(userTeam)
+	} else {
+		portal.log.Errorfln("Couldn't bridge files from message %s: no user or bot ID", msg.Timestamp)
+		return
+	}
 	intent := puppet.IntentFor(portal)
 
 	ts := portal.parseTimestamp(msg.Msg.Timestamp)
@@ -1462,15 +1471,39 @@ func (portal *Portal) HandleSlackFiles(user *User, userTeam *database.UserTeam, 
 }
 
 func (portal *Portal) HandleSlackTextMessage(user *User, userTeam *database.UserTeam, msg *slack.Msg, editExisting *database.Message) bool {
-	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.User)
-	puppet.UpdateInfo(userTeam, nil)
+	var puppet *Puppet
+	if msg.User != "" {
+		puppet = portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.User)
+		puppet.UpdateInfo(userTeam, nil)
+	} else if msg.BotID != "" {
+		puppet = portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.BotID)
+		puppet.UpdateInfoBot(userTeam)
+	} else {
+		portal.log.Errorfln("Couldn't bridge text message %s: no user or bot ID", msg.Timestamp)
+		return false
+	}
 	intent := puppet.IntentFor(portal)
 
 	ts := portal.parseTimestamp(msg.Timestamp)
 
-	// Slack adds an empty text field even in messages that don't have text
+	var text string
 	if msg.Text != "" {
-		content := portal.renderSlackMarkdown(msg.Text)
+		text = msg.Text
+	}
+	for _, attachment := range msg.Attachments {
+		if text != "" {
+			text += "\n"
+		}
+		if attachment.Text != "" {
+			text += attachment.Text
+		} else if attachment.Fallback != "" {
+			text += attachment.Fallback
+		}
+	}
+
+	// Slack adds an empty text field even in messages that don't have text
+	if text != "" {
+		content := portal.renderSlackMarkdown(text)
 
 		// set m.emote if it's a /me message
 		if msg.SubType == "me_message" {
