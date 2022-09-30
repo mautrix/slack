@@ -183,28 +183,9 @@ func (p *ProvisioningAPI) logout(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("user_id")
 	user := p.bridge.GetUserByMXID(id.UserID(userID))
 
-	var data struct {
-		SlackTeamId string
-	}
+	slackTeamID := r.URL.Query().Get("slack_team_id")
 
-	err := json.NewDecoder(r.Body).Decode(&data)
-	if err != nil {
-		jsonResponse(w, http.StatusBadRequest, Error{
-			Error:   "Invalid JSON",
-			ErrCode: "Invalid JSON",
-		})
-		return
-	}
-
-	if data.SlackTeamId == "" {
-		jsonResponse(w, http.StatusBadRequest, Error{
-			Error:   "Missing field slack_team_id",
-			ErrCode: "Missing field slack_team_id",
-		})
-		return
-	}
-
-	userTeam := user.GetUserTeam(data.SlackTeamId)
+	userTeam := user.GetUserTeam(slackTeamID)
 	if userTeam == nil || !userTeam.IsLoggedIn() {
 		jsonResponse(w, http.StatusNotFound, Error{
 			Error:   "Not logged in",
@@ -214,7 +195,7 @@ func (p *ProvisioningAPI) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = user.LogoutUserTeam(userTeam)
+	err := user.LogoutUserTeam(userTeam)
 
 	if err != nil {
 		user.log.Warnln("Error while logging out:", err)

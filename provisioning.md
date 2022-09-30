@@ -55,10 +55,6 @@ All endpoints below require the provisioning shared secret in the `Authorization
 
 ### Body format
 
-```
-{
-    "slack_team_id": "Slack team ID"
-}
-```
+Requires URL query parameter `slack_team_id` - team ID of the Slack team to be logged out
 
 Returns 200 on successful logout.
