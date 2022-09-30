@@ -183,7 +183,7 @@ func (p *ProvisioningAPI) logout(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("user_id")
 	user := p.bridge.GetUserByMXID(id.UserID(userID))
 
-	slackTeamID := r.URL.Query().Get("slack_team_id")
+	slackTeamID := strings.Split(r.URL.Query().Get("slack_team_id"), "-")[0] // in case some client sends userTeam instead of team ID
 
 	userTeam := user.GetUserTeam(slackTeamID)
 	if userTeam == nil || !userTeam.IsLoggedIn() {
