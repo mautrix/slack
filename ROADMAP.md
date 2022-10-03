@@ -49,5 +49,5 @@
         * [ ] When added to conversation
     * [ ] Creating DM by inviting user to Matrix room
     * [x] Using your own Matrix account for messages sent from your Slack client
-    * [ ] Shared channel portals (bug to be fixed)
+    * [x] Shared channel portals between different Matrix users
     * [ ] Using relay bot to bridge to Slack

@@ -82,16 +82,13 @@ func (portal *Portal) renderSlackFile(file slack.File) event.MessageEventContent
 		content.Body += util.ExtensionFromMimetype(file.Mimetype)
 	}
 
-	// Slack only gives us a "filetype" and they document a non-exhaustive list of values that may have.
-	// I guess we're going with that. Also added a few other ones that weren't on their list.
-	switch file.Filetype {
-	case "bmp", "gif", "jpg", "png", "svg", "tiff", "webp":
+	if strings.HasPrefix(file.Mimetype, "image") {
 		content.MsgType = event.MsgImage
-	case "flv", "mkv", "mov", "mp4", "mpg", "ogv", "webm", "wmv":
+	} else if strings.HasPrefix(file.Mimetype, "video") {
 		content.MsgType = event.MsgVideo
-	case "m4a", "mp3", "ogg", "wav", "opus", "flac":
+	} else if strings.HasPrefix(file.Mimetype, "audio") {
 		content.MsgType = event.MsgAudio
-	default:
+	} else {
 		content.MsgType = event.MsgFile
 	}
 

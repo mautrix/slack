@@ -393,7 +393,7 @@ func (puppet *Puppet) UpdateInfo(userTeam *database.UserTeam, info *slack.User) 
 
 	newName := puppet.bridge.Config.Bridge.FormatDisplayname(info)
 	changed = puppet.UpdateName(newName) || changed
-	changed = puppet.UpdateAvatar(info.Profile.Image512) || changed
+	changed = puppet.UpdateAvatar(info.Profile.ImageOriginal) || changed
 
 	if changed {
 		puppet.Update()
