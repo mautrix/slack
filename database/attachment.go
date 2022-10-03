@@ -39,7 +39,7 @@ type Attachment struct {
 
 func (a *Attachment) Scan(row dbutil.Scannable) *Attachment {
 	err := row.Scan(
-		&a.Channel.TeamID, &a.Channel.UserID, &a.Channel.ChannelID,
+		&a.Channel.TeamID, &a.Channel.ChannelID,
 		&a.SlackMessageID, &a.SlackFileID,
 		&a.MatrixEventID)
 
@@ -56,12 +56,12 @@ func (a *Attachment) Scan(row dbutil.Scannable) *Attachment {
 
 func (a *Attachment) Insert() {
 	query := "INSERT INTO attachment" +
-		" (team_id, user_id, channel_id, slack_message_id, slack_file_id, " +
-		" matrix_event_id) VALUES ($1, $2, $3, $4, $5, $6);"
+		" (team_id, channel_id, slack_message_id, slack_file_id, " +
+		" matrix_event_id) VALUES ($1, $2, $3, $4, $5);"
 
 	_, err := a.db.Exec(
 		query,
-		a.Channel.TeamID, a.Channel.UserID, a.Channel.ChannelID,
+		a.Channel.TeamID, a.Channel.ChannelID,
 		a.SlackMessageID, a.SlackFileID,
 		a.MatrixEventID,
 	)
@@ -73,12 +73,12 @@ func (a *Attachment) Insert() {
 
 func (a *Attachment) Delete() {
 	query := "DELETE FROM attachment WHERE" +
-		" team_id=$1 AND user_id=$2 AND channel_id=$3 AND slack_file_id=$4 AND" +
-		" matrix_event_id=$5"
+		" team_id=$1 AND channel_id=$2 AND slack_file_id=$3 AND" +
+		" matrix_event_id=$4"
 
 	_, err := a.db.Exec(
 		query,
-		a.Channel.TeamID, a.Channel.UserID, a.Channel.ChannelID,
+		a.Channel.TeamID, a.Channel.ChannelID,
 		a.SlackFileID, a.MatrixEventID,
 	)
 

@@ -409,31 +409,31 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 		case *slack.LatencyReport:
 			user.log.Debugln("latency report:", event.Value)
 		case *slack.MessageEvent:
-			key := database.NewPortalKey(userTeam.Key.TeamID, userTeam.Key.SlackID, event.Channel)
+			key := database.NewPortalKey(userTeam.Key.TeamID, event.Channel)
 			portal := user.bridge.GetPortalByID(key)
 			if portal != nil {
 				portal.HandleSlackMessage(user, userTeam, event)
 			}
 		case *slack.ReactionAddedEvent:
-			key := database.NewPortalKey(userTeam.Key.TeamID, userTeam.Key.SlackID, event.Item.Channel)
+			key := database.NewPortalKey(userTeam.Key.TeamID, event.Item.Channel)
 			portal := user.bridge.GetPortalByID(key)
 			if portal != nil {
 				portal.HandleSlackReaction(user, userTeam, event)
 			}
 		case *slack.ReactionRemovedEvent:
-			key := database.NewPortalKey(userTeam.Key.TeamID, userTeam.Key.SlackID, event.Item.Channel)
+			key := database.NewPortalKey(userTeam.Key.TeamID, event.Item.Channel)
 			portal := user.bridge.GetPortalByID(key)
 			if portal != nil {
 				portal.HandleSlackReactionRemoved(user, userTeam, event)
 			}
 		case *slack.UserTypingEvent:
-			key := database.NewPortalKey(userTeam.Key.TeamID, userTeam.Key.SlackID, event.Channel)
+			key := database.NewPortalKey(userTeam.Key.TeamID, event.Channel)
 			portal := user.bridge.GetPortalByID(key)
 			if portal != nil {
 				portal.HandleSlackTyping(user, userTeam, event)
 			}
 		case *slack.ChannelMarkedEvent:
-			key := database.NewPortalKey(userTeam.Key.TeamID, userTeam.Key.SlackID, event.Channel)
+			key := database.NewPortalKey(userTeam.Key.TeamID, event.Channel)
 			portal := user.bridge.GetPortalByID(key)
 			if portal != nil {
 				portal.HandleSlackChannelMarked(user, userTeam, event)
@@ -489,13 +489,14 @@ func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 		user.log.Warnfln("Not fetching channels for userteam %s: xoxs token type can't fetch user's joined channels", userTeam.Key)
 	}
 
-	portals := user.bridge.DB.Portal.GetAllByID(userTeam.Key.TeamID, userTeam.Key.SlackID)
+	portals := user.bridge.DB.Portal.GetAllForUserTeam(userTeam.Key)
 	for _, dbPortal := range portals {
 		// First, go through all pre-existing portals and update their info
 		portal := user.bridge.GetPortalByID(dbPortal.Key)
 		channel := channelInfo[dbPortal.Key.ChannelID]
 		if portal.MXID != "" {
 			portal.UpdateInfo(user, userTeam, &channel, force)
+			portal.InsertUser(userTeam.Key)
 		} else {
 			portal.CreateMatrixRoom(user, userTeam, &channel, true)
 		}
@@ -505,10 +506,11 @@ func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 
 	for _, channel := range channelInfo {
 		// Remaining ones in the map are new channels that weren't handled yet
-		key := database.NewPortalKey(userTeam.Key.TeamID, userTeam.Key.SlackID, channel.ID)
+		key := database.NewPortalKey(userTeam.Key.TeamID, channel.ID)
 		portal := user.bridge.GetPortalByID(key)
 		if portal.MXID != "" {
 			portal.UpdateInfo(user, userTeam, &channel, force)
+			portal.InsertUser(userTeam.Key)
 		} else {
 			portal.CreateMatrixRoom(user, userTeam, &channel, true)
 		}

@@ -19,6 +19,7 @@ package main
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 
 	log "maunium.net/go/maulogger/v2"
@@ -168,7 +169,7 @@ func (br *SlackBridge) dbPuppetsToPuppets(dbPuppets []*database.Puppet) []*Puppe
 
 func (br *SlackBridge) FormatPuppetMXID(did string) id.UserID {
 	return id.NewUserID(
-		br.Config.Bridge.FormatUsername(did),
+		br.Config.Bridge.FormatUsername(strings.ToLower(did)),
 		br.Config.Homeserver.Domain,
 	)
 }
@@ -309,8 +310,7 @@ func (puppet *Puppet) SyncContact(source *User) {
 	}
 }
 
-func (puppet *Puppet) UpdateName(info *slack.User) bool {
-	newName := puppet.bridge.Config.Bridge.FormatDisplayname(info)
+func (puppet *Puppet) UpdateName(newName string) bool {
 	if puppet.Name == newName && puppet.NameSet {
 		return false
 	}
@@ -331,18 +331,18 @@ func (puppet *Puppet) UpdateName(info *slack.User) bool {
 	return true
 }
 
-func (puppet *Puppet) UpdateAvatar(info *slack.User) bool {
-	if puppet.Avatar == info.Profile.Image512 && puppet.AvatarSet {
+func (puppet *Puppet) UpdateAvatar(url string) bool {
+	if puppet.Avatar == url && puppet.AvatarSet {
 		return false
 	}
-	avatarChanged := info.Profile.Image512 != puppet.Avatar
-	puppet.Avatar = info.Profile.Image512
+	avatarChanged := url != puppet.Avatar
+	puppet.Avatar = url
 	puppet.AvatarSet = false
 	puppet.AvatarURL = id.ContentURI{}
 
 	// TODO should we just use slack's default avatars for users with no avatar?
 	if puppet.Avatar != "" && (puppet.AvatarURL.IsEmpty() || avatarChanged) {
-		url, err := uploadAvatar(puppet.DefaultIntent(), info.Profile.Image512)
+		url, err := uploadAvatar(puppet.DefaultIntent(), url)
 		if err != nil {
 			puppet.log.Warnfln("Failed to reupload user avatar %s: %v", puppet.Avatar, err)
 			return true
@@ -390,8 +390,37 @@ func (puppet *Puppet) UpdateInfo(userTeam *database.UserTeam, info *slack.User) 
 	}
 
 	changed := false
-	changed = puppet.UpdateName(info) || changed
-	changed = puppet.UpdateAvatar(info) || changed
+
+	newName := puppet.bridge.Config.Bridge.FormatDisplayname(info)
+	changed = puppet.UpdateName(newName) || changed
+	changed = puppet.UpdateAvatar(info.Profile.Image512) || changed
+
+	if changed {
+		puppet.Update()
+	}
+}
+
+func (puppet *Puppet) UpdateInfoBot(userTeam *database.UserTeam) {
+	puppet.syncLock.Lock()
+	defer puppet.syncLock.Unlock()
+
+	puppet.log.Debugfln("Fetching bot info through team %s to update", userTeam.Key.TeamID)
+	info, err := userTeam.Client.GetBotInfo(puppet.UserID)
+	if err != nil {
+		puppet.log.Errorfln("Failed to fetch bot info through %s: %v", userTeam.Key.TeamID, err)
+		return
+	}
+
+	err = puppet.DefaultIntent().EnsureRegistered()
+	if err != nil {
+		puppet.log.Errorfln("Failed to ensure bot %s registered: %v", puppet.UserID, err)
+	}
+
+	changed := false
+
+	newName := puppet.bridge.Config.Bridge.FormatBotDisplayname(info)
+	changed = puppet.UpdateName(newName) || changed
+	changed = puppet.UpdateAvatar(info.Icons.Image72) || changed
 
 	if changed {
 		puppet.Update()

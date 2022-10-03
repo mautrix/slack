@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	portalSelect = "SELECT team_id, user_id, channel_id, mxid, type, " +
+	portalSelect = "SELECT team_id, channel_id, mxid, type, " +
 		" dm_user_id, plain_name, name, name_set, topic, topic_set," +
 		" avatar, avatar_url, avatar_set, first_event_id," +
 		" encrypted FROM portal"
@@ -45,15 +45,22 @@ func (pq *PortalQuery) GetAll() []*Portal {
 }
 
 func (pq *PortalQuery) GetByID(key PortalKey) *Portal {
-	return pq.get(portalSelect+" WHERE team_id=$1 AND user_id=$2 AND channel_id=$3", key.TeamID, key.UserID, key.ChannelID)
+	return pq.get(portalSelect+" WHERE team_id=$1 AND channel_id=$2", key.TeamID, key.ChannelID)
 }
 
 func (pq *PortalQuery) GetByMXID(mxid id.RoomID) *Portal {
 	return pq.get(portalSelect+" WHERE mxid=$1", mxid)
 }
 
-func (pq *PortalQuery) GetAllByID(teamID, userID string) []*Portal {
-	return pq.getAll(portalSelect+" WHERE team_id=$1 AND user_id=$2", teamID, userID)
+// func (pq *PortalQuery) GetAllByID(teamID, userID string) []*Portal {
+// 	return pq.getAll(portalSelect+" WHERE team_id=$1 AND user_id=$2", teamID, userID)
+// }
+
+func (pq *PortalQuery) GetAllForUserTeam(utk UserTeamKey) []*Portal {
+	return pq.getAll(portalSelect+" WHERE EXISTS (SELECT * FROM user_team_portal WHERE"+
+		" user_team_portal.matrix_user_id=$1 AND user_team_portal.slack_user_id=$2 AND user_team_portal.slack_team_id=$3"+
+		" AND user_team_portal.portal_channel_id=portal.channel_id)",
+		utk.MXID, utk.SlackID, utk.TeamID)
 }
 
 func (pq *PortalQuery) FindPrivateChatsWith(id string) []*Portal {

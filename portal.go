@@ -170,8 +170,8 @@ func (br *SlackBridge) GetAllIPortals() (iportals []bridge.Portal) {
 	return iportals
 }
 
-func (br *SlackBridge) GetAllPortalsByID(teamID, userID string) []*Portal {
-	return br.dbPortalsToPortals(br.DB.Portal.GetAllByID(teamID, userID))
+func (br *SlackBridge) GetAllPortalsForUserTeam(utk database.UserTeamKey) []*Portal {
+	return br.dbPortalsToPortals(br.DB.Portal.GetAllForUserTeam(utk))
 }
 
 func (br *SlackBridge) GetDMPortalsWith(otherUserID string) []*Portal {
@@ -337,6 +337,9 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	portal.bridge.portalsByMXID[portal.MXID] = portal
 	portal.bridge.portalsLock.Unlock()
 	portal.Update()
+
+	portal.InsertUser(userTeam.Key)
+
 	portal.log.Infoln("Matrix room created:", portal.MXID)
 
 	if portal.Encrypted && portal.IsPrivateChat() {
@@ -357,7 +360,7 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		user.updateChatMute(portal, true)
 		members = portal.getChannelMembers(userTeam, 3) // TODO: this just fetches 3 members so channels don't have to look like DMs
 	case database.ChannelTypeDM:
-		members = []string{channel.User, portal.Key.UserID}
+		members = []string{channel.User, userTeam.Key.SlackID}
 	case database.ChannelTypeGroupDM:
 		members = channel.Members
 	}
@@ -455,17 +458,17 @@ func (portal *Portal) markMessageHandled(slackID string, slackThreadID string, m
 	return msg
 }
 
-func (portal *Portal) sendMediaFailedMessage(intent *appservice.IntentAPI, bridgeErr error) {
-	content := &event.MessageEventContent{
-		Body:    fmt.Sprintf("Failed to bridge media: %v", bridgeErr),
-		MsgType: event.MsgNotice,
-	}
+// func (portal *Portal) sendMediaFailedMessage(intent *appservice.IntentAPI, bridgeErr error) {
+// 	content := &event.MessageEventContent{
+// 		Body:    fmt.Sprintf("Failed to bridge media: %v", bridgeErr),
+// 		MsgType: event.MsgNotice,
+// 	}
 
-	_, err := portal.sendMatrixMessage(intent, event.EventMessage, content, nil, time.Now().UTC().UnixMilli())
-	if err != nil {
-		portal.log.Warnfln("failed to send error message to matrix: %v", err)
-	}
-}
+// 	_, err := portal.sendMatrixMessage(intent, event.EventMessage, content, nil, time.Now().UTC().UnixMilli())
+// 	if err != nil {
+// 		portal.log.Warnfln("failed to send error message to matrix: %v", err)
+// 	}
+// }
 
 func (portal *Portal) encrypt(intent *appservice.IntentAPI, content *event.Content, eventType event.Type) (event.Type, error) {
 	if !portal.Encrypted || portal.bridge.Crypto == nil {
@@ -798,9 +801,7 @@ func (portal *Portal) handleMatrixReaction(sender *User, evt *event.Event, ms *m
 	}
 
 	dbReaction := portal.bridge.DB.Reaction.New()
-	dbReaction.Channel.TeamID = portal.Key.TeamID
-	dbReaction.Channel.UserID = portal.Key.UserID
-	dbReaction.Channel.ChannelID = portal.Key.ChannelID
+	dbReaction.Channel = portal.Key
 	dbReaction.MatrixEventID = evt.ID
 	dbReaction.SlackMessageID = slackID
 	dbReaction.AuthorID = userTeam.Key.SlackID
@@ -1345,7 +1346,7 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 	}
 
 	switch msg.Msg.SubType {
-	case "", "me_message": // Regular messages and /me
+	case "", "me_message", "bot_message": // Regular messages and /me
 		portal.HandleSlackFiles(user, userTeam, msg)
 		return portal.HandleSlackTextMessage(user, userTeam, &msg.Msg, nil)
 	case "message_changed":
@@ -1413,8 +1414,17 @@ func (portal *Portal) addThreadMetadata(content *event.MessageEventContent, thre
 }
 
 func (portal *Portal) HandleSlackFiles(user *User, userTeam *database.UserTeam, msg *slack.MessageEvent) {
-	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.Msg.User)
-	puppet.UpdateInfo(userTeam, nil)
+	var puppet *Puppet
+	if msg.User != "" {
+		puppet = portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.User)
+		puppet.UpdateInfo(userTeam, nil)
+	} else if msg.BotID != "" {
+		puppet = portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.BotID)
+		puppet.UpdateInfoBot(userTeam)
+	} else {
+		portal.log.Errorfln("Couldn't bridge files from message %s: no user or bot ID", msg.Timestamp)
+		return
+	}
 	intent := puppet.IntentFor(portal)
 
 	ts := portal.parseTimestamp(msg.Msg.Timestamp)
@@ -1456,15 +1466,39 @@ func (portal *Portal) HandleSlackFiles(user *User, userTeam *database.UserTeam, 
 }
 
 func (portal *Portal) HandleSlackTextMessage(user *User, userTeam *database.UserTeam, msg *slack.Msg, editExisting *database.Message) bool {
-	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.User)
-	puppet.UpdateInfo(userTeam, nil)
+	var puppet *Puppet
+	if msg.User != "" {
+		puppet = portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.User)
+		puppet.UpdateInfo(userTeam, nil)
+	} else if msg.BotID != "" {
+		puppet = portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.BotID)
+		puppet.UpdateInfoBot(userTeam)
+	} else {
+		portal.log.Errorfln("Couldn't bridge text message %s: no user or bot ID", msg.Timestamp)
+		return false
+	}
 	intent := puppet.IntentFor(portal)
 
 	ts := portal.parseTimestamp(msg.Timestamp)
 
-	// Slack adds an empty text field even in messages that don't have text
+	var text string
 	if msg.Text != "" {
-		content := portal.renderSlackMarkdown(msg.Text)
+		text = msg.Text
+	}
+	for _, attachment := range msg.Attachments {
+		if text != "" {
+			text += "\n"
+		}
+		if attachment.Text != "" {
+			text += attachment.Text
+		} else if attachment.Fallback != "" {
+			text += attachment.Fallback
+		}
+	}
+
+	// Slack adds an empty text field even in messages that don't have text
+	if text != "" {
+		content := portal.renderSlackMarkdown(text)
 
 		// set m.emote if it's a /me message
 		if msg.SubType == "me_message" {
@@ -1507,7 +1541,7 @@ func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTea
 
 	existing := portal.bridge.DB.Reaction.GetBySlackID(portal.Key, msg.User, msg.Item.Timestamp, msg.Reaction)
 	if existing != nil {
-		portal.log.Warnfln("Dropping duplicate reaction: %s %s %s %s %s", portal.Key.TeamID, portal.Key.ChannelID, portal.Key.UserID, msg.Item.Timestamp, msg.Reaction)
+		portal.log.Warnfln("Dropping duplicate reaction: %s %s %s", portal.Key, msg.Item.Timestamp, msg.Reaction)
 		return
 	}
 

@@ -43,7 +43,7 @@ type Message struct {
 func (m *Message) Scan(row dbutil.Scannable) *Message {
 	var threadID sql.NullString
 
-	err := row.Scan(&m.Channel.TeamID, &m.Channel.UserID, &m.Channel.ChannelID, &m.SlackID, &m.MatrixID, &m.AuthorID, &threadID)
+	err := row.Scan(&m.Channel.TeamID, &m.Channel.ChannelID, &m.SlackID, &m.MatrixID, &m.AuthorID, &threadID)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			m.log.Errorln("Database scan failed:", err)
@@ -59,10 +59,10 @@ func (m *Message) Scan(row dbutil.Scannable) *Message {
 
 func (m *Message) Insert() {
 	query := "INSERT INTO message" +
-		" (team_id, user_id, channel_id, slack_message_id, matrix_message_id," +
-		" author_id, slack_thread_id) VALUES ($1, $2, $3, $4, $5, $6, $7)"
+		" (team_id, channel_id, slack_message_id, matrix_message_id," +
+		" author_id, slack_thread_id) VALUES ($1, $2, $3, $4, $5, $6)"
 
-	_, err := m.db.Exec(query, m.Channel.TeamID, m.Channel.UserID,
+	_, err := m.db.Exec(query, m.Channel.TeamID,
 		m.Channel.ChannelID, m.SlackID, m.MatrixID, m.AuthorID, strPtr(m.SlackThreadID))
 
 	if err != nil {
@@ -72,9 +72,9 @@ func (m *Message) Insert() {
 
 func (m *Message) Delete() {
 	query := "DELETE FROM message" +
-		" WHERE team_id=$1 AND user_id=$2 AND channel_id=$3 AND slack_message_id=$4 AND matrix_message_id=$5"
+		" WHERE team_id=$1 AND channel_id=$2 AND slack_message_id=$3 AND matrix_message_id=$4"
 
-	_, err := m.db.Exec(query, m.Channel.TeamID, m.Channel.UserID, m.Channel.ChannelID, m.SlackID, m.MatrixID)
+	_, err := m.db.Exec(query, m.Channel.TeamID, m.Channel.ChannelID, m.SlackID, m.MatrixID)
 
 	if err != nil {
 		m.log.Warnfln("Failed to delete %s@%s: %v", m.Channel, m.SlackID, err)
