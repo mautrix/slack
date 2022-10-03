@@ -411,13 +411,16 @@ func (portal *Portal) getChannelMembers(userTeam *database.UserTeam, limit int) 
 
 }
 
-func (portal *Portal) FillMessages(user *User, userteam *database.UserTeam, limit int, latest string) error {
+func (portal *Portal) FillMessages(user *User, userTeam *database.UserTeam, limit int, latest string) error {
 	messagesHandled := 0
 	earliestHandled := latest
 
 	// keep fetching `limit` messages from Slack and handling the message type events until `limit` messages have been handled
 	for {
-		messages, err := userteam.Client.GetConversationHistory(&slack.GetConversationHistoryParameters{
+		if messagesHandled >= limit {
+			break
+		}
+		messages, err := userTeam.Client.GetConversationHistory(&slack.GetConversationHistoryParameters{
 			ChannelID: portal.Key.ChannelID,
 			Limit:     limit,
 			Latest:    earliestHandled,
@@ -429,14 +432,14 @@ func (portal *Portal) FillMessages(user *User, userteam *database.UserTeam, limi
 		}
 		if len(messages.Messages) == 0 {
 			portal.log.Warnfln("Not enough messages in Slack to fill %d messages", limit)
-			return nil
+			break
 		}
 		portal.log.Debugfln("Received %d messages from Slack when filling", len(messages.Messages))
 		for _, message := range messages.Messages {
 			if message.Type == "message" {
 				portal.log.Debugfln("Filling in message %s", message.Timestamp)
 				messageEvent := slack.MessageEvent(message)
-				messageFilled := portal.HandleSlackMessage(user, userteam, &messageEvent)
+				messageFilled := portal.HandleSlackMessage(user, userTeam, &messageEvent)
 				if portal.parseTimestamp(message.Timestamp).Before(portal.parseTimestamp(earliestHandled)) {
 					earliestHandled = message.Timestamp
 				}
@@ -444,11 +447,23 @@ func (portal *Portal) FillMessages(user *User, userteam *database.UserTeam, limi
 					messagesHandled += 1
 				}
 				if messagesHandled >= limit {
-					return nil
+					break
 				}
 			}
 		}
 	}
+
+	puppet := portal.bridge.GetPuppetByCustomMXID(user.MXID)
+	portal.log.Infofln("%v", puppet)
+	if puppet != nil {
+		puppet.UpdateInfo(userTeam, nil)
+		intent := puppet.IntentFor(portal)
+		last := portal.bridge.DB.Message.GetLast(portal.Key)
+		portal.log.Infofln("%v", last)
+		intent.MarkRead(portal.MXID, last.MatrixID)
+	}
+
+	return nil
 }
 
 func (portal *Portal) ensureUserInvited(user *User) bool {
@@ -1651,7 +1666,7 @@ func (portal *Portal) HandleSlackChannelMarked(user *User, userTeam *database.Us
 	}
 	puppet := portal.bridge.GetPuppetByCustomMXID(user.MXID)
 	if puppet == nil {
-		portal.log.Errorfln("Not sending typing status: can't find puppet for Slack user %s", msg.User)
+		portal.log.Errorfln("Not marking room as read: can't find puppet for Slack user %s", msg.User)
 		return
 	}
 	puppet.UpdateInfo(userTeam, nil)

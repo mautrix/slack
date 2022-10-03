@@ -93,3 +93,15 @@ func (mq *MessageQuery) GetLastInThread(key PortalKey, slackThreadId string) *Me
 
 	return message
 }
+
+func (mq *MessageQuery) GetLast(key PortalKey) *Message {
+	query := messageSelect + " WHERE team_id=$1 AND channel_id=$2 ORDER BY slack_message_id DESC LIMIT 1"
+
+	row := mq.db.QueryRow(query, key.TeamID, key.ChannelID)
+	if row == nil {
+		mq.log.Debugfln("failed to find existing message for portal` %s", key)
+		return nil
+	}
+
+	return mq.New().Scan(row)
+}
