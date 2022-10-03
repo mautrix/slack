@@ -293,7 +293,17 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	// portal.Avatar = puppet.Avatar
 	// portal.AvatarURL = puppet.AvatarURL
 
-	initialState := []*event.Event{}
+	bridgeInfoStateKey, bridgeInfo := portal.getBridgeInfo()
+	initialState := []*event.Event{{
+		Type:     event.StateBridge,
+		Content:  event.Content{Parsed: bridgeInfo},
+		StateKey: &bridgeInfoStateKey,
+	}, {
+		// TODO remove this once https://github.com/matrix-org/matrix-doc/pull/2346 is in spec
+		Type:     event.StateHalfShotBridge,
+		Content:  event.Content{Parsed: bridgeInfo},
+		StateKey: &bridgeInfoStateKey,
+	}}
 
 	creationContent := make(map[string]interface{})
 	creationContent["m.federate"] = false
@@ -378,7 +388,6 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		portal.log.Errorln("Failed to send dummy event to mark portal creation:", err)
 	} else {
 		portal.FirstEventID = firstEventResp.EventID
-		portal.UpdateBridgeInfo()
 		portal.Update()
 	}
 
