@@ -744,7 +744,11 @@ func (user *User) updateChatMute(portal *Portal, muted bool) {
 	if len(portal.MXID) == 0 {
 		return
 	}
-	intent := user.GetIDoublePuppet().CustomIntent()
+	puppet := user.GetIDoublePuppet()
+	if puppet == nil {
+		return
+	}
+	intent := puppet.CustomIntent()
 	if intent == nil {
 		return
 	}
