@@ -40,7 +40,7 @@ var escapeFixer = regexp.MustCompile(`\\(__[^_]|\*\*[^*])`)
 
 const mentionedUsersContextKey = "fi.mau.slack.mentioned_users"
 
-func (portal *Portal) renderSlackMarkdown(text string) event.MessageEventContent {
+func (portal *Portal) renderSlackMarkdown(text string) *event.MessageEventContent {
 	text = replaceShortcodesWithEmojis(text)
 
 	text = escapeFixer.ReplaceAllStringFunc(text, func(s string) string {
@@ -52,7 +52,8 @@ func (portal *Portal) renderSlackMarkdown(text string) event.MessageEventContent
 		goldmark.WithExtensions(&SlackTag{portal}),
 	)
 
-	return format.RenderMarkdownCustom(text, mdRenderer)
+	content := format.RenderMarkdownCustom(text, mdRenderer)
+	return &content
 }
 
 func (portal *Portal) renderSlackFile(file slack.File) event.MessageEventContent {

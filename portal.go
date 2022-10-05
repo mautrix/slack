@@ -1343,6 +1343,10 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 		portal.log.Warnln("ignoring unknown message type:", msg.Msg.Type)
 		return false
 	}
+	if msg.Msg.IsEphemeral {
+		portal.log.Debugfln("Ignoring ephemeral message")
+		return false
+	}
 
 	if portal.MXID == "" {
 		channel, err := userTeam.Client.GetConversationInfo(msg.Channel, true)
@@ -1361,6 +1365,10 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 	existing := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Msg.Timestamp)
 	if existing != nil && msg.Msg.SubType != "message_changed" { // Slack reuses the same message ID on message edits
 		portal.log.Debugln("Dropping duplicate message:", msg.Msg.Timestamp)
+		return false
+	}
+	if msg.Msg.SubType == "message_changed" && existing == nil {
+		portal.log.Debugfln("Not sending edit for nonexistent message %s", msg.Msg.Timestamp)
 		return false
 	}
 
@@ -1521,10 +1529,20 @@ func (portal *Portal) HandleSlackTextMessage(user *User, userTeam *database.User
 		}
 	}
 
-	// Slack adds an empty text field even in messages that don't have text
-	if text != "" {
-		content := portal.renderSlackMarkdown(text)
+	var content *event.MessageEventContent
 
+	if len(msg.Blocks.BlockSet) != 0 {
+		var err error
+		content, err = portal.SlackBlocksToMatrix(msg.Blocks)
+		if err != nil {
+			portal.log.Warnfln("Error rendering Slack blocks: %v", err)
+			content = nil
+		}
+	} else if text != "" {
+		content = portal.renderSlackMarkdown(text)
+	}
+
+	if content != nil {
 		// set m.emote if it's a /me message
 		if msg.SubType == "me_message" {
 			content.MsgType = event.MsgEmote
@@ -1533,10 +1551,10 @@ func (portal *Portal) HandleSlackTextMessage(user *User, userTeam *database.User
 		if editExisting != nil {
 			content.SetEdit(editExisting.MatrixID)
 		} else {
-			portal.addThreadMetadata(&content, msg.ThreadTimestamp)
+			portal.addThreadMetadata(content, msg.ThreadTimestamp)
 		}
 
-		resp, err := portal.sendMatrixMessage(intent, event.EventMessage, &content, nil, ts.UnixMilli())
+		resp, err := portal.sendMatrixMessage(intent, event.EventMessage, content, nil, ts.UnixMilli())
 		if err != nil {
 			portal.log.Warnfln("Failed to send message %s to matrix: %v", msg.Timestamp, err)
 			return false
