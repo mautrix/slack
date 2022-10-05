@@ -1323,6 +1323,7 @@ func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, me
 		changed = portal.UpdateName(meta, sourceTeam) || changed
 	}
 
+	changed = portal.UpdateName(meta, sourceTeam) || changed
 	changed = portal.UpdateTopic(meta, sourceTeam) || changed
 
 	if changed || force {
@@ -1375,9 +1376,9 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 		return portal.HandleSlackTextMessage(user, userTeam, &msg.Msg, nil)
 	case "message_changed":
 		return portal.HandleSlackTextMessage(user, userTeam, msg.SubMessage, existing)
-	case "channel_topic", "channel_purpose":
+	case "channel_topic", "channel_purpose", "channel_name", "group_topic", "group_purpose", "group_name":
 		portal.UpdateInfo(user, userTeam, nil, false)
-		portal.log.Debugfln("Received %s update, updating portal topic", msg.Msg.SubType)
+		portal.log.Debugfln("Received %s update, updating portal name and topic", msg.Msg.SubType)
 	case "message_deleted":
 		// Slack doesn't tell us who deleted a message, so there is no intent here
 		message := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Msg.DeletedTimestamp)
