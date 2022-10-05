@@ -66,6 +66,15 @@ type Portal struct {
 	currentlyTypingLock sync.Mutex
 }
 
+var (
+	_ bridge.Portal                    = (*Portal)(nil)
+	_ bridge.ReadReceiptHandlingPortal = (*Portal)(nil)
+	_ bridge.TypingPortal              = (*Portal)(nil)
+	//_ bridge.MembershipHandlingPortal = (*Portal)(nil)
+	//_ bridge.MetaHandlingPortal = (*Portal)(nil)
+	//_ bridge.DisappearingPortal = (*Portal)(nil)
+)
+
 func (portal *Portal) IsEncrypted() bool {
 	return portal.Encrypted
 }
@@ -103,8 +112,6 @@ func (portal *Portal) markSlackRead(user *User, userTeam *database.UserTeam, eve
 	userTeam.Client.MarkConversation(portal.Key.ChannelID, message.SlackID)
 	portal.log.Debugfln("Marked message %s as read by %s in portal %s", message.SlackID, user.MXID, portal.Key)
 }
-
-var _ bridge.Portal = (*Portal)(nil)
 
 var (
 	portalCreationDummyEvent = event.Type{Type: "fi.mau.dummy.portal_created", Class: event.MessageEventType}
