@@ -107,12 +107,12 @@ func NewParser(bridge *SlackBridge) *format.HTMLParser {
 
 		PillConverter: func(displayname, mxid, eventID string, _ format.Context) string {
 			if mxid[0] == '@' {
-				puppet := bridge.GetPuppetByMXID(id.UserID(mxid))
-				if puppet != nil {
-					return fmt.Sprintf("<@%s>", puppet.UserID)
+				_, user, success := bridge.ParsePuppetMXID(id.UserID(mxid))
+				if success {
+					return fmt.Sprintf("<@%s>", strings.ToUpper(user))
 				}
 			}
-			return mxid
+			return fmt.Sprintf("@%s", displayname)
 		},
 		BoldConverter:           func(text string, _ format.Context) string { return fmt.Sprintf("*%s*", text) },
 		ItalicConverter:         func(text string, _ format.Context) string { return fmt.Sprintf("_%s_", text) },

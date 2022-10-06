@@ -69,7 +69,7 @@ func (br *SlackBridge) ParsePuppetMXID(mxid id.UserID) (string, string, bool) {
 	if userIDRegex == nil {
 		pattern := fmt.Sprintf(
 			"^@%s:%s$",
-			br.Config.Bridge.FormatUsername("([A-Z0-9]+)-([A-Z0-9]+)"),
+			br.Config.Bridge.FormatUsername("([A-Za-z0-9]+)-([A-Za-z0-9]+)"),
 			br.Config.Homeserver.Domain,
 		)
 
