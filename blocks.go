@@ -132,7 +132,13 @@ func (portal *Portal) renderRichTextSectionElements(elements []slack.RichTextSec
 				htmlText.WriteString(fmt.Sprintf("#%s", e.ChannelID))
 			}
 		case *slack.RichTextSectionLinkElement:
-			htmlText.WriteString(fmt.Sprintf(`<a href="%s">%s</a>`, e.URL, html.EscapeString(html.UnescapeString(e.Text))))
+			var linkText string
+			if e.Text != "" {
+				linkText = e.Text
+			} else {
+				linkText = e.URL
+			}
+			htmlText.WriteString(fmt.Sprintf(`<a href="%s">%s</a>`, e.URL, html.EscapeString(html.UnescapeString(linkText))))
 		case *slack.RichTextSectionBroadcastElement:
 			htmlText.WriteString("@room")
 		case *slack.RichTextSectionEmojiElement:
