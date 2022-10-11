@@ -504,6 +504,7 @@ func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 		channel := channelInfo[dbPortal.Key.ChannelID]
 		if portal.MXID != "" {
 			portal.UpdateInfo(user, userTeam, &channel, force)
+			portal.ensureUserInvited(user)
 			portal.InsertUser(userTeam.Key)
 		} else {
 			portal.CreateMatrixRoom(user, userTeam, &channel, true)
