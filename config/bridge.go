@@ -30,6 +30,12 @@ import (
 	"go.mau.fi/mautrix-slack/database"
 )
 
+type DeferredConfig struct {
+	StartDaysAgo   int `yaml:"start_days_ago"`
+	MaxBatchEvents int `yaml:"max_batch_events"`
+	BatchDelay     int `yaml:"batch_delay"`
+}
+
 type BridgeConfig struct {
 	UsernameTemplate       string `yaml:"username_template"`
 	DisplaynameTemplate    string `yaml:"displayname_template"`
@@ -73,6 +79,16 @@ type BridgeConfig struct {
 	} `yaml:"provisioning"`
 
 	Permissions bridgeconfig.PermissionConfig `yaml:"permissions"`
+
+	HistorySync struct {
+		Backfill bool `yaml:"backfill"`
+
+		DoublePuppetBackfill bool `yaml:"double_puppet_backfill"`
+
+		ImmediateEvents int `yaml:"immediate_events"`
+
+		Deferred []DeferredConfig `yaml:"deferred"`
+	} `yaml:"history_sync"`
 
 	usernameTemplate       *template.Template `yaml:"-"`
 	displaynameTemplate    *template.Template `yaml:"-"`

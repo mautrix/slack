@@ -123,9 +123,54 @@ bridge:
         # Sent when joining a management room and the user is already logged in.
         welcome_connected: "Use `help` for help."
         # Sent when joining a management room and the user is not logged in.
-        welcome_unconnected: "Use `help` for help or `login` to log in."
+        welcome_unconnected: "Use `help` for help, or `login-token` or `login-password` to log in."
         # Optional extra text sent when joining a management room.
         additional_help: ""
+
+    history_sync:
+        # Enable backfilling history sync payloads from Slack using batch sending?
+        # This requires a server with MSC2716 support, which is currently an experimental feature in synapse.
+        # It can be enabled by setting experimental_features -> msc2716_enabled to true in homeserver.yaml.
+        # Note that prior to Synapse 1.49, there were some bugs with the implementation, especially if using event persistence workers.
+        # There are also still some issues in Synapse's federation implementation.
+        backfill: false
+        # Use double puppets for backfilling?
+        # In order to use this, the double puppets must be in the appservice's user ID namespace
+        # (because the bridge can't use the double puppet access token with batch sending).
+        # This only affects double puppets on the local server, double puppets on other servers will never be used.
+        double_puppet_backfill: false
+        # Number of events for immediate backfills. These backfills should generally be
+        # small and their main purpose is to populate each of the initial chats
+        # with a few messages so that you can continue conversations without
+        # losing context.
+        immediate_events: 10
+        # Settings for deferred backfills. The purpose of these backfills are
+        # to fill in the rest of the chat history that was not covered by the
+        # immediate backfills. These backfills generally should happen at a
+        # slower pace so as not to overload the homeserver.
+        # Each deferred backfill config should define a "stage" of backfill
+        # (i.e. the last week of messages). The fields are as follows:
+        # - start_days_ago: the number of days ago to start backfilling from.
+        #     To indicate the start of time, use -1. For example, for a week ago, use 7.
+        # - max_batch_events: the number of events to send per batch.
+        # - batch_delay: the number of seconds to wait before backfilling each batch.
+        deferred:
+            # Last Week
+            - start_days_ago: 7
+              max_batch_events: 20
+              batch_delay: 5
+            # Last Month
+            - start_days_ago: 30
+              max_batch_events: 50
+              batch_delay: 10
+            # Last 3 months
+            - start_days_ago: 90
+              max_batch_events: 100
+              batch_delay: 10
+            # The start of time
+            - start_days_ago: -1
+              max_batch_events: 500
+              batch_delay: 10
 
     # End-to-bridge encryption support options.
     #

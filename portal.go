@@ -392,7 +392,7 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	}
 
 	if fill {
-		go portal.FillMessages(user, userTeam, 1, "")
+		portal.BatchFillMessages(user, userTeam, portal.bridge.Config.Bridge.HistorySync.ImmediateEvents)
 	}
 
 	return nil
@@ -411,19 +411,17 @@ func (portal *Portal) getChannelMembers(userTeam *database.UserTeam, limit int) 
 
 }
 
-func (portal *Portal) FillMessages(user *User, userTeam *database.UserTeam, limit int, latest string) error {
-	messagesHandled := 0
-	earliestHandled := latest
+func (portal *Portal) BatchFillMessages(user *User, userTeam *database.UserTeam, limit int) error {
+	convertedMessages := []ConvertedSlackMessage{}
 
-	// keep fetching `limit` messages from Slack and handling the message type events until `limit` messages have been handled
 	for {
-		if messagesHandled >= limit {
+		if len(convertedMessages) >= limit {
 			break
 		}
 		messages, err := userTeam.Client.GetConversationHistory(&slack.GetConversationHistoryParameters{
 			ChannelID: portal.Key.ChannelID,
 			Limit:     limit,
-			Latest:    earliestHandled,
+			Latest:    portal.FirstSlackID,
 			Inclusive: false,
 		})
 		if err != nil {
@@ -434,35 +432,149 @@ func (portal *Portal) FillMessages(user *User, userTeam *database.UserTeam, limi
 			portal.log.Warnfln("Not enough messages in Slack to fill %d messages", limit)
 			break
 		}
+		portal.FirstSlackID = messages.Messages[len(messages.Messages)-1].Timestamp
 		portal.log.Debugfln("Received %d messages from Slack when filling", len(messages.Messages))
-		for _, message := range messages.Messages {
-			if message.Type == "message" {
-				portal.log.Debugfln("Filling in message %s", message.Timestamp)
-				messageEvent := slack.MessageEvent(message)
-				messageFilled := portal.HandleSlackMessage(user, userTeam, &messageEvent)
-				if portal.parseTimestamp(message.Timestamp).Before(portal.parseTimestamp(earliestHandled)) {
-					earliestHandled = message.Timestamp
-				}
-				if messageFilled {
-					messagesHandled += 1
-				}
-				if messagesHandled >= limit {
-					break
+		// Slack returns most recent messages first
+		for i := len(messages.Messages) - 1; i >= 0; i-- {
+			message := messages.Messages[i]
+			if message.Type == "message" && (message.SubType == "" || message.SubType == "me_message" || message.SubType == "bot_message") {
+				converted := portal.ConvertSlackMessage(userTeam, &message.Msg)
+				if converted.Event != nil || len(converted.FileAttachments) != 0 {
+					convertedMessages = append(convertedMessages, converted)
 				}
 			}
 		}
 	}
+	req := mautrix.ReqBatchSend{
+		PrevEventID:        portal.FirstEventID,
+		BatchID:            portal.NextBatchID,
+		Events:             []*event.Event{},
+		StateEventsAtStart: []*event.Event{},
+	}
+	addedMembers := make(map[id.UserID]*Puppet)
 
-	puppet := portal.bridge.GetPuppetByCustomMXID(user.MXID)
-	portal.log.Infofln("%v", puppet)
-	if puppet != nil {
+	for _, converted := range convertedMessages {
+		ts := portal.parseTimestamp(converted.SlackTimestamp).UnixMilli()
+		puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, converted.SlackAuthor)
 		puppet.UpdateInfo(userTeam, nil)
+		var puppetID id.UserID
+		if puppet == nil || puppet.MXID == "" {
+			portal.log.Warnfln("No puppet found for %s while batch filling!", converted.SlackAuthor)
+			continue
+		} else {
+			addedMembers[puppet.MXID] = puppet
+			puppetID = puppet.MXID
+		}
 		intent := puppet.IntentFor(portal)
-		last := portal.bridge.DB.Message.GetLast(portal.Key)
-		portal.log.Infofln("%v", last)
-		intent.MarkRead(portal.MXID, last.MatrixID)
+		for _, file := range converted.FileAttachments {
+			content := event.Content{
+				Parsed: file.Event,
+			}
+			t, err := portal.encrypt(intent, &content, event.EventMessage)
+			if err != nil {
+				portal.log.Errorfln("Error encrypting message for batch fill: %v", err)
+				return err
+			}
+			req.Events = append(req.Events, &event.Event{
+				Sender:    puppetID,
+				Type:      t,
+				Timestamp: ts,
+				Content:   content,
+			})
+		}
+		if converted.Event != nil {
+			content := event.Content{
+				Parsed: converted.Event,
+			}
+			t, err := portal.encrypt(intent, &content, event.EventMessage)
+			if err != nil {
+				portal.log.Errorfln("Error encrypting message for batch fill: %v", err)
+				return err
+			}
+			req.Events = append(req.Events, &event.Event{
+				Sender:    puppetID,
+				Type:      t,
+				Timestamp: ts,
+				Content:   content,
+			})
+		}
+	}
+	if len(req.Events) == 0 {
+		portal.log.Warnln("No messages to send in batch!")
+		return fmt.Errorf("no messages to send in batch")
+	}
+	if len(req.BatchID) == 0 {
+		portal.log.Debugln("Sending a dummy event to avoid forward extremity errors with backfill")
+		_, err := portal.MainIntent().SendMessageEvent(portal.MXID, event.Type{Type: "fi.mau.dummy.pre_backfill", Class: event.MessageEventType}, struct{}{})
+		if err != nil {
+			portal.log.Warnln("Error sending pre-backfill dummy event:", err)
+		}
 	}
 
+	beforeFirstMessageTimestampMillis := req.Events[0].Timestamp - 1
+
+	for _, puppet := range addedMembers {
+		if portal.bridge.Config.Homeserver.Software == bridgeconfig.SoftwareHungry {
+			// Hungryserv doesn't need state_events_at_start, it can figure out memberships automatically
+			continue
+		}
+		mxid := puppet.MXID.String()
+		content := event.MemberEventContent{
+			Membership:  event.MembershipJoin,
+			Displayname: puppet.Name,
+			AvatarURL:   puppet.AvatarURL.CUString(),
+		}
+		inviteContent := content
+		inviteContent.Membership = event.MembershipInvite
+		req.StateEventsAtStart = append(req.StateEventsAtStart, &event.Event{
+			Type:      event.StateMember,
+			Sender:    portal.MainIntent().UserID,
+			StateKey:  &mxid,
+			Timestamp: beforeFirstMessageTimestampMillis,
+			Content:   event.Content{Parsed: &inviteContent},
+		}, &event.Event{
+			Type:      event.StateMember,
+			Sender:    puppet.MXID,
+			StateKey:  &mxid,
+			Timestamp: beforeFirstMessageTimestampMillis,
+			Content:   event.Content{Parsed: &content},
+		})
+	}
+
+	resp, err := portal.MainIntent().BatchSend(portal.MXID, &req)
+	if err != nil {
+		portal.log.Errorfln("Error sending message batch to Matrix: %v", err)
+		return err
+	}
+
+	var idx int
+	// This is a dubious way to match up the received event IDs back to the converted slack messages
+	for _, converted := range convertedMessages {
+		for _, file := range converted.FileAttachments {
+			if idx >= len(resp.EventIDs) {
+				portal.log.Errorln("Server returned fewer event IDs than events in our batch!")
+				return fmt.Errorf("server returned fewer event IDs than events in our batch")
+			}
+			attachment := portal.bridge.DB.Attachment.New()
+			attachment.Channel = portal.Key
+			attachment.SlackFileID = file.SlackFileID
+			attachment.SlackMessageID = converted.SlackTimestamp
+			attachment.MatrixEventID = resp.EventIDs[idx]
+			attachment.Insert()
+			idx += 1
+		}
+		if converted.Event != nil {
+			if idx >= len(resp.EventIDs) {
+				portal.log.Errorln("Server returned fewer event IDs than events in our batch!")
+				return fmt.Errorf("server returned fewer event IDs than events in our batch")
+			}
+			portal.markMessageHandled(converted.SlackTimestamp, "", resp.EventIDs[idx], converted.SlackAuthor)
+			idx += 1
+		}
+	}
+
+	portal.NextBatchID = resp.NextBatchID
+	portal.Update()
 	return nil
 }
 
@@ -700,13 +812,23 @@ func (portal *Portal) convertMatrixMessage(ctx context.Context, sender *User, us
 			threadTs = rootMessage.SlackID
 		}
 	} else if threadTs == "" && content.RelatesTo != nil && content.RelatesTo.InReplyTo != nil { // if the first method failed, try via Matrix reply
+		var slackMessageID string
+		var slackThreadID string
 		parentMessage := portal.bridge.DB.Message.GetByMatrixID(portal.Key, content.GetReplyTo())
 		if parentMessage != nil {
-			if parentMessage.SlackThreadID != "" {
-				threadTs = parentMessage.SlackThreadID
-			} else {
-				threadTs = parentMessage.SlackID
+			slackMessageID = parentMessage.SlackID
+			slackThreadID = parentMessage.SlackThreadID
+		} else {
+			parentAttachment := portal.bridge.DB.Attachment.GetByMatrixID(portal.Key, content.GetReplyTo())
+			if parentAttachment != nil {
+				slackMessageID = parentAttachment.SlackMessageID
+				slackThreadID = parentAttachment.SlackThreadID
 			}
+		}
+		if slackThreadID != "" {
+			threadTs = slackThreadID
+		} else {
+			threadTs = slackMessageID
 		}
 	}
 
@@ -966,7 +1088,7 @@ func (portal *Portal) leave(userTeam *database.UserTeam) {
 		return
 	}
 
-	intent := portal.bridge.GetPuppetByMXID(userTeam.GetMXID()).IntentFor(portal)
+	intent := portal.bridge.GetPuppetByID(portal.Key.TeamID, userTeam.Key.SlackID).IntentFor(portal)
 	intent.LeaveRoom(portal.MXID)
 }
 
@@ -998,7 +1120,7 @@ func (portal *Portal) cleanupIfEmpty() {
 }
 
 func (portal *Portal) cleanup(puppetsOnly bool) {
-	if portal.MXID != "" {
+	if portal.MXID == "" {
 		return
 	}
 
@@ -1332,42 +1454,54 @@ func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, me
 	return meta
 }
 
+type ConvertedSlackFile struct {
+	Event       *event.MessageEventContent
+	SlackFileID string
+}
+
+type ConvertedSlackMessage struct {
+	FileAttachments []ConvertedSlackFile
+	Event           *event.MessageEventContent
+	SlackTimestamp  string
+	SlackAuthor     string
+}
+
 // Returns bool: whether or not this resulted in a Matrix message in the room
-func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam, msg *slack.MessageEvent) bool {
+func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam, msg *slack.MessageEvent) {
 	portal.slackMessageLock.Lock()
 	defer portal.slackMessageLock.Unlock()
 
 	if msg.Msg.Type != "message" {
 		portal.log.Warnln("ignoring unknown message type:", msg.Msg.Type)
-		return false
+		return
 	}
 	if msg.Msg.IsEphemeral {
 		portal.log.Debugfln("Ignoring ephemeral message")
-		return false
+		return
 	}
 
 	if portal.MXID == "" {
 		channel, err := userTeam.Client.GetConversationInfo(msg.Channel, true)
 		if err != nil {
 			portal.log.Errorln("failed to lookup channel info:", err)
-			return false
+			return
 		}
 
 		portal.log.Debugln("Creating Matrix room from incoming message")
 		if err := portal.CreateMatrixRoom(user, userTeam, channel, false); err != nil {
 			portal.log.Errorln("Failed to create portal room:", err)
-			return false
+			return
 		}
 	}
 
 	existing := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Msg.Timestamp)
 	if existing != nil && msg.Msg.SubType != "message_changed" { // Slack reuses the same message ID on message edits
 		portal.log.Debugln("Dropping duplicate message:", msg.Msg.Timestamp)
-		return false
+		return
 	}
 	if msg.Msg.SubType == "message_changed" && existing == nil {
 		portal.log.Debugfln("Not sending edit for nonexistent message %s", msg.Msg.Timestamp)
-		return false
+		return
 	}
 
 	if msg.Msg.User == "" {
@@ -1378,10 +1512,9 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 
 	switch msg.Msg.SubType {
 	case "", "me_message", "bot_message": // Regular messages and /me
-		portal.HandleSlackFiles(user, userTeam, msg)
-		return portal.HandleSlackTextMessage(user, userTeam, &msg.Msg, nil)
+		portal.HandleSlackNormalMessage(user, userTeam, &msg.Msg, nil)
 	case "message_changed":
-		return portal.HandleSlackTextMessage(user, userTeam, msg.SubMessage, existing)
+		portal.HandleSlackNormalMessage(user, userTeam, msg.SubMessage, existing)
 	case "channel_topic", "channel_purpose", "channel_name", "group_topic", "group_purpose", "group_name":
 		portal.UpdateInfo(user, userTeam, nil, false)
 		portal.log.Debugfln("Received %s update, updating portal name and topic", msg.Msg.SubType)
@@ -1414,7 +1547,7 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 	default:
 		portal.log.Warnfln("Received unknown message subtype %s", msg.Msg.SubType)
 	}
-	return false
+	return
 }
 
 func (portal *Portal) addThreadMetadata(content *event.MessageEventContent, threadTs string) (hasThread bool, hasReply bool) {
@@ -1444,74 +1577,16 @@ func (portal *Portal) addThreadMetadata(content *event.MessageEventContent, thre
 	return false, false
 }
 
-func (portal *Portal) HandleSlackFiles(user *User, userTeam *database.UserTeam, msg *slack.MessageEvent) {
-	var puppet *Puppet
+func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slack.Msg) (converted ConvertedSlackMessage) {
 	if msg.User != "" {
-		puppet = portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.User)
-		puppet.UpdateInfo(userTeam, nil)
+		converted.SlackAuthor = msg.User
 	} else if msg.BotID != "" {
-		puppet = portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.BotID)
-		puppet.UpdateInfoBot(userTeam)
+		converted.SlackAuthor = msg.BotID
 	} else {
-		portal.log.Errorfln("Couldn't bridge files from message %s: no user or bot ID", msg.Timestamp)
+		portal.log.Errorfln("Couldn't convert text message %s: no user or bot ID in message", msg.Timestamp)
 		return
 	}
-	intent := puppet.IntentFor(portal)
-
-	ts := portal.parseTimestamp(msg.Msg.Timestamp)
-
-	for _, file := range msg.Msg.Files {
-		content := portal.renderSlackFile(file)
-		portal.addThreadMetadata(&content, msg.Msg.ThreadTimestamp)
-		var data bytes.Buffer
-		err := userTeam.Client.GetFile(file.URLPrivateDownload, &data)
-		if err != nil {
-			portal.log.Errorfln("Error downloading Slack file %s: %v", file.ID, err)
-			continue
-		}
-		err = portal.uploadMedia(intent, data.Bytes(), &content)
-		if err != nil {
-			if errors.Is(err, mautrix.MTooLarge) {
-				portal.log.Errorfln("File %s too large for Matrix server: %v", file.ID, err)
-				continue
-			} else if httpErr, ok := err.(mautrix.HTTPError); ok && httpErr.IsStatus(413) {
-				portal.log.Errorfln("Proxy rejected too large file %s: %v", file.ID, err)
-				continue
-			} else {
-				portal.log.Errorfln("Error uploading file %s to Matrix: %v", file.ID, err)
-				continue
-			}
-		}
-		resp, err := portal.sendMatrixMessage(intent, event.EventMessage, &content, nil, ts.UnixMilli())
-		if err != nil {
-			portal.log.Warnfln("Failed to send media message %s to matrix: %v", msg.Msg.Timestamp, err)
-			continue
-		}
-		attachment := portal.bridge.DB.Attachment.New()
-		attachment.Channel = portal.Key
-		attachment.SlackFileID = file.ID
-		attachment.SlackMessageID = msg.Timestamp
-		attachment.MatrixEventID = resp.EventID
-		attachment.Insert()
-	}
-}
-
-func (portal *Portal) HandleSlackTextMessage(user *User, userTeam *database.UserTeam, msg *slack.Msg, editExisting *database.Message) bool {
-	var puppet *Puppet
-	if msg.User != "" {
-		puppet = portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.User)
-		puppet.UpdateInfo(userTeam, nil)
-	} else if msg.BotID != "" {
-		puppet = portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.BotID)
-		puppet.UpdateInfoBot(userTeam)
-	} else {
-		portal.log.Errorfln("Couldn't bridge text message %s: no user or bot ID", msg.Timestamp)
-		return false
-	}
-	intent := puppet.IntentFor(portal)
-
-	ts := portal.parseTimestamp(msg.Timestamp)
-
+	converted.SlackTimestamp = msg.Timestamp
 	var text string
 	if msg.Text != "" {
 		text = msg.Text
@@ -1527,42 +1602,103 @@ func (portal *Portal) HandleSlackTextMessage(user *User, userTeam *database.User
 		}
 	}
 
-	var content *event.MessageEventContent
-
 	if len(msg.Blocks.BlockSet) != 0 {
 		var err error
-		content, err = portal.SlackBlocksToMatrix(msg.Blocks)
+		converted.Event, err = portal.SlackBlocksToMatrix(msg.Blocks)
 		if err != nil {
 			portal.log.Warnfln("Error rendering Slack blocks: %v", err)
-			content = nil
+			converted.Event = nil
 		}
 	} else if text != "" {
-		content = portal.renderSlackMarkdown(text)
+		converted.Event = portal.renderSlackMarkdown(text)
 	}
 
-	if content != nil {
+	for _, file := range msg.Files {
+		convertedFile := ConvertedSlackFile{
+			SlackFileID: file.ID,
+		}
+		content := portal.renderSlackFile(file)
+		portal.addThreadMetadata(&content, msg.ThreadTimestamp)
+		var data bytes.Buffer
+		err := userTeam.Client.GetFile(file.URLPrivateDownload, &data)
+		if err != nil {
+			portal.log.Errorfln("Error downloading Slack file %s: %v", file.ID, err)
+			continue
+		}
+		err = portal.uploadMedia(portal.MainIntent(), data.Bytes(), &content)
+		if err != nil {
+			if errors.Is(err, mautrix.MTooLarge) {
+				portal.log.Errorfln("File %s too large for Matrix server: %v", file.ID, err)
+				continue
+			} else if httpErr, ok := err.(mautrix.HTTPError); ok && httpErr.IsStatus(413) {
+				portal.log.Errorfln("Proxy rejected too large file %s: %v", file.ID, err)
+				continue
+			} else {
+				portal.log.Errorfln("Error uploading file %s to Matrix: %v", file.ID, err)
+				continue
+			}
+		}
+		convertedFile.Event = &content
+		converted.FileAttachments = append(converted.FileAttachments, convertedFile)
+	}
+
+	return converted
+}
+
+func (portal *Portal) HandleSlackNormalMessage(user *User, userTeam *database.UserTeam, msg *slack.Msg, editExisting *database.Message) {
+	ts := portal.parseTimestamp(msg.Timestamp)
+	e := portal.ConvertSlackMessage(userTeam, msg)
+
+	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, e.SlackAuthor)
+	if puppet == nil {
+		portal.log.Errorfln("Can't find puppet for %s", e.SlackAuthor)
+		return
+	}
+	intent := puppet.IntentFor(portal)
+
+	for _, file := range e.FileAttachments {
+		if editExisting == nil {
+			portal.addThreadMetadata(file.Event, msg.ThreadTimestamp)
+		}
+
+		resp, err := portal.sendMatrixMessage(intent, event.EventMessage, file.Event, nil, ts.UnixMilli())
+		if err != nil {
+			portal.log.Warnfln("Failed to send media message %s to matrix: %v", ts, err)
+			continue
+		}
+		go portal.sendDeliveryReceipt(resp.EventID)
+		attachment := portal.bridge.DB.Attachment.New()
+		attachment.Channel = portal.Key
+		attachment.SlackFileID = file.SlackFileID
+		attachment.SlackMessageID = msg.Timestamp
+		attachment.MatrixEventID = resp.EventID
+		attachment.SlackThreadID = msg.ThreadTimestamp
+		attachment.Insert()
+	}
+
+	if e.Event != nil {
 		// set m.emote if it's a /me message
 		if msg.SubType == "me_message" {
-			content.MsgType = event.MsgEmote
+			e.Event.MsgType = event.MsgEmote
 		}
 
 		if editExisting != nil {
-			content.SetEdit(editExisting.MatrixID)
+			e.Event.SetEdit(editExisting.MatrixID)
 		} else {
-			portal.addThreadMetadata(content, msg.ThreadTimestamp)
+			portal.addThreadMetadata(e.Event, msg.ThreadTimestamp)
 		}
 
-		resp, err := portal.sendMatrixMessage(intent, event.EventMessage, content, nil, ts.UnixMilli())
+		resp, err := portal.sendMatrixMessage(intent, event.EventMessage, e.Event, nil, ts.UnixMilli())
 		if err != nil {
 			portal.log.Warnfln("Failed to send message %s to matrix: %v", msg.Timestamp, err)
-			return false
+			return
 		}
 
-		portal.markMessageHandled(msg.Timestamp, msg.ThreadTimestamp, resp.EventID, msg.User)
+		portal.markMessageHandled(msg.Timestamp, msg.ThreadTimestamp, resp.EventID, e.SlackAuthor)
 		go portal.sendDeliveryReceipt(resp.EventID)
-		return true
+		return
 	}
-	return false
+	return
 }
 
 func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTeam, msg *slack.ReactionAddedEvent) {

@@ -57,6 +57,10 @@ func DoUpgrade(helper *up.Helper) {
 	helper.Copy(up.Bool, "bridge", "encryption", "rotation", "enable_custom")
 	helper.Copy(up.Int, "bridge", "encryption", "rotation", "milliseconds")
 	helper.Copy(up.Int, "bridge", "encryption", "rotation", "messages")
+	helper.Copy(up.Bool, "bridge", "history_sync", "backfill")
+	helper.Copy(up.Bool, "bridge", "history_sync", "double_puppet_backfill")
+	helper.Copy(up.Int, "bridge", "history_sync", "immediate_events")
+	helper.Copy(up.List, "bridge", "history_sync", "deferred")
 
 	helper.Copy(up.Str, "bridge", "provisioning", "prefix")
 	if secret, ok := helper.Get(up.Str, "bridge", "provisioning", "shared_secret"); !ok || secret == "generate" {
