@@ -17,6 +17,7 @@
 package main
 
 import (
+	"fmt"
 	"net/url"
 	"strings"
 
@@ -33,6 +34,7 @@ type WrappedCommandEvent struct {
 func (br *SlackBridge) RegisterCommands() {
 	proc := br.CommandProcessor.(*commands.Processor)
 	proc.AddHandlers(
+		cmdPing,
 		cmdLoginPassword,
 		cmdLoginToken,
 		cmdLogout,
@@ -51,6 +53,33 @@ func wrapCommand(handler func(*WrappedCommandEvent)) func(*commands.Event) {
 		br := ce.Bridge.Child.(*SlackBridge)
 		handler(&WrappedCommandEvent{ce, br, user, portal})
 	}
+}
+
+var cmdPing = &commands.FullHandler{
+	Func: wrapCommand(fnPing),
+	Name: "ping",
+	Help: commands.HelpMeta{
+		Section:     commands.HelpSectionAuth,
+		Description: "Check which teams you're currently signed into",
+	},
+}
+
+func fnPing(ce *WrappedCommandEvent) {
+	if len(ce.User.Teams) == 0 {
+		ce.Reply("You are not signed in to any Slack teams.")
+		return
+	}
+	var text strings.Builder
+	text.WriteString("You are signed in to the following Slack teams:\n")
+	for _, team := range ce.User.Teams {
+		teamInfo := ce.Bridge.DB.TeamInfo.GetBySlackTeam(team.Key.TeamID)
+		text.WriteString(fmt.Sprintf("%s - %s - %s.slack.com", teamInfo.TeamID, teamInfo.TeamName, teamInfo.TeamDomain))
+		if team.RTM == nil {
+			text.WriteString(" (Error: not connected to Slack)")
+		}
+		text.WriteRune('\n')
+	}
+	ce.Reply(text.String())
 }
 
 var cmdLoginPassword = &commands.FullHandler{
