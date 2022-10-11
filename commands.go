@@ -18,6 +18,7 @@ package main
 
 import (
 	"net/url"
+	"strings"
 
 	"maunium.net/go/mautrix/bridge/commands"
 )
@@ -128,7 +129,8 @@ func fnLogout(ce *WrappedCommandEvent) {
 
 		return
 	}
-	userTeam := ce.User.bridge.DB.UserTeam.GetBySlackTeam(ce.User.MXID, ce.Args[0], ce.Args[1])
+	domain := strings.TrimSuffix(ce.Args[1], ".slack.com")
+	userTeam := ce.User.bridge.DB.UserTeam.GetBySlackDomain(ce.User.MXID, ce.Args[0], domain)
 
 	err := ce.User.LogoutUserTeam(userTeam)
 	if err != nil {

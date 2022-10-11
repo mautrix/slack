@@ -344,6 +344,8 @@ func (user *User) LogoutUserTeam(userTeam *database.UserTeam) error {
 		return ErrNotLoggedIn
 	}
 
+	user.leavePortals(userTeam)
+
 	puppet := user.bridge.GetPuppetByID(userTeam.Key.TeamID, userTeam.Key.SlackID)
 	if puppet.CustomMXID != "" {
 		err := puppet.SwitchCustomMXID("", "")
@@ -374,6 +376,12 @@ func (user *User) LogoutUserTeam(userTeam *database.UserTeam) error {
 	user.Update()
 
 	return nil
+}
+
+func (user *User) leavePortals(userTeam *database.UserTeam) {
+	for _, portal := range user.bridge.GetAllPortalsForUserTeam(userTeam.Key) {
+		portal.leave(userTeam)
+	}
 }
 
 func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
@@ -453,7 +461,7 @@ func (user *User) connectTeam(userTeam *database.UserTeam) error {
 	user.log.Infofln("Connecting %s to Slack userteam %s (%s)", user.MXID, userTeam.Key, userTeam.TeamName)
 	slackOptions := []slack.Option{
 		slack.OptionLog(SlackgoLogger{user.log.Sub(fmt.Sprintf("SlackGo/%s", userTeam.Key))}),
-		slack.OptionDebug(user.bridge.Config.Logging.PrintLevel <= 0),
+		//slack.OptionDebug(user.bridge.Config.Logging.PrintLevel <= 0),
 	}
 	if userTeam.CookieToken != "" {
 		slackOptions = append(slackOptions, slack.OptionCookie("d", userTeam.CookieToken))

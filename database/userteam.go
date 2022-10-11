@@ -40,10 +40,11 @@ func (utq *UserTeamQuery) New() *UserTeam {
 	}
 }
 
-func (utq *UserTeamQuery) GetBySlackTeam(userID id.UserID, email, team string) *UserTeam {
-	query := `SELECT mxid, slack_email, slack_id, team_name, team_id, token, cookie_token FROM user_team WHERE mxid=$1 AND slack_email=$2 AND team_name=$3`
+func (utq *UserTeamQuery) GetBySlackDomain(userID id.UserID, email, domain string) *UserTeam {
+	query := `SELECT mxid, slack_email, slack_id, team_name, team_id, token, cookie_token FROM user_team
+	WHERE mxid=$1 AND slack_email=$2 AND team_id=(SELECT team_id FROM teaminfo WHERE team_domain=$3)`
 
-	row := utq.db.QueryRow(query, userID, email, team)
+	row := utq.db.QueryRow(query, userID, email, domain)
 	if row == nil {
 		return nil
 	}

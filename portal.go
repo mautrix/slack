@@ -961,15 +961,13 @@ func (portal *Portal) HandleMatrixLeave(brSender bridge.User) {
 	portal.cleanupIfEmpty()
 }
 
-func (portal *Portal) leave(sender *User) {
+func (portal *Portal) leave(userTeam *database.UserTeam) {
 	if portal.MXID == "" {
 		return
 	}
 
-	panic("not implemented")
-
-	// intent := portal.bridge.GetPuppetByID(sender.ID).IntentFor(portal)
-	// intent.LeaveRoom(portal.MXID)
+	intent := portal.bridge.GetPuppetByMXID(userTeam.GetMXID()).IntentFor(portal)
+	intent.LeaveRoom(portal.MXID)
 }
 
 func (portal *Portal) delete() {
