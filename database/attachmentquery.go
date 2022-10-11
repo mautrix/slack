@@ -28,7 +28,7 @@ type AttachmentQuery struct {
 
 const (
 	attachmentSelect = "SELECT team_id, channel_id, " +
-		" slack_message_id, slack_file_id, matrix_event_id" +
+		" slack_message_id, slack_file_id, matrix_event_id, slack_thread_id" +
 		" FROM attachment"
 )
 

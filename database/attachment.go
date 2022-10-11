@@ -35,13 +35,14 @@ type Attachment struct {
 	SlackMessageID string
 	SlackFileID    string
 	MatrixEventID  id.EventID
+	SlackThreadID  string
 }
 
 func (a *Attachment) Scan(row dbutil.Scannable) *Attachment {
 	err := row.Scan(
 		&a.Channel.TeamID, &a.Channel.ChannelID,
 		&a.SlackMessageID, &a.SlackFileID,
-		&a.MatrixEventID)
+		&a.MatrixEventID, &a.SlackThreadID)
 
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -57,13 +58,13 @@ func (a *Attachment) Scan(row dbutil.Scannable) *Attachment {
 func (a *Attachment) Insert() {
 	query := "INSERT INTO attachment" +
 		" (team_id, channel_id, slack_message_id, slack_file_id, " +
-		" matrix_event_id) VALUES ($1, $2, $3, $4, $5);"
+		" matrix_event_id, slack_thread_id) VALUES ($1, $2, $3, $4, $5, $6);"
 
 	_, err := a.db.Exec(
 		query,
 		a.Channel.TeamID, a.Channel.ChannelID,
 		a.SlackMessageID, a.SlackFileID,
-		a.MatrixEventID,
+		a.MatrixEventID, a.SlackThreadID,
 	)
 
 	if err != nil {

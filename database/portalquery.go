@@ -25,7 +25,7 @@ const (
 	portalSelect = "SELECT team_id, channel_id, mxid, type, " +
 		" dm_user_id, plain_name, name, name_set, topic, topic_set," +
 		" avatar, avatar_url, avatar_set, first_event_id," +
-		" encrypted FROM portal"
+		" encrypted, next_batch_id, first_slack_id FROM portal"
 )
 
 type PortalQuery struct {

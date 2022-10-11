@@ -68,15 +68,17 @@ type Portal struct {
 	AvatarSet bool
 
 	FirstEventID id.EventID
+	NextBatchID  id.BatchID
+	FirstSlackID string
 }
 
 func (p *Portal) Scan(row dbutil.Scannable) *Portal {
-	var mxid, dmUserID, avatarURL, firstEventID sql.NullString
+	var mxid, dmUserID, avatarURL, firstEventID, nextBatchID, firstSlackID sql.NullString
 
 	err := row.Scan(&p.Key.TeamID, &p.Key.ChannelID, &mxid,
 		&p.Type, &dmUserID, &p.PlainName, &p.Name, &p.NameSet, &p.Topic,
 		&p.TopicSet, &p.Avatar, &avatarURL, &p.AvatarSet, &firstEventID,
-		&p.Encrypted)
+		&p.Encrypted, &nextBatchID, &firstSlackID)
 
 	if err != nil {
 		if err != sql.ErrNoRows {
@@ -90,6 +92,8 @@ func (p *Portal) Scan(row dbutil.Scannable) *Portal {
 	p.DMUserID = dmUserID.String
 	p.AvatarURL, _ = id.ParseContentURI(avatarURL.String)
 	p.FirstEventID = id.EventID(firstEventID.String)
+	p.NextBatchID = id.BatchID(nextBatchID.String)
+	p.FirstSlackID = firstSlackID.String
 
 	return p
 }
@@ -106,13 +110,13 @@ func (p *Portal) Insert() {
 	query := "INSERT INTO portal" +
 		" (team_id, channel_id, mxid, type, dm_user_id, plain_name," +
 		" name, name_set, topic, topic_set, avatar, avatar_url, avatar_set," +
-		" first_event_id, encrypted)" +
-		" VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"
+		" first_event_id, encrypted, next_batch_id, first_slack_id)" +
+		" VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"
 
 	_, err := p.db.Exec(query, p.Key.TeamID, p.Key.ChannelID,
 		p.mxidPtr(), p.Type, p.DMUserID, p.PlainName, p.Name, p.NameSet,
 		p.Topic, p.TopicSet, p.Avatar, p.AvatarURL.String(), p.AvatarSet,
-		p.FirstEventID.String(), p.Encrypted)
+		p.FirstEventID.String(), p.Encrypted, p.NextBatchID.String(), p.FirstSlackID)
 
 	if err != nil {
 		p.log.Warnfln("Failed to insert %s: %v", p.Key, err)
@@ -123,12 +127,13 @@ func (p *Portal) Update() {
 	query := "UPDATE portal SET" +
 		" mxid=$1, type=$2, dm_user_id=$3, plain_name=$4, name=$5, name_set=$6," +
 		" topic=$7, topic_set=$8, avatar=$9, avatar_url=$10, avatar_set=$11," +
-		" first_event_id=$12, encrypted=$13" +
-		" WHERE team_id=$14 AND channel_id=$15"
+		" first_event_id=$12, encrypted=$13, next_batch_id=$14, first_slack_id=$15" +
+		" WHERE team_id=$16 AND channel_id=$17"
 
 	_, err := p.db.Exec(query, p.mxidPtr(), p.Type, p.DMUserID, p.PlainName,
 		p.Name, p.NameSet, p.Topic, p.TopicSet, p.Avatar, p.AvatarURL.String(),
-		p.AvatarSet, p.FirstEventID.String(), p.Encrypted, p.Key.TeamID, p.Key.ChannelID)
+		p.AvatarSet, p.FirstEventID.String(), p.Encrypted, p.NextBatchID.String(), p.FirstSlackID,
+		p.Key.TeamID, p.Key.ChannelID)
 
 	if err != nil {
 		p.log.Warnfln("Failed to update %s: %v", p.Key, err)
