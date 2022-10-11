@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"html"
 	"io/ioutil"
@@ -47,8 +46,6 @@ func (portal *Portal) renderImageBlock(block slack.ImageBlock) (*event.MessageEv
 		portal.log.Errorfln("Error uploading media: %v", err)
 		return nil, err
 	}
-	logtext, _ := json.Marshal(content)
-	portal.log.Infofln("%s", logtext)
 	return &content, nil
 }
 
@@ -147,7 +144,6 @@ func (portal *Portal) renderRichTextSectionElements(elements []slack.RichTextSec
 				for _, codepoint := range codepoints {
 					codepointInt, _ := strconv.ParseInt(codepoint, 16, 32)
 					unquoted := string(rune(codepointInt))
-					portal.log.Infoln(unquoted)
 					htmlText.WriteString(unquoted)
 				}
 			} else {
