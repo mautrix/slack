@@ -53,8 +53,10 @@ type Portal struct {
 	bridge *SlackBridge
 	log    log.Logger
 
-	roomCreateLock sync.Mutex
-	encryptLock    sync.Mutex
+	roomCreateLock          sync.Mutex
+	encryptLock             sync.Mutex
+	backfillLock            sync.Mutex
+	latestEventBackfillLock sync.Mutex
 
 	matrixMessages chan portalMatrixMessage
 
@@ -70,7 +72,7 @@ func (portal *Portal) IsEncrypted() bool {
 
 func (portal *Portal) MarkEncrypted() {
 	portal.Encrypted = true
-	portal.Update()
+	portal.Update(nil)
 }
 
 func (portal *Portal) ReceiveMatrixEvent(user bridge.User, evt *event.Event) {
@@ -346,7 +348,7 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	portal.bridge.portalsLock.Lock()
 	portal.bridge.portalsByMXID[portal.MXID] = portal
 	portal.bridge.portalsLock.Unlock()
-	portal.Update()
+	portal.Update(nil)
 
 	portal.InsertUser(userTeam.Key)
 
@@ -388,12 +390,14 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		portal.log.Errorln("Failed to send dummy event to mark portal creation:", err)
 	} else {
 		portal.FirstEventID = firstEventResp.EventID
-		portal.Update()
+		portal.Update(nil)
 	}
 
 	if fill {
-		portal.BatchFillMessages(user, userTeam, portal.bridge.Config.Bridge.HistorySync.ImmediateEvents)
+		portal.log.Debugln("Enqueueing backfills")
+		portal.bridge.EnqueueImmedateBackfills([]*Portal{portal})
 	}
+	portal.bridge.EnqueueDeferredBackfills([]*Portal{portal})
 
 	return nil
 }
@@ -454,7 +458,7 @@ func (portal *Portal) BatchFillMessages(user *User, userTeam *database.UserTeam,
 	addedMembers := make(map[id.UserID]*Puppet)
 
 	for _, converted := range convertedMessages {
-		ts := portal.parseTimestamp(converted.SlackTimestamp).UnixMilli()
+		ts := parseSlackTimestamp(converted.SlackTimestamp).UnixMilli()
 		puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, converted.SlackAuthor)
 		puppet.UpdateInfo(userTeam, nil)
 		var puppetID id.UserID
@@ -574,7 +578,7 @@ func (portal *Portal) BatchFillMessages(user *User, userTeam *database.UserTeam,
 	}
 
 	portal.NextBatchID = resp.NextBatchID
-	portal.Update()
+	portal.Update(nil)
 	return nil
 }
 
@@ -1183,13 +1187,11 @@ func (portal *Portal) getMatrixUsers() ([]id.UserID, error) {
 	return users, nil
 }
 
-func (portal *Portal) parseTimestamp(timestamp string) time.Time {
+func parseSlackTimestamp(timestamp string) time.Time {
 	parts := strings.Split(timestamp, ".")
 
 	seconds, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
-		portal.log.Warnfln("failed to parse timestamp %s, using Now()", timestamp)
-
 		return time.Now().UTC()
 	}
 
@@ -1197,7 +1199,6 @@ func (portal *Portal) parseTimestamp(timestamp string) time.Time {
 	if len(parts) > 1 {
 		nsec, err := strconv.ParseInt(parts[1], 10, 64)
 		if err != nil {
-			portal.log.Warnfln("failed to parse nanoseconds %s, using 0", parts[1])
 			nanoSeconds = 0
 		} else {
 			nanoSeconds = nsec
@@ -1448,7 +1449,7 @@ func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, me
 
 	if changed || force {
 		portal.UpdateBridgeInfo()
-		portal.Update()
+		portal.Update(nil)
 	}
 
 	return meta
@@ -1646,7 +1647,7 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 }
 
 func (portal *Portal) HandleSlackNormalMessage(user *User, userTeam *database.UserTeam, msg *slack.Msg, editExisting *database.Message) {
-	ts := portal.parseTimestamp(msg.Timestamp)
+	ts := parseSlackTimestamp(msg.Timestamp)
 	e := portal.ConvertSlackMessage(userTeam, msg)
 
 	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, e.SlackAuthor)
@@ -1744,7 +1745,7 @@ func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTea
 		EventID: targetMessage.MatrixID,
 		Key:     emoji,
 	}
-	resp, err := intent.SendMassagedMessageEvent(portal.MXID, event.EventReaction, &content, portal.parseTimestamp(msg.EventTimestamp).UnixMilli())
+	resp, err := intent.SendMassagedMessageEvent(portal.MXID, event.EventReaction, &content, parseSlackTimestamp(msg.EventTimestamp).UnixMilli())
 	if err != nil {
 		portal.log.Errorfln("Failed to bridge reaction: %v", err)
 		return

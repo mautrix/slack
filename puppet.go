@@ -280,7 +280,7 @@ func (puppet *Puppet) updatePortalAvatar() {
 
 		portal.AvatarURL = puppet.AvatarURL
 		portal.Avatar = puppet.Avatar
-		portal.Update()
+		portal.Update(nil)
 	})
 
 }
@@ -322,7 +322,7 @@ func (puppet *Puppet) UpdateName(newName string) bool {
 	} else {
 		go puppet.updatePortalMeta(func(portal *Portal) {
 			if portal.UpdateNameDirect(puppet.Name) {
-				portal.Update()
+				portal.Update(nil)
 				portal.UpdateBridgeInfo()
 			}
 		})
@@ -356,7 +356,7 @@ func (puppet *Puppet) UpdateAvatar(url string) bool {
 	} else {
 		go puppet.updatePortalMeta(func(portal *Portal) {
 			if portal.UpdateAvatarFromPuppet(puppet) {
-				portal.Update()
+				portal.Update(nil)
 				portal.UpdateBridgeInfo()
 			}
 		})

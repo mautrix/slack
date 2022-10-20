@@ -123,17 +123,24 @@ func (p *Portal) Insert() {
 	}
 }
 
-func (p *Portal) Update() {
+func (p *Portal) Update(txn dbutil.Transaction) {
 	query := "UPDATE portal SET" +
 		" mxid=$1, type=$2, dm_user_id=$3, plain_name=$4, name=$5, name_set=$6," +
 		" topic=$7, topic_set=$8, avatar=$9, avatar_url=$10, avatar_set=$11," +
 		" first_event_id=$12, encrypted=$13, next_batch_id=$14, first_slack_id=$15" +
 		" WHERE team_id=$16 AND channel_id=$17"
 
-	_, err := p.db.Exec(query, p.mxidPtr(), p.Type, p.DMUserID, p.PlainName,
+	args := []interface{}{p.mxidPtr(), p.Type, p.DMUserID, p.PlainName,
 		p.Name, p.NameSet, p.Topic, p.TopicSet, p.Avatar, p.AvatarURL.String(),
 		p.AvatarSet, p.FirstEventID.String(), p.Encrypted, p.NextBatchID.String(), p.FirstSlackID,
-		p.Key.TeamID, p.Key.ChannelID)
+		p.Key.TeamID, p.Key.ChannelID}
+
+	var err error
+	if txn != nil {
+		_, err = txn.Exec(query, args...)
+	} else {
+		_, err = p.db.Exec(query, args...)
+	}
 
 	if err != nil {
 		p.log.Warnfln("Failed to update %s: %v", p.Key, err)

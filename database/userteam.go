@@ -40,9 +40,10 @@ func (utq *UserTeamQuery) New() *UserTeam {
 	}
 }
 
+const userTeamSelect = "SELECT ut.mxid, ut.slack_email, ut.slack_id, ut.team_name, ut.team_id, ut.token, ut.cookie_token FROM user_team ut "
+
 func (utq *UserTeamQuery) GetBySlackDomain(userID id.UserID, email, domain string) *UserTeam {
-	query := `SELECT mxid, slack_email, slack_id, team_name, team_id, token, cookie_token FROM user_team
-	WHERE mxid=$1 AND slack_email=$2 AND team_id=(SELECT team_id FROM team_info WHERE team_domain=$3)`
+	query := userTeamSelect + "WHERE ut.mxid=$1 AND ut.slack_email=$2 AND ut.team_id=(SELECT team_id FROM team_info WHERE team_domain=$3)"
 
 	row := utq.db.QueryRow(query, userID, email, domain)
 	if row == nil {
@@ -53,7 +54,7 @@ func (utq *UserTeamQuery) GetBySlackDomain(userID id.UserID, email, domain strin
 }
 
 func (utq *UserTeamQuery) GetAllByMXIDWithToken(userID id.UserID) []*UserTeam {
-	query := `SELECT mxid, slack_email, slack_id, team_name, team_id, token, cookie_token FROM user_team WHERE mxid=$1 AND token IS NOT NULL`
+	query := userTeamSelect + "WHERE ut.mxid=$1 AND ut.token IS NOT NULL"
 
 	rows, err := utq.db.Query(query, userID)
 	if err != nil || rows == nil {
@@ -71,7 +72,7 @@ func (utq *UserTeamQuery) GetAllByMXIDWithToken(userID id.UserID) []*UserTeam {
 }
 
 func (utq *UserTeamQuery) GetAllBySlackTeamID(teamID string) []*UserTeam {
-	query := `SELECT mxid, slack_email, slack_id, team_name, team_id, token, cookie_token FROM user_team WHERE team_id=$1`
+	query := userTeamSelect + "WHERE ut.team_id=$1"
 
 	rows, err := utq.db.Query(query, teamID)
 	if err != nil || rows == nil {
@@ -86,6 +87,24 @@ func (utq *UserTeamQuery) GetAllBySlackTeamID(teamID string) []*UserTeam {
 	}
 
 	return tokens
+}
+
+func (utq *UserTeamQuery) GetFirstUserTeamForPortal(portal *PortalKey) *UserTeam {
+	query := userTeamSelect + `
+		JOIN user_team_portal utp ON utp.matrix_user_id = ut.mxid
+			AND utp.slack_team_id = ut.team_id
+			AND utp.slack_user_id = ut.slack_id
+		WHERE utp.slack_team_id = $1
+			AND utp.portal_channel_id = $2
+			AND ut.token IS NOT NULL
+		LIMIT 1`
+
+	row := utq.db.QueryRow(query, portal.TeamID, portal.ChannelID)
+	if row == nil {
+		return nil
+	}
+
+	return utq.New().Scan(row)
 }
 
 type UserTeamKey struct {

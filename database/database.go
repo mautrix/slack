@@ -40,6 +40,7 @@ type Database struct {
 	Reaction   *ReactionQuery
 	Attachment *AttachmentQuery
 	TeamInfo   *TeamInfoQuery
+	Backfill   *BackfillQuery
 }
 
 func New(baseDB *dbutil.Database, log maulogger.Logger) *Database {
@@ -77,6 +78,10 @@ func New(baseDB *dbutil.Database, log maulogger.Logger) *Database {
 	db.TeamInfo = &TeamInfoQuery{
 		db:  db,
 		log: log.Sub("TeamInfo"),
+	}
+	db.Backfill = &BackfillQuery{
+		db:  db,
+		log: log.Sub("Backfill"),
 	}
 
 	return db

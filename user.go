@@ -208,6 +208,11 @@ func (br *SlackBridge) startUsers() {
 			}
 		}(customPuppet)
 	}
+
+	if !br.historySyncLoopStarted {
+		br.Log.Debugln("Starting backfill loop")
+		go br.handleHistorySyncsLoop()
+	}
 }
 
 func (user *User) SetManagementRoom(roomID id.RoomID) {
