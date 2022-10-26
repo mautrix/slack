@@ -1465,6 +1465,7 @@ type ConvertedSlackMessage struct {
 	Event           *event.MessageEventContent
 	SlackTimestamp  string
 	SlackAuthor     string
+	SlackReactions  []slack.ItemReaction
 }
 
 // Returns bool: whether or not this resulted in a Matrix message in the room
@@ -1737,7 +1738,7 @@ func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTea
 		return
 	}
 
-	emoji := shortcodeToEmoji(msg.Reaction)
+	emoji := convertSlackReaction(msg.Reaction)
 
 	var content event.ReactionEventContent
 	content.RelatesTo = event.RelatesTo{

@@ -17,6 +17,15 @@ func replaceShortcodesWithEmojis(text string) string {
 	return re.ReplaceAllStringFunc(text, shortcodeToEmoji)
 }
 
+func convertSlackReaction(text string) string {
+	var converted string
+	emoji := strings.Split(text, "::")
+	for _, e := range emoji {
+		converted += shortcodeToEmoji(e)
+	}
+	return converted
+}
+
 func shortcodeToEmoji(code string) string {
 	strippedCode := strings.TrimPrefix(code, ":")
 	strippedCode = strings.TrimSuffix(strippedCode, ":")
