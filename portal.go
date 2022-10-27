@@ -1464,8 +1464,10 @@ type ConvertedSlackMessage struct {
 	FileAttachments []ConvertedSlackFile
 	Event           *event.MessageEventContent
 	SlackTimestamp  string
+	SlackThreadTs   string
 	SlackAuthor     string
 	SlackReactions  []slack.ItemReaction
+	SlackThread     []slack.Message
 }
 
 // Returns bool: whether or not this resulted in a Matrix message in the room
@@ -1643,6 +1645,8 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 		convertedFile.Event = &content
 		converted.FileAttachments = append(converted.FileAttachments, convertedFile)
 	}
+
+	converted.SlackThreadTs = msg.ThreadTimestamp
 
 	return converted
 }

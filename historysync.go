@@ -25,6 +25,7 @@ import (
 	"github.com/slack-go/slack"
 
 	"maunium.net/go/mautrix"
+	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
@@ -146,7 +147,7 @@ func (bridge *SlackBridge) backfillInChunks(req *database.Backfill, portal *Port
 		}
 
 		if len(msgs) > 0 {
-			time.Sleep(time.Duration(req.BatchDelay) * time.Second)
+			//time.Sleep(time.Duration(req.BatchDelay) * time.Second)
 			bridge.Log.Debugfln("Backfilling %d messages in %s (queue ID: %d)", len(msgs), portal.Key, req.QueueID)
 			resp := portal.backfill(userTeam, msgs, req.BackfillType == database.BackfillForward, isLatestEvents, forwardPrevID)
 			if resp != nil && (resp.BaseInsertionEventID != "" || !isLatestEvents) {
@@ -314,6 +315,54 @@ var (
 	BackfillStatusEvent = event.Type{Type: "com.beeper.backfill_status", Class: event.StateEventType}
 )
 
+type SlackThreadInfo struct {
+	ThreadOrigin id.EventID
+	ThreadLatest id.EventID
+}
+
+func (portal *Portal) getLastEventID(msg *ConvertedSlackMessage) *id.EventID {
+	var eventID id.EventID
+	if msg.Event != nil {
+		portal.log.Infofln("%v", msg.SlackAuthor)
+		eventID = portal.deterministicEventID(msg.SlackAuthor, msg.SlackTimestamp, "text")
+	} else if len(msg.FileAttachments) != 0 {
+		eventID = portal.deterministicEventID(msg.SlackAuthor, msg.SlackTimestamp, fmt.Sprintf("file%d", len(msg.FileAttachments)-1))
+	}
+	return &eventID
+}
+
+func (portal *Portal) makeBackfillEvent(intent *appservice.IntentAPI, msg *event.MessageEventContent, partName string, info *ConvertedSlackMessage, threadInfos *map[string]SlackThreadInfo) *event.Event {
+	content := event.Content{
+		Parsed: msg,
+	}
+	if portal.bridge.Config.Homeserver.Software == bridgeconfig.SoftwareHungry {
+		if info.SlackThreadTs != "" && info.SlackThreadTs != info.SlackTimestamp {
+			threadInfo, found := (*threadInfos)[info.SlackThreadTs]
+			if found {
+				content.Parsed.(*event.MessageEventContent).RelatesTo = &event.RelatesTo{}
+				content.Parsed.(*event.MessageEventContent).RelatesTo.SetThread(threadInfo.ThreadOrigin, threadInfo.ThreadLatest)
+				threadInfo.ThreadLatest = portal.deterministicEventID(info.SlackAuthor, info.SlackTimestamp, partName)
+				(*threadInfos)[info.SlackThreadTs] = threadInfo
+			}
+		}
+	}
+	t, err := portal.encrypt(intent, &content, event.EventMessage)
+	if err != nil {
+		portal.log.Errorfln("Error encrypting message for batch fill: %v", err)
+		return nil
+	}
+	e := event.Event{
+		Sender:    intent.UserID,
+		Type:      t,
+		Timestamp: parseSlackTimestamp(info.SlackTimestamp).UnixMilli(),
+		Content:   content,
+	}
+	if portal.bridge.Config.Homeserver.Software == bridgeconfig.SoftwareHungry {
+		e.ID = portal.deterministicEventID(info.SlackAuthor, info.SlackTimestamp, partName)
+	}
+	return &e
+}
+
 func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Message, isForward, isLatest bool, prevEventID id.EventID) *mautrix.RespBatchSend {
 	req := mautrix.ReqBatchSend{
 		PrevEventID:        portal.FirstEventID,
@@ -325,14 +374,41 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 	convertedMessages := []ConvertedSlackMessage{}
 	earliestBridged := ""
 
+	// used to track the reply chains for threads
+	threadInfos := make(map[string]SlackThreadInfo)
+
 	// Slack sends messages in the backwards order
 	for i := len(messages) - 1; i >= 0; i-- {
 		message := messages[i]
 		if message.Type == "message" && (message.SubType == "" || message.SubType == "me_message" || message.SubType == "bot_message") {
 			converted := portal.ConvertSlackMessage(userTeam, &message.Msg)
 			converted.SlackReactions = message.Reactions
+			if message.ReplyCount != 0 {
+				var err error
+				converted.SlackThread, _, _, err = userTeam.Client.GetConversationReplies(&slack.GetConversationRepliesParameters{
+					ChannelID: portal.Key.ChannelID,
+					Timestamp: converted.SlackTimestamp,
+				})
+				if err != nil {
+					portal.log.Warnfln("Error when fetching thread for message %s: %v", converted.SlackTimestamp, err)
+					converted.SlackThread = nil
+				} else if len(converted.SlackThread) != 0 {
+					// Slack includes the origin message in the thread, so skip it
+					converted.SlackThread = converted.SlackThread[1:]
+					threadInfos[converted.SlackTimestamp] = SlackThreadInfo{
+						ThreadOrigin: *portal.getLastEventID(&converted),
+						ThreadLatest: *portal.getLastEventID(&converted),
+					}
+				}
+			}
 			if converted.Event != nil || len(converted.FileAttachments) != 0 {
 				convertedMessages = append(convertedMessages, converted)
+				if portal.bridge.Config.Homeserver.Software == bridgeconfig.SoftwareHungry {
+					// Add all thread replies to this message also to convertedMessages
+					for _, reply := range converted.SlackThread {
+						convertedMessages = append(convertedMessages, portal.ConvertSlackMessage(userTeam, &reply.Msg))
+					}
+				}
 				if parseSlackTimestamp(converted.SlackTimestamp).Before(parseSlackTimestamp(earliestBridged)) {
 					earliestBridged = converted.SlackTimestamp
 				}
@@ -344,65 +420,27 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 		ts := parseSlackTimestamp(converted.SlackTimestamp).UnixMilli()
 		puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, converted.SlackAuthor)
 		puppet.UpdateInfo(userTeam, nil)
-		var puppetID id.UserID
 		if puppet == nil || puppet.MXID == "" {
 			portal.log.Warnfln("No puppet found for %s while batch filling!", converted.SlackAuthor)
 			continue
 		} else {
 			addedMembers[puppet.MXID] = puppet
-			puppetID = puppet.MXID
 		}
 		intent := puppet.IntentFor(portal)
 		for i, file := range converted.FileAttachments {
-			content := event.Content{
-				Parsed: file.Event,
-			}
-			t, err := portal.encrypt(intent, &content, event.EventMessage)
-			if err != nil {
-				portal.log.Errorfln("Error encrypting message for batch fill: %v", err)
-				continue
-			}
-			event := event.Event{
-				Sender:    puppetID,
-				Type:      t,
-				Timestamp: ts,
-				Content:   content,
-			}
-			if portal.bridge.Config.Homeserver.Software == bridgeconfig.SoftwareHungry {
-				event.ID = portal.deterministicEventID(converted.SlackAuthor, converted.SlackTimestamp, fmt.Sprintf("file%d", i))
-			}
-			req.Events = append(req.Events, &event)
+			e := portal.makeBackfillEvent(intent, file.Event, fmt.Sprintf("file%d", i), &converted, &threadInfos)
+			req.Events = append(req.Events, e)
 		}
 		if converted.Event != nil {
-			content := event.Content{
-				Parsed: converted.Event,
-			}
-			t, err := portal.encrypt(intent, &content, event.EventMessage)
-			if err != nil {
-				portal.log.Errorfln("Error encrypting message for batch fill: %v", err)
-				continue
-			}
-			event := event.Event{
-				Sender:    puppetID,
-				Type:      t,
-				Timestamp: ts,
-				Content:   content,
-			}
-			if portal.bridge.Config.Homeserver.Software == bridgeconfig.SoftwareHungry {
-				event.ID = portal.deterministicEventID(converted.SlackAuthor, converted.SlackTimestamp, "text")
-			}
-			req.Events = append(req.Events, &event)
+			e := portal.makeBackfillEvent(intent, converted.Event, "text", &converted, &threadInfos)
+			req.Events = append(req.Events, e)
 		}
 		// Sending reactions in the same batch requires deterministic event IDs, so only do it on hungryserv
 		if portal.bridge.Config.Homeserver.Software == bridgeconfig.SoftwareHungry {
 			for _, reaction := range converted.SlackReactions {
 				emoji := convertSlackReaction(reaction.Name)
-				var originalEventID id.EventID
-				if converted.Event != nil {
-					originalEventID = portal.deterministicEventID(converted.SlackAuthor, converted.SlackTimestamp, "text")
-				} else if len(converted.FileAttachments) != 0 {
-					originalEventID = portal.deterministicEventID(converted.SlackAuthor, converted.SlackTimestamp, fmt.Sprintf("file%d", len(converted.FileAttachments)-1))
-				} else {
+				originalEventID := portal.getLastEventID(&converted)
+				if originalEventID == nil {
 					portal.log.Errorln("No converted event to react to!")
 					continue
 				}
@@ -410,7 +448,7 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 					var content event.ReactionEventContent
 					content.RelatesTo = event.RelatesTo{
 						Type:    event.RelAnnotation,
-						EventID: originalEventID,
+						EventID: *originalEventID,
 						Key:     emoji,
 					}
 					reactionPuppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, user)
