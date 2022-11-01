@@ -53,7 +53,7 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 	defer portal.backfillLock.Unlock()
 
 	backfillState.SetDispatched(true)
-	defer func() { backfillState.Dispatched = false }()
+	defer backfillState.SetDispatched(false)
 
 	maxMessages := bridge.Config.Bridge.Backfill.Incremental.MaxMessages.GetMaxMessagesFor(portal.Type)
 
@@ -163,6 +163,10 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 	}
 
 	backfillState.MessageCount += len(allMsgs)
+
+	if !backfillState.ImmediateComplete {
+		backfillState.ImmediateComplete = true
+	}
 
 	if !resp.HasMore {
 		// Slack said there's no more history to backfill.
@@ -367,9 +371,11 @@ func (portal *Portal) makeBackfillEvent(intent *appservice.IntentAPI, msg *event
 func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Message, isForward, isLatest bool, prevEventID id.EventID) *mautrix.RespBatchSend {
 	req := mautrix.ReqBatchSend{
 		PrevEventID:        portal.FirstEventID,
-		BatchID:            portal.NextBatchID,
 		Events:             []*event.Event{},
 		StateEventsAtStart: []*event.Event{},
+	}
+	if !isForward {
+		req.BatchID = portal.NextBatchID
 	}
 	addedMembers := make(map[id.UserID]*Puppet)
 	convertedMessages := []ConvertedSlackMessage{}

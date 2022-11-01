@@ -51,6 +51,8 @@ const (
 		FROM backfill_state
 		WHERE dispatched IS FALSE
 		AND backfill_complete IS FALSE
+		AND immediate_complete=$1
+		ORDER BY message_count ASC
 		LIMIT 1
 	`
 )
@@ -87,7 +89,8 @@ func (b *BackfillState) Upsert() {
 		DO UPDATE SET
 			dispatched=EXCLUDED.dispatched,
 			backfill_complete=EXCLUDED.backfill_complete,
-			message_count=EXCLUDED.message_count`,
+			message_count=EXCLUDED.message_count,
+			immediate_complete=EXCLUDED.immediate_complete`,
 		b.Portal.TeamID, b.Portal.ChannelID, b.Dispatched, b.BackfillComplete, b.MessageCount, b.ImmediateComplete)
 	if err != nil {
 		b.log.Warnfln("Failed to insert backfill state for %s: %v", b.Portal, err)
@@ -122,7 +125,7 @@ func (bq *BackfillQuery) GetBackfillState(portalKey *PortalKey) (backfillState *
 }
 
 func (bq *BackfillQuery) GetNextUnfinishedBackfillState() (backfillState *BackfillState) {
-	rows, err := bq.db.Query(getNextUnfinishedBackfillState)
+	rows, err := bq.db.Query(getNextUnfinishedBackfillState, false)
 	if err != nil || rows == nil {
 		bq.log.Error(err)
 		return
@@ -130,6 +133,16 @@ func (bq *BackfillQuery) GetNextUnfinishedBackfillState() (backfillState *Backfi
 	defer rows.Close()
 	if rows.Next() {
 		backfillState = bq.NewBackfillState(&PortalKey{}).Scan(rows)
+	} else {
+		rows, err := bq.db.Query(getNextUnfinishedBackfillState, true)
+		if err != nil || rows == nil {
+			bq.log.Error(err)
+			return
+		}
+		defer rows.Close()
+		if rows.Next() {
+			backfillState = bq.NewBackfillState(&PortalKey{}).Scan(rows)
+		}
 	}
 	return
 }
