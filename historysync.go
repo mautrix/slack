@@ -44,13 +44,6 @@ func (bridge *SlackBridge) handleHistorySyncsLoop() {
 	// Backfills shouldn't be marked as dispatched during startup, this gives them a chance to retry
 	bridge.DB.Backfill.UndispatchAll()
 
-	// Start the backfill queue.
-	bridge.BackfillQueue = &BackfillQueue{
-		BackfillQuery:   bridge.DB.Backfill,
-		reCheckChannels: []chan bool{},
-		log:             bridge.Log.Sub("BackfillQueue"),
-	}
-
 	bridge.HandleBackfillRequestsLoop()
 
 }

@@ -188,6 +188,11 @@ func (br *SlackBridge) getAllUsers() []*User {
 func (br *SlackBridge) startUsers() {
 	br.Log.Debugln("Starting users")
 
+	if !br.historySyncLoopStarted {
+		br.Log.Debugln("Starting backfill loop")
+		go br.handleHistorySyncsLoop()
+	}
+
 	users := br.getAllUsers()
 
 	for _, user := range users {
@@ -207,11 +212,6 @@ func (br *SlackBridge) startUsers() {
 				puppet.log.Errorln("Failed to start custom puppet:", err)
 			}
 		}(customPuppet)
-	}
-
-	if !br.historySyncLoopStarted {
-		br.Log.Debugln("Starting backfill loop")
-		go br.handleHistorySyncsLoop()
 	}
 }
 

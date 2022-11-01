@@ -95,6 +95,13 @@ func (br *SlackBridge) Start() {
 	if br.Config.Bridge.Provisioning.SharedSecret != "disable" {
 		br.provisioning = newProvisioningAPI(br)
 	}
+
+	br.BackfillQueue = &BackfillQueue{
+		BackfillQuery:   br.DB.Backfill,
+		reCheckChannels: []chan bool{},
+		log:             br.Log.Sub("BackfillQueue"),
+	}
+
 	go br.startUsers()
 }
 
