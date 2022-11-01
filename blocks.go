@@ -123,7 +123,7 @@ func (portal *Portal) renderRichTextSectionElements(elements []slack.RichTextSec
 				TeamID:    portal.Key.TeamID,
 				ChannelID: e.ChannelID,
 			})
-			if portal != nil && portal.MXID != "" {
+			if p != nil && p.MXID != "" {
 				htmlText.WriteString(fmt.Sprintf(`<a href="https://matrix.to/#/%s?via=%s">%s</a>`, p.MXID, portal.bridge.AS.HomeserverDomain, p.Name))
 			} else { // TODO: get portal info if not exist
 				htmlText.WriteString(fmt.Sprintf("#%s", e.ChannelID))

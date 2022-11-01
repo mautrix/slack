@@ -37,9 +37,12 @@ import (
 // region history sync handling
 
 func (bridge *SlackBridge) handleHistorySyncsLoop() {
-	if !bridge.Config.Bridge.HistorySync.Backfill {
+	if !bridge.Config.Bridge.Backfill.Enable {
 		return
 	}
+
+	// Backfills shouldn't be marked as dispatched during startup, this gives them a chance to retry
+	bridge.DB.Backfill.UndispatchAll()
 
 	// Start the backfill queue.
 	bridge.BackfillQueue = &BackfillQueue{
@@ -48,56 +51,51 @@ func (bridge *SlackBridge) handleHistorySyncsLoop() {
 		log:             bridge.Log.Sub("BackfillQueue"),
 	}
 
-	forwardAndImmediate := []database.BackfillType{database.BackfillImmediate, database.BackfillForward}
-
-	// Immediate backfills can be done in parallel
-	// for i := 0; i < bridge.Config.Bridge.HistorySync.Immediate.WorkerCount; i++ {
-	bridge.BackfillQueue.log.Debugln("Handling backfill requests for forward and immediate types")
-	bridge.HandleBackfillRequestsLoop(forwardAndImmediate, []database.BackfillType{})
-	// }
-
-	// Deferred backfills should be handled synchronously so as not to
-	// overload the homeserver. Users can configure their backfill stages
-	// to be more or less aggressive with backfilling at this stage.
-	go bridge.HandleBackfillRequestsLoop([]database.BackfillType{database.BackfillDeferred}, forwardAndImmediate)
+	bridge.HandleBackfillRequestsLoop()
 
 }
 
-func (bridge *SlackBridge) backfillInChunks(req *database.Backfill, portal *Portal) {
+func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillState, portal *Portal) {
 	portal.backfillLock.Lock()
 	defer portal.backfillLock.Unlock()
 
-	backfillState := bridge.DB.Backfill.GetBackfillState(&portal.Key)
-	if backfillState == nil {
-		backfillState = bridge.DB.Backfill.NewBackfillState(&portal.Key)
+	backfillState.SetDispatched(true)
+	defer func() { backfillState.Dispatched = false }()
+
+	maxMessages := bridge.Config.Bridge.Backfill.Incremental.MaxMessages.GetMaxMessagesFor(portal.Type)
+
+	if maxMessages > 0 && backfillState.MessageCount >= maxMessages {
+		backfillState.BackfillComplete = true
+		backfillState.Upsert()
+		bridge.Log.Infofln("Backfilling complete for portal %s, not filling any more", portal.Key)
+		return
 	}
-	backfillState.SetProcessingBatch(true)
-	defer backfillState.SetProcessingBatch(false)
 
 	slackReqParams := slack.GetConversationHistoryParameters{
-		ChannelID: req.Portal.ChannelID,
+		ChannelID: portal.Key.ChannelID,
 		Inclusive: false,
 	}
 	var forwardPrevID id.EventID
 	var isLatestEvents bool
 	portal.latestEventBackfillLock.Lock()
-	if req.BackfillType == database.BackfillForward {
-		lastMessage := portal.bridge.DB.Message.GetLast(portal.Key)
-		if lastMessage == nil {
-			bridge.Log.Warnfln("Empty portal %s, can't fetch Slack history for forward backfilling", portal.Key)
-			return
-		}
-		slackReqParams.Oldest = lastMessage.SlackID
-		forwardPrevID = lastMessage.MatrixID
-		// Sending events at the end of the room (= latest events)
+	// TODO: forward backfill isn't a thing yet
+	// if req.BackfillType == database.BackfillForward {
+	// 	lastMessage := portal.bridge.DB.Message.GetLast(portal.Key)
+	// 	if lastMessage == nil {
+	// 		bridge.Log.Warnfln("Empty portal %s, can't fetch Slack history for forward backfilling", portal.Key)
+	// 		return
+	// 	}
+	// 	slackReqParams.Oldest = lastMessage.SlackID
+	// 	forwardPrevID = lastMessage.MatrixID
+	// 	// Sending events at the end of the room (= latest events)
+	// 	isLatestEvents = true
+	// } else {
+	slackReqParams.Latest = portal.FirstSlackID
+	if portal.FirstSlackID == "" {
+		// Portal is empty -> events are latest
 		isLatestEvents = true
-	} else {
-		slackReqParams.Latest = portal.FirstSlackID
-		if portal.FirstSlackID == "" {
-			// Portal is empty -> events are latest
-			isLatestEvents = true
-		}
 	}
+	//}
 	if !isLatestEvents {
 		// We'll use normal batch sending, so no need to keep blocking new message processing
 		portal.latestEventBackfillLock.Unlock()
@@ -107,9 +105,9 @@ func (bridge *SlackBridge) backfillInChunks(req *database.Backfill, portal *Port
 		defer portal.latestEventBackfillLock.Unlock()
 	}
 
-	userTeam := bridge.DB.UserTeam.GetFirstUserTeamForPortal(req.Portal)
+	userTeam := bridge.DB.UserTeam.GetFirstUserTeamForPortal(&portal.Key)
 	if userTeam == nil {
-		bridge.Log.Errorfln("Couldn't find logged in user with access to %s for backfilling!", req.Portal)
+		bridge.Log.Errorfln("Couldn't find logged in user with access to %s for backfilling!", portal.Key)
 		return
 	}
 	bridge.Log.Debugfln("Got userteam %s with credentials %s %s", userTeam.Key, userTeam.Token, userTeam.CookieToken)
@@ -118,62 +116,72 @@ func (bridge *SlackBridge) backfillInChunks(req *database.Backfill, portal *Port
 	} else {
 		userTeam.Client = slack.New(userTeam.Token)
 	}
+
+	// Fetch actual messages from Slack.
 	resp, err := userTeam.Client.GetConversationHistory(&slackReqParams)
 	if err != nil {
-		bridge.Log.Errorfln("Error fetching Slack messages for backfilling %s: %v", req.Portal, resp)
+		bridge.Log.Errorfln("Error fetching Slack messages for backfilling %s: %v", portal.Key, resp)
 		return
 	}
 	allMsgs := resp.Messages
 
 	if len(allMsgs) == 0 {
-		bridge.Log.Debugfln("Not backfilling %s: no bridgeable messages found", req.Portal)
+		bridge.Log.Debugfln("Not backfilling %s: no bridgeable messages found", portal.Key)
 		return
 	}
 
 	// Update the backfill status here after the room has been created.
 	portal.updateBackfillStatus(backfillState)
 
-	bridge.Log.Infofln("Backfilling %d messages in %s, %d messages at a time (queue ID: %d)", len(allMsgs), portal.Key, req.MaxBatchEvents, req.QueueID)
+	var maxBatchEvents int
+	if !backfillState.ImmediateComplete {
+		maxBatchEvents = -1
+	} else {
+		maxBatchEvents = bridge.Config.Bridge.Backfill.Incremental.MessagesPerBatch
+	}
+
+	bridge.Log.Infofln("Backfilling %d messages in %s, %d messages at a time", len(allMsgs), portal.Key, maxBatchEvents)
 	toBackfill := allMsgs[0:]
 	var insertionEventIds []id.EventID
 	for len(toBackfill) > 0 {
 		var msgs []slack.Message
-		if len(toBackfill) <= req.MaxBatchEvents || req.MaxBatchEvents < 0 {
+		if len(toBackfill) <= maxBatchEvents || maxBatchEvents < 0 {
 			msgs = toBackfill
 			toBackfill = nil
 		} else {
-			msgs = toBackfill[:req.MaxBatchEvents]
-			toBackfill = toBackfill[req.MaxBatchEvents:]
+			msgs = toBackfill[:maxBatchEvents]
+			toBackfill = toBackfill[maxBatchEvents:]
 		}
 
 		if len(msgs) > 0 {
 			//time.Sleep(time.Duration(req.BatchDelay) * time.Second)
-			bridge.Log.Debugfln("Backfilling %d messages in %s (queue ID: %d)", len(msgs), portal.Key, req.QueueID)
-			resp := portal.backfill(userTeam, msgs, req.BackfillType == database.BackfillForward, isLatestEvents, forwardPrevID)
+			bridge.Log.Debugfln("Backfilling %d messages in %s", len(msgs), portal.Key)
+			resp := portal.backfill(userTeam, msgs, !backfillState.ImmediateComplete, isLatestEvents, forwardPrevID)
 			if resp != nil && (resp.BaseInsertionEventID != "" || !isLatestEvents) {
 				insertionEventIds = append(insertionEventIds, resp.BaseInsertionEventID)
 			}
 		}
 	}
-	bridge.Log.Debugfln("Finished backfilling %d messages in %s (queue ID: %d)", len(allMsgs), portal.Key, req.QueueID)
+	bridge.Log.Debugfln("Finished backfilling %d messages in %s", len(allMsgs), portal.Key)
 	if len(insertionEventIds) > 0 {
 		portal.sendPostBackfillDummy(
 			parseSlackTimestamp(allMsgs[len(allMsgs)-1].Timestamp),
 			insertionEventIds[0])
 	}
 
+	backfillState.MessageCount += len(allMsgs)
+
 	if !resp.HasMore {
 		// Slack said there's no more history to backfill.
 		backfillState.BackfillComplete = true
-		backfillState.Upsert()
 		portal.updateBackfillStatus(backfillState)
 	}
+
+	backfillState.Upsert()
 
 	// TODO: add these config options
 	// if bridge.Config.Bridge.HistorySync.UnreadHoursThreshold > 0 && conv.LastMessageTimestamp.Before(time.Now().Add(time.Duration(-bridge.Config.Bridge.HistorySync.UnreadHoursThreshold)*time.Hour)) {
 	// 	user.markSelfReadFull(portal)
-	// } else if bridge.Config.Bridge.SyncManualMarkedUnread {
-	// 	user.markUnread(portal, true)
 	// }
 }
 
@@ -263,36 +271,37 @@ func (bridge *SlackBridge) backfillInChunks(req *database.Backfill, portal *Port
 // 	}
 // }
 
-func (bridge *SlackBridge) EnqueueImmedateBackfills(portals []*Portal) {
-	for priority, portal := range portals {
-		maxMessages := bridge.Config.Bridge.HistorySync.ImmediateEvents
-		initialBackfill := bridge.DB.Backfill.NewWithValues(database.BackfillImmediate, priority, &portal.Key, maxMessages, maxMessages, 0)
-		initialBackfill.Insert()
-	}
-}
+// func (bridge *SlackBridge) EnqueueImmedateBackfills(portals []*Portal) {
+// 	for _, portal := range portals {
+// 		maxMessages := bridge.Config.Bridge.Backfill.ImmediateMessages
+// 		initialBackfill := bridge.DB.Backfill.NewWithValues(database.BackfillImmediate, &portal.Key, maxMessages, maxMessages, 0)
+// 		initialBackfill.Insert()
+// 	}
+// }
 
-func (bridge *SlackBridge) EnqueueDeferredBackfills(portals []*Portal) {
-	numPortals := len(portals)
-	for stageIdx, backfillStage := range bridge.Config.Bridge.HistorySync.Deferred {
-		for portalIdx, portal := range portals {
-			backfillMessages := bridge.DB.Backfill.NewWithValues(
-				database.BackfillDeferred, stageIdx*numPortals+portalIdx, &portal.Key, backfillStage.MaxBatchEvents, -1, backfillStage.BatchDelay)
-			backfillMessages.Insert()
-		}
-	}
-}
+// func (bridge *SlackBridge) EnqueueDeferredBackfills(portals []*Portal) {
+// 	for _, portal := range portals {
+// 		backfillMessages := bridge.DB.Backfill.NewWithValues(
+// 			database.BackfillDeferred, &portal.Key,
+// 			bridge.Config.Bridge.Backfill.Incremental.MessagesPerBatch,
+// 			bridge.Config.Bridge.Backfill.Incremental.MaxMessages.GetMaxMessagesFor(portal.Type),
+// 			bridge.Config.Bridge.Backfill.Incremental.PostBatchDelay,
+// 		)
+// 		backfillMessages.Insert()
+// 	}
+// }
 
-func (bridge *SlackBridge) EnqueueForwardBackfills(portals []*Portal) {
-	for priority, portal := range portals {
-		lastMsg := bridge.DB.Message.GetLast(portal.Key)
-		if lastMsg == nil {
-			continue
-		}
-		backfill := bridge.DB.Backfill.NewWithValues(
-			database.BackfillForward, priority, &portal.Key, -1, -1, 0)
-		backfill.Insert()
-	}
-}
+// func (bridge *SlackBridge) EnqueueForwardBackfills(portals []*Portal) {
+// 	for _, portal := range portals {
+// 		lastMsg := bridge.DB.Message.GetLast(portal.Key)
+// 		if lastMsg == nil {
+// 			continue
+// 		}
+// 		backfill := bridge.DB.Backfill.NewWithValues(
+// 			database.BackfillForward, &portal.Key, -1, -1, 0)
+// 		backfill.Insert()
+// 	}
+// }
 
 // endregion
 // region Portal backfilling
@@ -323,7 +332,6 @@ type SlackThreadInfo struct {
 func (portal *Portal) getLastEventID(msg *ConvertedSlackMessage) *id.EventID {
 	var eventID id.EventID
 	if msg.Event != nil {
-		portal.log.Infofln("%v", msg.SlackAuthor)
 		eventID = portal.deterministicEventID(msg.SlackAuthor, msg.SlackTimestamp, "text")
 	} else if len(msg.FileAttachments) != 0 {
 		eventID = portal.deterministicEventID(msg.SlackAuthor, msg.SlackTimestamp, fmt.Sprintf("file%d", len(msg.FileAttachments)-1))

@@ -38,34 +38,35 @@ func (bq *BackfillQueue) ReCheck() {
 	}
 }
 
-func (bq *BackfillQueue) GetNextBackfill(backfillTypes []database.BackfillType, waitForBackfillTypes []database.BackfillType, reCheckChannel chan bool) *database.Backfill {
+func (bq *BackfillQueue) GetNextBackfill(reCheckChannel chan bool) *database.BackfillState {
 	for {
-		if !bq.BackfillQuery.HasUnstartedOrInFlightOfType(waitForBackfillTypes) {
-			// check for immediate when dealing with deferred
-			if backfill := bq.BackfillQuery.GetNext(backfillTypes); backfill != nil {
-				backfill.MarkDispatched()
-				return backfill
-			}
+		if backfill := bq.BackfillQuery.GetNextUnfinishedBackfillState(); backfill != nil {
+			bq.log.Debugfln("Found unfinished backfill state for %s", backfill.Portal)
+			backfill.SetDispatched(true)
+			return backfill
 		}
+		bq.log.Debugfln("Didn't find unfinished backfills, waiting")
 
 		select {
 		case <-reCheckChannel:
+			bq.log.Debugln("Rechecking backfills on request")
 		case <-time.After(time.Minute):
+			bq.log.Debugln("Rechecking backfills after one minute")
 		}
 	}
 }
 
-func (bridge *SlackBridge) HandleBackfillRequestsLoop(backfillTypes []database.BackfillType, waitForBackfillTypes []database.BackfillType) {
+func (bridge *SlackBridge) HandleBackfillRequestsLoop() {
 	reCheckChannel := make(chan bool)
 	bridge.BackfillQueue.reCheckChannels = append(bridge.BackfillQueue.reCheckChannels, reCheckChannel)
 
 	for {
-		req := bridge.BackfillQueue.GetNextBackfill(backfillTypes, waitForBackfillTypes, reCheckChannel)
-		bridge.Log.Infofln("Handling backfill request %s", req)
+		state := bridge.BackfillQueue.GetNextBackfill(reCheckChannel)
+		bridge.Log.Infofln("Handling backfill %s", state)
 
-		portal := bridge.GetPortalByID(*req.Portal)
+		portal := bridge.GetPortalByID(*state.Portal)
 
-		bridge.backfillInChunks(req, portal)
-		req.MarkDone()
+		bridge.backfillInChunks(state, portal)
+		//req.MarkDone()
 	}
 }

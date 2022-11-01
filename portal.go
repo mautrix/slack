@@ -393,11 +393,10 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		portal.Update(nil)
 	}
 
-	if fill {
-		portal.log.Debugln("Enqueueing backfills")
-		portal.bridge.EnqueueImmedateBackfills([]*Portal{portal})
-	}
-	portal.bridge.EnqueueDeferredBackfills([]*Portal{portal})
+	portal.log.Debugln("Enqueueing backfills")
+	backfillState := portal.bridge.DB.Backfill.NewBackfillState(&portal.Key)
+	backfillState.Upsert()
+	portal.bridge.BackfillQueue.ReCheck()
 
 	return nil
 }

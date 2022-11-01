@@ -30,10 +30,29 @@ import (
 	"go.mau.fi/mautrix-slack/database"
 )
 
-type DeferredConfig struct {
-	StartDaysAgo   int `yaml:"start_days_ago"`
-	MaxBatchEvents int `yaml:"max_batch_events"`
-	BatchDelay     int `yaml:"batch_delay"`
+type IncrementalConfig struct {
+	MessagesPerBatch int         `yaml:"messages_per_batch"`
+	PostBatchDelay   int         `yaml:"post_batch_delay"`
+	MaxMessages      MaxMessages `yaml:"max_messages"`
+}
+
+type MaxMessages struct {
+	Channel int `yaml:"channel"`
+	GroupDm int `yaml:"group_dm"`
+	Dm      int `yaml:"dm"`
+}
+
+func (mb *MaxMessages) GetMaxMessagesFor(t database.ChannelType) int {
+	switch t {
+	case database.ChannelTypeChannel:
+		return mb.Channel
+	case database.ChannelTypeGroupDM:
+		return mb.GroupDm
+	case database.ChannelTypeDM:
+		return mb.Dm
+	default:
+		return 0
+	}
 }
 
 type BridgeConfig struct {
@@ -80,15 +99,15 @@ type BridgeConfig struct {
 
 	Permissions bridgeconfig.PermissionConfig `yaml:"permissions"`
 
-	HistorySync struct {
-		Backfill bool `yaml:"backfill"`
+	Backfill struct {
+		Enable bool `yaml:"enable"`
 
-		DoublePuppetBackfill bool `yaml:"double_puppet_backfill"`
+		UnreadHoursThreshold int `yaml:"unread_hours_threshold"`
 
-		ImmediateEvents int `yaml:"immediate_events"`
+		ImmediateMessages int `yaml:"immediate_messages"`
 
-		Deferred []DeferredConfig `yaml:"deferred"`
-	} `yaml:"history_sync"`
+		Incremental IncrementalConfig `yaml:"incremental"`
+	} `yaml:"backfill"`
 
 	usernameTemplate       *template.Template `yaml:"-"`
 	displaynameTemplate    *template.Template `yaml:"-"`
