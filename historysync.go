@@ -154,7 +154,7 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 		}
 
 		if len(msgs) > 0 {
-			//time.Sleep(time.Duration(req.BatchDelay) * time.Second)
+			time.Sleep(time.Duration(bridge.Config.Bridge.Backfill.Incremental.PostBatchDelay) * time.Second)
 			bridge.Log.Debugfln("Backfilling %d messages in %s", len(msgs), portal.Key)
 			resp := portal.backfill(userTeam, msgs, !backfillState.ImmediateComplete, isLatestEvents, forwardPrevID)
 			if resp != nil && (resp.BaseInsertionEventID != "" || !isLatestEvents) {
