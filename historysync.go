@@ -356,6 +356,9 @@ func (portal *Portal) makeBackfillEvent(intent *appservice.IntentAPI, msg *event
 		portal.log.Errorfln("Error encrypting message for batch fill: %v", err)
 		return nil
 	}
+	if t != event.EventMessage {
+		intent.AddDoublePuppetValue(&content)
+	}
 	e := event.Event{
 		Sender:    intent.UserID,
 		Type:      t,
