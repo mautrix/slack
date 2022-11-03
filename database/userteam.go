@@ -138,11 +138,11 @@ func (ut *UserTeam) GetMXID() id.UserID {
 }
 
 func (ut *UserTeam) GetRemoteID() string {
-	return ut.Key.SlackID
+	return ut.Key.TeamID
 }
 
 func (ut *UserTeam) GetRemoteName() string {
-	return ut.SlackEmail // TODO: maybe get a better name for this purpose
+	return ut.TeamName
 }
 
 func (ut *UserTeam) IsLoggedIn() bool {
