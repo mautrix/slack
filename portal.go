@@ -90,7 +90,7 @@ func (portal *Portal) ReceiveMatrixEvent(user bridge.User, evt *event.Event) {
 	}
 }
 
-func (portal *Portal) HandleMatrixReadReceipt(sender bridge.User, eventID id.EventID, receiptTimestamp time.Time) {
+func (portal *Portal) HandleMatrixReadReceipt(sender bridge.User, eventID id.EventID, receipt event.ReadReceipt) {
 	//portal.handleMatrixReadReceipt(sender.(*User), eventID, receiptTimestamp, true)
 	userTeam := sender.(*User).GetUserTeam(portal.Key.TeamID)
 
