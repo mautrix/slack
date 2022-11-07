@@ -177,30 +177,51 @@ func (portal *Portal) renderSlackBlock(block slack.Block) (string, bool) {
 	case *slack.RichTextBlock:
 		var htmlText strings.Builder
 		for _, element := range b.Elements {
-			switch e := element.(type) {
-			case *slack.RichTextSection:
-				var htmlTag string
-				var htmlCloseTag string
-				if e.RichTextElementType() == slack.RTEPreformatted {
-					htmlTag = "<pre>"
-					htmlCloseTag = "</pre>"
-				} else if e.RichTextElementType() == slack.RTEQuote {
-					htmlTag = "<blockquote>"
-					htmlCloseTag = "</blockquote>"
-				} else if len(b.Elements) != 1 {
-					htmlTag = "<p>"
-					htmlCloseTag = "</p>"
-				}
-				htmlText.WriteString(fmt.Sprintf("%s%s%s", htmlTag, portal.renderRichTextSectionElements(e.Elements), htmlCloseTag))
-			default:
-				portal.log.Debugfln("Unsupported Slack section: %s", e.RichTextElementType())
-				htmlText.WriteString(fmt.Sprintf("<i>Unsupported section %s in Slack text.</i>", e.RichTextElementType()))
-			}
+			htmlText.WriteString(portal.renderSlackRichTextElement(len(b.Elements), element))
 		}
 		return format.UnwrapSingleParagraph(htmlText.String()), false
 	default:
 		portal.log.Debugfln("Unsupported Slack block: %T", b)
 		return "<i>Slack message contains unsupported elements.</i>", true
+	}
+}
+
+func (portal *Portal) renderSlackRichTextElement(numElements int, element slack.RichTextElement) string {
+	switch e := element.(type) {
+	case *slack.RichTextSection:
+		var htmlTag string
+		var htmlCloseTag string
+		if e.RichTextElementType() == slack.RTEPreformatted {
+			htmlTag = "<pre>"
+			htmlCloseTag = "</pre>"
+		} else if e.RichTextElementType() == slack.RTEQuote {
+			htmlTag = "<blockquote>"
+			htmlCloseTag = "</blockquote>"
+		} else if numElements != 1 {
+			htmlTag = "<p>"
+			htmlCloseTag = "</p>"
+		}
+		return fmt.Sprintf("%s%s%s", htmlTag, portal.renderRichTextSectionElements(e.Elements), htmlCloseTag)
+	case *slack.RichTextList:
+		var htmlText strings.Builder
+		var htmlTag string
+		var htmlCloseTag string
+		if e.Style == "ordered" {
+			htmlTag = "<ol>"
+			htmlCloseTag = "</ol>"
+		} else {
+			htmlTag = "<ul>"
+			htmlCloseTag = "</ul>"
+		}
+		htmlText.WriteString(htmlTag)
+		for _, e := range e.Elements {
+			htmlText.WriteString(fmt.Sprintf("<li>%s</li>", portal.renderSlackRichTextElement(1, &e)))
+		}
+		htmlText.WriteString(htmlCloseTag)
+		return htmlText.String()
+	default:
+		portal.log.Debugfln("Unsupported Slack section: %T", e)
+		return fmt.Sprintf("<i>Unsupported section %s in Slack text.</i>", e.RichTextElementType())
 	}
 }
 
