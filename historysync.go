@@ -119,6 +119,8 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 
 	if len(allMsgs) == 0 {
 		bridge.Log.Debugfln("Not backfilling %s: no bridgeable messages found", portal.Key)
+		backfillState.BackfillComplete = true
+		backfillState.Upsert()
 		return
 	}
 
