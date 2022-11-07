@@ -103,7 +103,6 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 		bridge.Log.Errorfln("Couldn't find logged in user with access to %s for backfilling!", portal.Key)
 		return
 	}
-	bridge.Log.Debugfln("Got userteam %s with credentials %s %s", userTeam.Key, userTeam.Token, userTeam.CookieToken)
 	if userTeam.CookieToken != "" {
 		userTeam.Client = slack.New(userTeam.Token, slack.OptionCookie("d", userTeam.CookieToken))
 	} else {
