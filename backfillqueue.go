@@ -45,13 +45,10 @@ func (bq *BackfillQueue) GetNextBackfill(reCheckChannel chan bool) *database.Bac
 			backfill.SetDispatched(true)
 			return backfill
 		}
-		bq.log.Debugfln("Didn't find unfinished backfills, waiting")
 
 		select {
 		case <-reCheckChannel:
-			bq.log.Debugln("Rechecking backfills on request")
 		case <-time.After(time.Minute):
-			bq.log.Debugln("Rechecking backfills after one minute")
 		}
 	}
 }
