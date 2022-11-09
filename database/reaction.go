@@ -67,7 +67,7 @@ func (r *Reaction) Scan(row dbutil.Scannable) *Reaction {
 	return r
 }
 
-func (r *Reaction) Insert() {
+func (r *Reaction) Insert(txn dbutil.Transaction) {
 	query := "INSERT INTO reaction" +
 		" (team_id, channel_id, slack_message_id, matrix_event_id," +
 		"  author_id, matrix_name, matrix_url, slack_name)" +
@@ -79,14 +79,19 @@ func (r *Reaction) Insert() {
 		slackName = sql.NullString{String: r.SlackName, Valid: true}
 	}
 
-	_, err := r.db.Exec(
-		query,
-		r.Channel.TeamID, r.Channel.ChannelID,
+	args := []interface{}{r.Channel.TeamID, r.Channel.ChannelID,
 		r.SlackMessageID, r.MatrixEventID,
 		r.AuthorID,
 		r.MatrixName, r.MatrixURL,
 		slackName,
-	)
+	}
+
+	var err error
+	if txn != nil {
+		_, err = txn.Exec(query, args...)
+	} else {
+		_, err = r.db.Exec(query, args...)
+	}
 
 	if err != nil {
 		r.log.Warnfln("Failed to insert reaction for %s@%s: %v", r.Channel, r.SlackMessageID, err)

@@ -152,7 +152,12 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 			bridge.Log.Debugfln("Backfilling %d messages in %s", len(msgs), portal.Key)
 			resp := portal.backfill(userTeam, msgs, !backfillState.ImmediateComplete, isLatestEvents, forwardPrevID)
 			if resp != nil && (resp.BaseInsertionEventID != "" || !isLatestEvents) {
+				backfillState.MessageCount += len(msgs)
 				insertionEventIds = append(insertionEventIds, resp.BaseInsertionEventID)
+			} else if resp == nil {
+				// the backfill function has already logged an error; just store state in DB and stop filling
+				backfillState.Upsert()
+				return
 			}
 		}
 	}
@@ -678,7 +683,7 @@ func (portal *Portal) finishBatch(txn dbutil.Transaction, eventIDs []id.EventID,
 			attachment.SlackFileID = file.SlackFileID
 			attachment.SlackMessageID = converted.SlackTimestamp
 			attachment.MatrixEventID = eventIDs[idx]
-			attachment.Insert()
+			attachment.Insert(txn)
 			idx += 1
 		}
 		if converted.Event != nil {
@@ -686,7 +691,7 @@ func (portal *Portal) finishBatch(txn dbutil.Transaction, eventIDs []id.EventID,
 				portal.log.Errorln("Server returned fewer event IDs than events in our batch!")
 				return
 			}
-			portal.markMessageHandled(converted.SlackTimestamp, "", eventIDs[idx], converted.SlackAuthor)
+			portal.markMessageHandled(txn, converted.SlackTimestamp, "", eventIDs[idx], converted.SlackAuthor)
 			idx += 1
 		}
 		if portal.bridge.Config.Homeserver.Software == bridgeconfig.SoftwareHungry {
@@ -699,7 +704,7 @@ func (portal *Portal) finishBatch(txn dbutil.Transaction, eventIDs []id.EventID,
 					dbReaction.AuthorID = user
 					dbReaction.MatrixName = convertSlackReaction(reaction.Name)
 					dbReaction.SlackName = reaction.Name
-					dbReaction.Insert()
+					dbReaction.Insert(txn)
 					idx += 1
 				}
 			}

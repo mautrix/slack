@@ -55,17 +55,22 @@ func (a *Attachment) Scan(row dbutil.Scannable) *Attachment {
 	return a
 }
 
-func (a *Attachment) Insert() {
+func (a *Attachment) Insert(txn dbutil.Transaction) {
 	query := "INSERT INTO attachment" +
 		" (team_id, channel_id, slack_message_id, slack_file_id, " +
 		" matrix_event_id, slack_thread_id) VALUES ($1, $2, $3, $4, $5, $6);"
 
-	_, err := a.db.Exec(
-		query,
-		a.Channel.TeamID, a.Channel.ChannelID,
+	args := []interface{}{a.Channel.TeamID, a.Channel.ChannelID,
 		a.SlackMessageID, a.SlackFileID,
 		a.MatrixEventID, a.SlackThreadID,
-	)
+	}
+
+	var err error
+	if txn != nil {
+		_, err = txn.Exec(query, args...)
+	} else {
+		_, err = a.db.Exec(query, args...)
+	}
 
 	if err != nil {
 		a.log.Warnfln("Failed to insert attachment for %s@%s: %v", a.Channel, a.SlackMessageID, err)

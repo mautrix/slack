@@ -57,13 +57,20 @@ func (m *Message) Scan(row dbutil.Scannable) *Message {
 	return m
 }
 
-func (m *Message) Insert() {
+func (m *Message) Insert(txn dbutil.Transaction) {
 	query := "INSERT INTO message" +
 		" (team_id, channel_id, slack_message_id, matrix_message_id," +
 		" author_id, slack_thread_id) VALUES ($1, $2, $3, $4, $5, $6)"
 
-	_, err := m.db.Exec(query, m.Channel.TeamID,
-		m.Channel.ChannelID, m.SlackID, m.MatrixID, m.AuthorID, strPtr(m.SlackThreadID))
+	args := []interface{}{m.Channel.TeamID,
+		m.Channel.ChannelID, m.SlackID, m.MatrixID, m.AuthorID, strPtr(m.SlackThreadID)}
+
+	var err error
+	if txn != nil {
+		_, err = txn.Exec(query, args...)
+	} else {
+		_, err = m.db.Exec(query, args...)
+	}
 
 	if err != nil {
 		m.log.Warnfln("Failed to insert %s@%s: %v", m.Channel, m.SlackID, err)

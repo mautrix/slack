@@ -36,6 +36,7 @@ import (
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
+	"maunium.net/go/mautrix/util/dbutil"
 
 	"go.mau.fi/mautrix-slack/config"
 	"go.mau.fi/mautrix-slack/database"
@@ -425,14 +426,14 @@ func (portal *Portal) ensureUserInvited(user *User) bool {
 	return user.ensureInvited(portal.MainIntent(), portal.MXID, portal.IsPrivateChat())
 }
 
-func (portal *Portal) markMessageHandled(slackID string, slackThreadID string, mxid id.EventID, authorID string) *database.Message {
+func (portal *Portal) markMessageHandled(txn dbutil.Transaction, slackID string, slackThreadID string, mxid id.EventID, authorID string) *database.Message {
 	msg := portal.bridge.DB.Message.New()
 	msg.Channel = portal.Key
 	msg.SlackID = slackID
 	msg.MatrixID = mxid
 	msg.AuthorID = authorID
 	msg.SlackThreadID = slackThreadID
-	msg.Insert()
+	msg.Insert(txn)
 
 	return msg
 }
@@ -629,7 +630,7 @@ func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event, ms *me
 		dbMsg.MatrixID = evt.ID
 		dbMsg.AuthorID = userTeam.Key.SlackID
 		dbMsg.SlackThreadID = threadTs
-		dbMsg.Insert()
+		dbMsg.Insert(nil)
 	}
 }
 
@@ -796,7 +797,7 @@ func (portal *Portal) handleMatrixReaction(sender *User, evt *event.Event, ms *m
 	dbReaction.AuthorID = userTeam.Key.SlackID
 	dbReaction.MatrixName = reaction.RelatesTo.Key
 	dbReaction.SlackName = emojiID
-	dbReaction.Insert()
+	dbReaction.Insert(nil)
 	portal.log.Debugfln("Inserted reaction %v %s %s %s %s into database", dbReaction.Channel, dbReaction.MatrixEventID, dbReaction.SlackMessageID, dbReaction.AuthorID, dbReaction.SlackName)
 }
 
@@ -1518,7 +1519,7 @@ func (portal *Portal) HandleSlackNormalMessage(user *User, userTeam *database.Us
 		attachment.SlackMessageID = msg.Timestamp
 		attachment.MatrixEventID = resp.EventID
 		attachment.SlackThreadID = msg.ThreadTimestamp
-		attachment.Insert()
+		attachment.Insert(nil)
 	}
 
 	if e.Event != nil {
@@ -1539,7 +1540,7 @@ func (portal *Portal) HandleSlackNormalMessage(user *User, userTeam *database.Us
 			return
 		}
 
-		portal.markMessageHandled(msg.Timestamp, msg.ThreadTimestamp, resp.EventID, e.SlackAuthor)
+		portal.markMessageHandled(nil, msg.Timestamp, msg.ThreadTimestamp, resp.EventID, e.SlackAuthor)
 		go portal.sendDeliveryReceipt(resp.EventID)
 		return
 	}
@@ -1602,7 +1603,7 @@ func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTea
 	dbReaction.AuthorID = msg.User
 	dbReaction.MatrixName = emoji
 	dbReaction.SlackName = msg.Reaction
-	dbReaction.Insert()
+	dbReaction.Insert(nil)
 }
 
 func (portal *Portal) HandleSlackReactionRemoved(user *User, userTeam *database.UserTeam, msg *slack.ReactionRemovedEvent) {
