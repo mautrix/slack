@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -1464,16 +1465,21 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 		content := portal.renderSlackFile(file)
 		portal.addThreadMetadata(&content, msg.ThreadTimestamp)
 		var data bytes.Buffer
-		var url string
+		var err error
 		if file.URLPrivate != "" {
-			url = file.URLPrivate
+			err = userTeam.Client.GetFile(file.URLPrivate, &data)
 		} else if file.PermalinkPublic != "" {
-			url = file.PermalinkPublic
+			client := http.Client{}
+			resp, err := client.Get(file.PermalinkPublic)
+			if err != nil {
+				portal.log.Errorfln("Error downloading Slack file %s: %v", file.ID, err)
+				continue
+			}
+			_, err = data.ReadFrom(resp.Body)
 		} else {
 			portal.log.Errorln("No usable URL found in file object, not bridging file")
 			continue
 		}
-		err := userTeam.Client.GetFile(url, &data)
 		if err != nil {
 			portal.log.Errorfln("Error downloading Slack file %s: %v", file.ID, err)
 			continue
