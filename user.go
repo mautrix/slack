@@ -281,11 +281,7 @@ func (user *User) syncChatDoublePuppetDetails(portal *Portal, justCreated bool) 
 	// TODO sync mute status
 }
 
-func (user *User) login(info *auth.Info, force bool) error {
-	if user.TeamLoggedIn(info.UserEmail, info.TeamName) && !force {
-		return fmt.Errorf("%s is already logged into team %s with %s", user.MXID, info.TeamName, info.UserEmail)
-	}
-
+func (user *User) login(info *auth.Info, force bool) {
 	userTeam := user.bridge.DB.UserTeam.New()
 
 	userTeam.Key.MXID = user.MXID
@@ -308,8 +304,7 @@ func (user *User) login(info *auth.Info, force bool) error {
 
 	user.BridgeStates[info.TeamID] = user.bridge.NewBridgeStateQueue(userTeam, user.log)
 	user.bridge.usersByID[fmt.Sprintf("%s-%s", userTeam.Key.TeamID, userTeam.Key.SlackID)] = user
-	err := user.connectTeam(userTeam)
-	return err
+	user.connectTeam(userTeam)
 }
 
 func (user *User) LoginTeam(email, team, password string) error {
@@ -318,7 +313,8 @@ func (user *User) LoginTeam(email, team, password string) error {
 		return err
 	}
 
-	return user.login(info, false)
+	go user.login(info, false)
+	return nil
 }
 
 func (user *User) TokenLogin(token string, cookieToken string) (*auth.Info, error) {
@@ -327,7 +323,8 @@ func (user *User) TokenLogin(token string, cookieToken string) (*auth.Info, erro
 		return nil, err
 	}
 
-	return info, user.login(info, true)
+	go user.login(info, true)
+	return info, nil
 }
 
 func (user *User) IsLoggedIn() bool {
@@ -462,7 +459,7 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 	user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: "Disconnected for unknown reason"})
 }
 
-func (user *User) connectTeam(userTeam *database.UserTeam) error {
+func (user *User) connectTeam(userTeam *database.UserTeam) {
 	user.log.Infofln("Connecting %s to Slack userteam %s (%s)", user.MXID, userTeam.Key, userTeam.TeamName)
 	slackOptions := []slack.Option{
 		slack.OptionLog(SlackgoLogger{user.log.Sub(fmt.Sprintf("SlackGo/%s", userTeam.Key))}),
@@ -480,8 +477,6 @@ func (user *User) connectTeam(userTeam *database.UserTeam) error {
 	go user.slackMessageHandler(userTeam)
 
 	user.UpdateTeam(userTeam, false)
-
-	return nil
 }
 
 func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
@@ -583,12 +578,12 @@ func (user *User) Connect() error {
 	for key, userTeam := range user.Teams {
 		user.bridge.usersByID[fmt.Sprintf("%s-%s", userTeam.Key.TeamID, userTeam.Key.SlackID)] = user
 		user.BridgeStates[key] = user.bridge.NewBridgeStateQueue(userTeam, user.log)
-		err := user.connectTeam(userTeam)
-		if err != nil {
-			user.log.Errorfln("Error connecting to Slack userteam %s: %v", userTeam.Key, err)
-			// TODO: more detailed error state
-			user.BridgeStates[key].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: err.Error()})
-		}
+		user.connectTeam(userTeam)
+		// if err != nil {
+		// 	user.log.Errorfln("Error connecting to Slack userteam %s: %v", userTeam.Key, err)
+		// 	// TODO: more detailed error state
+		// 	user.BridgeStates[key].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: err.Error()})
+		// }
 	}
 
 	return nil
