@@ -286,24 +286,6 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		return err
 	}
 
-	// TODO: bridge state stuff
-
-	plainName, err := portal.GetPlainName(channel, userTeam)
-	if err == nil && plainName != "" {
-		formattedName := portal.bridge.Config.Bridge.FormatChannelName(config.ChannelNameParams{
-			Name: plainName,
-			Type: portal.getChannelType(channel),
-		})
-		portal.PlainName = plainName
-		portal.Name = formattedName
-	}
-
-	portal.Topic = portal.getTopic(channel, userTeam)
-
-	// TODO: get avatars figured out
-	// portal.Avatar = puppet.Avatar
-	// portal.AvatarURL = puppet.AvatarURL
-
 	bridgeInfoStateKey, bridgeInfo := portal.getBridgeInfo()
 	initialState := []*event.Event{{
 		Type:     event.StateBridge,
@@ -373,10 +355,13 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	portal.ensureUserInvited(user)
 	user.syncChatDoublePuppetDetails(portal, true)
 
-	channelType := portal.getChannelType(channel)
+	typeFound := portal.setChannelType(channel)
+	if !typeFound {
+		portal.log.Warnln("No appropriate type found for channel!")
+	}
 	var members []string
 	// no members are included in channels, only in group DMs
-	switch channelType {
+	switch portal.Type {
 	case database.ChannelTypeChannel:
 		user.updateChatMute(portal, true)
 		members = portal.getChannelMembers(userTeam, 3) // TODO: this just fetches 3 members so channels don't have to look like DMs
@@ -659,12 +644,12 @@ func (portal *Portal) convertMatrixMessage(ctx context.Context, sender *User, us
 	} else if threadTs == "" && content.RelatesTo != nil && content.RelatesTo.InReplyTo != nil { // if the first method failed, try via Matrix reply
 		var slackMessageID string
 		var slackThreadID string
-		parentMessage := portal.bridge.DB.Message.GetByMatrixID(portal.Key, content.GetReplyTo())
+		parentMessage := portal.bridge.DB.Message.GetByMatrixID(portal.Key, content.RelatesTo.GetReplyTo())
 		if parentMessage != nil {
 			slackMessageID = parentMessage.SlackID
 			slackThreadID = parentMessage.SlackThreadID
 		} else {
-			parentAttachment := portal.bridge.DB.Attachment.GetByMatrixID(portal.Key, content.GetReplyTo())
+			parentAttachment := portal.bridge.DB.Attachment.GetByMatrixID(portal.Key, content.RelatesTo.GetReplyTo())
 			if parentAttachment != nil {
 				slackMessageID = parentAttachment.SlackMessageID
 				slackThreadID = parentAttachment.SlackThreadID
@@ -1107,35 +1092,34 @@ func (portal *Portal) UpdateBridgeInfo() {
 	}
 }
 
-func (portal *Portal) getChannelType(channel *slack.Channel) database.ChannelType {
+func (portal *Portal) setChannelType(channel *slack.Channel) bool {
 	if channel == nil {
-		portal.log.Errorln("can't get type of nil channel")
-		return database.ChannelTypeUnknown
+		portal.log.Errorln("can't get type from nil channel metadata")
+		return false
 	}
 
 	// Slack Conversations structures are weird
 	if channel.GroupConversation.Conversation.IsMpIM {
-		return database.ChannelTypeGroupDM
+		portal.Type = database.ChannelTypeGroupDM
+		return true
 	} else if channel.GroupConversation.Conversation.IsIM {
-		return database.ChannelTypeDM
+		portal.Type = database.ChannelTypeDM
+		return true
 	} else if channel.IsChannel {
-		return database.ChannelTypeChannel
+		portal.Type = database.ChannelTypeChannel
+		return true
 	}
 
-	return database.ChannelTypeUnknown
+	portal.log.Errorfln("unknown channel type in metadata")
+	return false
 }
 
-func (portal *Portal) GetPlainName(meta *slack.Channel, sourceTeam *database.UserTeam) (string, error) {
-	channelType := portal.getChannelType(meta)
-	var plainName string
-
-	if channelType == database.ChannelTypeDM || channelType == database.ChannelTypeGroupDM {
-		return "", nil
+func (portal *Portal) GetPlainName(meta *slack.Channel) string {
+	if portal.Type == database.ChannelTypeDM || portal.Type == database.ChannelTypeGroupDM {
+		return ""
 	} else {
-		plainName = meta.Name
+		return meta.Name
 	}
-
-	return plainName, nil
 }
 
 func (portal *Portal) UpdateNameDirect(name string) bool {
@@ -1159,20 +1143,14 @@ func (portal *Portal) UpdateNameDirect(name string) bool {
 }
 
 func (portal *Portal) UpdateName(meta *slack.Channel, sourceTeam *database.UserTeam) bool {
-	channelType := portal.getChannelType(meta)
-	plainName, err := portal.GetPlainName(meta, sourceTeam)
-
-	if err != nil {
-		portal.log.Errorfln("Couldn't update portal name: %v", err)
-		return false
-	}
+	plainName := portal.GetPlainName(meta)
 
 	plainNameChanged := portal.PlainName != plainName
 	portal.PlainName = plainName
 
 	formattedName := portal.bridge.Config.Bridge.FormatChannelName(config.ChannelNameParams{
 		Name: plainName,
-		Type: channelType,
+		Type: portal.Type,
 	})
 
 	return portal.UpdateNameDirect(formattedName) || plainNameChanged
@@ -1224,8 +1202,8 @@ func (portal *Portal) UpdateTopicDirect(topic string) bool {
 	return true
 }
 
-func (portal *Portal) getTopic(meta *slack.Channel, sourceTeam *database.UserTeam) string {
-	switch portal.getChannelType(meta) {
+func (portal *Portal) getTopic(meta *slack.Channel) string {
+	switch portal.Type {
 	case database.ChannelTypeDM, database.ChannelTypeGroupDM:
 		return ""
 	case database.ChannelTypeChannel:
@@ -1248,7 +1226,7 @@ func (portal *Portal) getTopic(meta *slack.Channel, sourceTeam *database.UserTea
 }
 
 func (portal *Portal) UpdateTopic(meta *slack.Channel, sourceTeam *database.UserTeam) bool {
-	matrixTopic := portal.getTopic(meta, sourceTeam)
+	matrixTopic := portal.getTopic(meta)
 
 	changed := portal.Topic != matrixTopic
 	return portal.UpdateTopicDirect(matrixTopic) || changed
@@ -1268,12 +1246,7 @@ func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, me
 		}
 	}
 
-	metaType := portal.getChannelType(meta)
-	if portal.Type != metaType && metaType != database.ChannelTypeUnknown {
-		portal.log.Warnfln("Portal type changed from %s to %s", portal.Type, metaType)
-		portal.Type = metaType
-		changed = true
-	}
+	changed = portal.setChannelType(meta) || changed
 
 	if portal.DMUserID == "" && portal.IsPrivateChat() {
 		portal.DMUserID = meta.User
@@ -1392,7 +1365,6 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 	default:
 		portal.log.Warnfln("Received unknown message subtype %s", msg.Msg.SubType)
 	}
-	return
 }
 
 func (portal *Portal) addThreadMetadata(content *event.MessageEventContent, threadTs string) (hasThread bool, hasReply bool) {
@@ -1470,7 +1442,8 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 			err = userTeam.Client.GetFile(file.URLPrivate, &data)
 		} else if file.PermalinkPublic != "" {
 			client := http.Client{}
-			resp, err := client.Get(file.PermalinkPublic)
+			var resp *http.Response
+			resp, err = client.Get(file.PermalinkPublic)
 			if err != nil {
 				portal.log.Errorfln("Error downloading Slack file %s: %v", file.ID, err)
 				continue
@@ -1559,7 +1532,6 @@ func (portal *Portal) HandleSlackNormalMessage(user *User, userTeam *database.Us
 		go portal.sendDeliveryReceipt(resp.EventID)
 		return
 	}
-	return
 }
 
 func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTeam, msg *slack.ReactionAddedEvent) {
