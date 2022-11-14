@@ -1269,7 +1269,7 @@ func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, me
 	}
 
 	metaType := portal.getChannelType(meta)
-	if portal.Type != metaType {
+	if portal.Type != metaType && metaType != database.ChannelTypeUnknown {
 		portal.log.Warnfln("Portal type changed from %s to %s", portal.Type, metaType)
 		portal.Type = metaType
 		changed = true
