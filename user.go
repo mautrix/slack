@@ -479,19 +479,34 @@ func (user *User) connectTeam(userTeam *database.UserTeam) {
 	user.UpdateTeam(userTeam, false)
 }
 
+func (user *User) isChannelOrOpenIM(channel *slack.Channel, userTeam *database.UserTeam) bool {
+	if !channel.IsIM {
+		return true
+	} else {
+		info, err := userTeam.Client.GetConversationInfo(channel.ID, true)
+		if err != nil {
+			user.log.Errorfln("Error getting information about IM: %v", err)
+			return false
+		}
+		return info.IsOpen
+	}
+}
+
 func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 	channelInfo := map[string]slack.Channel{}
 
 	if !strings.HasPrefix(userTeam.Token, "xoxs") {
 		// TODO: use pagination to make sure we get everything!
 		channels, _, err := userTeam.Client.GetConversationsForUser(&slack.GetConversationsForUserParameters{
-			Types: []string{"public_channel", "private_channel", "mpim"},
+			Types: []string{"public_channel", "private_channel", "mpim", "im"},
 		})
 		if err != nil {
 			user.log.Warnfln("Error fetching channels: %v", err)
 		}
 		for _, channel := range channels {
-			channelInfo[channel.ID] = channel
+			if user.isChannelOrOpenIM(&channel, userTeam) {
+				channelInfo[channel.ID] = channel
+			}
 		}
 	} else {
 		user.log.Warnfln("Not fetching channels for userteam %s: xoxs token type can't fetch user's joined channels", userTeam.Key)
