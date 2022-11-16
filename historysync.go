@@ -156,6 +156,12 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 				insertionEventIds = append(insertionEventIds, resp.BaseInsertionEventID)
 			} else if resp == nil {
 				// the backfill function has already logged an error; just store state in DB and stop filling
+				if len(allMsgs) != 0 {
+					portal.FirstSlackID = allMsgs[len(msgs)-1].Timestamp
+					portal.Update(nil)
+				} else {
+					backfillState.BackfillComplete = true
+				}
 				backfillState.Upsert()
 				return
 			}
