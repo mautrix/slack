@@ -543,6 +543,7 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 		if err != nil {
 			portal.log.Warnln("Error sending pre-backfill dummy event:", err)
 		}
+		req.BeeperNewMessages = true
 	}
 
 	resp, err := portal.MainIntent().BatchSend(portal.MXID, &req)
