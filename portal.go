@@ -1431,6 +1431,10 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 	}
 
 	for _, file := range msg.Files {
+		if file.Size > int(portal.bridge.MediaConfig.UploadSize) {
+			portal.log.Errorfln("%d is too large to upload to Matrix, not bridging file %s", file.Size, file.ID)
+			continue
+		}
 		convertedFile := ConvertedSlackFile{
 			SlackFileID: file.ID,
 		}
