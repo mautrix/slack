@@ -353,7 +353,7 @@ func (portal *Portal) makeBackfillEvent(intent *appservice.IntentAPI, msg *event
 		Parsed: msg,
 	}
 	if portal.bridge.Config.Homeserver.Software == bridgeconfig.SoftwareHungry {
-		if info.SlackThreadTs != "" && info.SlackThreadTs != info.SlackTimestamp {
+		if info.SlackThreadTs != info.SlackTimestamp {
 			threadInfo, found := (*threadInfos)[info.SlackThreadTs]
 			if found {
 				content.Parsed.(*event.MessageEventContent).RelatesTo = &event.RelatesTo{}
@@ -690,6 +690,7 @@ func (portal *Portal) finishBatch(txn dbutil.Transaction, eventIDs []id.EventID,
 			attachment.SlackFileID = file.SlackFileID
 			attachment.SlackMessageID = converted.SlackTimestamp
 			attachment.MatrixEventID = eventIDs[idx]
+			attachment.SlackThreadID = converted.SlackThreadTs
 			attachment.Insert(txn)
 			idx += 1
 		}
