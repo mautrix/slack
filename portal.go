@@ -1644,7 +1644,7 @@ func (portal *Portal) HandleSlackTyping(user *User, userTeam *database.UserTeam,
 	puppet.UpdateInfo(userTeam, nil)
 	intent := puppet.IntentFor(portal)
 
-	_, err := intent.UserTyping(portal.MXID, true, time.Duration(time.Second*3))
+	_, err := intent.UserTyping(portal.MXID, true, time.Duration(time.Second*10))
 	if err != nil {
 		portal.log.Warnfln("Error sending typing status to Matrix: %v", err)
 	}
