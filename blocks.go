@@ -153,7 +153,7 @@ func (portal *Portal) renderRichTextSectionElements(elements []slack.RichTextSec
 		case *slack.RichTextSectionColorElement:
 			htmlText.WriteString(e.Value)
 		case *slack.RichTextSectionDateElement:
-			htmlText.WriteString(e.Timestamp)
+			htmlText.WriteString(e.Timestamp.String())
 		default:
 			portal.log.Warnfln("Slack rich text section contained unknown element %s", e.RichTextSectionElementType())
 		}

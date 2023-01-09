@@ -1239,7 +1239,11 @@ func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, me
 	if meta == nil {
 		portal.log.Debugfln("UpdateInfo called without metadata, fetching from server via %s", sourceTeam.Key.SlackID)
 		var err error
-		meta, err = sourceTeam.Client.GetConversationInfo(portal.Key.ChannelID, true)
+		meta, err = sourceTeam.Client.GetConversationInfo(&slack.GetConversationInfoInput{
+			ChannelID:         portal.Key.ChannelID,
+			IncludeLocale:     true,
+			IncludeNumMembers: true,
+		})
 		if err != nil {
 			portal.log.Errorfln("Failed to fetch meta via %s: %v", sourceTeam.Key.SlackID, err)
 			return nil
@@ -1299,7 +1303,11 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 	}
 
 	if portal.MXID == "" {
-		channel, err := userTeam.Client.GetConversationInfo(msg.Channel, true)
+		channel, err := userTeam.Client.GetConversationInfo(&slack.GetConversationInfoInput{
+			ChannelID:         msg.Channel,
+			IncludeLocale:     true,
+			IncludeNumMembers: true,
+		})
 		if err != nil {
 			portal.log.Errorln("failed to lookup channel info:", err)
 			return

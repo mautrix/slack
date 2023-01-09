@@ -483,7 +483,11 @@ func (user *User) isChannelOrOpenIM(channel *slack.Channel, userTeam *database.U
 	if !channel.IsIM {
 		return true
 	} else {
-		info, err := userTeam.Client.GetConversationInfo(channel.ID, true)
+		info, err := userTeam.Client.GetConversationInfo(&slack.GetConversationInfoInput{
+			ChannelID:         channel.ID,
+			IncludeLocale:     true,
+			IncludeNumMembers: true,
+		})
 		if err != nil {
 			user.log.Errorfln("Error getting information about IM: %v", err)
 			return false
