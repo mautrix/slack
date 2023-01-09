@@ -112,7 +112,7 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 	// Fetch actual messages from Slack.
 	resp, err := userTeam.Client.GetConversationHistory(&slackReqParams)
 	if err != nil {
-		bridge.Log.Errorfln("Error fetching Slack messages for backfilling %s: %v", portal.Key, resp)
+		bridge.Log.Errorfln("Error fetching Slack messages for backfilling %s: %v", portal.Key, err)
 		return
 	}
 	allMsgs := resp.Messages
