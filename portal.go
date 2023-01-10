@@ -739,7 +739,7 @@ func (portal *Portal) handleMatrixReaction(sender *User, evt *event.Event, ms *m
 	} else {
 		slackID = msg.SlackID
 	}
-	if msg.SlackID == "" {
+	if slackID == "" {
 		portal.log.Debugf("Message %s has not yet been sent to slack", reaction.RelatesTo.EventID)
 		ms.sendMessageMetrics(evt, errReactionTargetNotFound, "Error sending", true)
 		return
