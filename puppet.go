@@ -366,6 +366,11 @@ func (puppet *Puppet) UpdateAvatar(url string) bool {
 }
 
 func (puppet *Puppet) UpdateInfo(userTeam *database.UserTeam, info *slack.User) {
+	if strings.HasPrefix(puppet.UserID, "B") {
+		puppet.UpdateInfoBot(userTeam)
+		return
+	}
+
 	puppet.syncLock.Lock()
 	defer puppet.syncLock.Unlock()
 
