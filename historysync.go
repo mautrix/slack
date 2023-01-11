@@ -390,6 +390,10 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 		StateEventsAtStart: []*event.Event{},
 	}
 	if !isForward {
+		if portal.NextBatchID == "" {
+			portal.log.Errorln("No batch ID saved while backfilling backwards! Can't backfill")
+			return nil
+		}
 		req.BatchID = portal.NextBatchID
 	}
 	addedMembers := make(map[id.UserID]*Puppet)
