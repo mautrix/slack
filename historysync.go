@@ -136,7 +136,6 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 
 	bridge.Log.Infofln("Backfilling %d messages in %s, %d messages at a time", len(allMsgs), portal.Key, maxBatchEvents)
 	toBackfill := allMsgs[0:]
-	var insertionEventIds []id.EventID
 	for len(toBackfill) > 0 {
 		var msgs []slack.Message
 		if len(toBackfill) <= maxBatchEvents || maxBatchEvents < 0 {
@@ -153,7 +152,6 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 			resp := portal.backfill(userTeam, msgs, !backfillState.ImmediateComplete, isLatestEvents, forwardPrevID)
 			if resp != nil && (resp.BaseInsertionEventID != "" || !isLatestEvents) {
 				backfillState.MessageCount += len(msgs)
-				insertionEventIds = append(insertionEventIds, resp.BaseInsertionEventID)
 			} else if resp == nil {
 				// the backfill function has already logged an error; just store state in DB and stop filling
 				if len(allMsgs) != 0 {
@@ -168,11 +166,6 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 		}
 	}
 	bridge.Log.Debugfln("Finished backfilling %d messages in %s", len(allMsgs), portal.Key)
-	if len(insertionEventIds) > 0 {
-		portal.sendPostBackfillDummy(
-			parseSlackTimestamp(allMsgs[len(allMsgs)-1].Timestamp),
-			insertionEventIds[0])
-	}
 
 	backfillState.MessageCount += len(allMsgs)
 
@@ -193,127 +186,6 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 	// 	user.markSelfReadFull(portal)
 	// }
 }
-
-// func (bridge *SlackBridge) handleHistorySync(backfillQueue *BackfillQueue, evt *waProto.HistorySync) {
-// 	if evt == nil || evt.SyncType == nil || evt.GetSyncType() == waProto.HistorySync_INITIAL_STATUS_V3 || evt.GetSyncType() == waProto.HistorySync_PUSH_NAME {
-// 		return
-// 	}
-// 	description := fmt.Sprintf("type %s, %d conversations, chunk order %d, progress: %d", evt.GetSyncType(), len(evt.GetConversations()), evt.GetChunkOrder(), evt.GetProgress())
-// 	bridge.Log.Infoln("Storing history sync with", description)
-
-// 	for _, conv := range evt.GetConversations() {
-// 		jid, err := types.ParseJID(conv.GetId())
-// 		if err != nil {
-// 			bridge.Log.Warnfln("Failed to parse chat JID '%s' in history sync: %v", conv.GetId(), err)
-// 			continue
-// 		} else if jid.Server == types.BroadcastServer {
-// 			bridge.Log.Debugfln("Skipping broadcast list %s in history sync", jid)
-// 			continue
-// 		}
-// 		portal := bridge.GetPortalByID(jid)
-
-// 		historySyncConversation := user.bridge.DB.HistorySync.NewConversationWithValues(
-// 			&portal.Key)
-// 		historySyncConversation.Upsert()
-
-// 		for _, rawMsg := range conv.GetMessages() {
-// 			// Don't store messages that will just be skipped.
-// 			msgEvt, err := user.Client.ParseWebMessage(portal.Key.JID, rawMsg.GetMessage())
-// 			if err != nil {
-// 				user.log.Warnln("Dropping historical message due to info parse error:", err)
-// 				continue
-// 			}
-
-// 			msgType := getMessageType(msgEvt.Message)
-// 			if msgType == "unknown" || msgType == "ignore" || msgType == "unknown_protocol" {
-// 				continue
-// 			}
-
-// 			// Don't store unsupported messages.
-// 			if !containsSupportedMessage(msgEvt.Message) {
-// 				continue
-// 			}
-
-// 			message, err := bridge.DB.HistorySync.NewMessageWithValues(user.MXID, conv.GetId(), msgEvt.Info.ID, rawMsg)
-// 			if err != nil {
-// 				bridge.Log.Warnfln("Failed to save message %s in %s. Error: %+v", msgEvt.Info.ID, conv.GetId(), err)
-// 				continue
-// 			}
-// 			message.Insert()
-// 		}
-// 	}
-
-// 	// If this was the initial bootstrap, enqueue immediate backfills for the
-// 	// most recent portals. If it's the last history sync event, start
-// 	// backfilling the rest of the history of the portals.
-// 	if bridge.Config.Bridge.HistorySync.Backfill {
-// 		if evt.GetSyncType() != waProto.HistorySync_INITIAL_BOOTSTRAP && evt.GetProgress() < 98 {
-// 			return
-// 		}
-
-// 		nMostRecent := bridge.DB.HistorySync.GetNMostRecentConversations(user.MXID, bridge.Config.Bridge.HistorySync.MaxInitialConversations)
-// 		if len(nMostRecent) > 0 {
-// 			// Find the portals for all of the conversations.
-// 			portals := []*Portal{}
-// 			for _, conv := range nMostRecent {
-// 				jid, err := types.ParseJID(conv.ConversationID)
-// 				if err != nil {
-// 					bridge.Log.Warnfln("Failed to parse chat JID '%s' in history sync: %v", conv.ConversationID, err)
-// 					continue
-// 				}
-// 				portals = append(portals, bridge.GetPortalByID(jid))
-// 			}
-
-// 			switch evt.GetSyncType() {
-// 			case waProto.HistorySync_INITIAL_BOOTSTRAP:
-// 				// Enqueue immediate backfills for the most recent messages first.
-// 				user.EnqueueImmedateBackfills(portals)
-// 			case waProto.HistorySync_FULL, waProto.HistorySync_RECENT:
-// 				user.EnqueueForwardBackfills(portals)
-// 				// Enqueue deferred backfills as configured.
-// 				user.EnqueueDeferredBackfills(portals)
-// 			}
-
-// 			// Tell the queue to check for new backfill requests.
-// 			backfillQueue.ReCheck()
-// 		}
-// 	}
-// }
-
-// func (bridge *SlackBridge) EnqueueImmedateBackfills(portals []*Portal) {
-// 	for _, portal := range portals {
-// 		maxMessages := bridge.Config.Bridge.Backfill.ImmediateMessages
-// 		initialBackfill := bridge.DB.Backfill.NewWithValues(database.BackfillImmediate, &portal.Key, maxMessages, maxMessages, 0)
-// 		initialBackfill.Insert()
-// 	}
-// }
-
-// func (bridge *SlackBridge) EnqueueDeferredBackfills(portals []*Portal) {
-// 	for _, portal := range portals {
-// 		backfillMessages := bridge.DB.Backfill.NewWithValues(
-// 			database.BackfillDeferred, &portal.Key,
-// 			bridge.Config.Bridge.Backfill.Incremental.MessagesPerBatch,
-// 			bridge.Config.Bridge.Backfill.Incremental.MaxMessages.GetMaxMessagesFor(portal.Type),
-// 			bridge.Config.Bridge.Backfill.Incremental.PostBatchDelay,
-// 		)
-// 		backfillMessages.Insert()
-// 	}
-// }
-
-// func (bridge *SlackBridge) EnqueueForwardBackfills(portals []*Portal) {
-// 	for _, portal := range portals {
-// 		lastMsg := bridge.DB.Message.GetLast(portal.Key)
-// 		if lastMsg == nil {
-// 			continue
-// 		}
-// 		backfill := bridge.DB.Backfill.NewWithValues(
-// 			database.BackfillForward, &portal.Key, -1, -1, 0)
-// 		backfill.Insert()
-// 	}
-// }
-
-// endregion
-// region Portal backfilling
 
 func (portal *Portal) deterministicEventID(sender string, messageID string, partName string) id.EventID {
 	data := fmt.Sprintf("%s/slack/%s/%s", portal.MXID, sender, messageID)
@@ -578,109 +450,9 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 	}
 }
 
-// func (portal *Portal) requestMediaRetries(source *User, eventIDs []id.EventID, infos []*wrappedInfo) {
-// 	for i, info := range infos {
-// 		if info != nil && info.Error == database.MsgErrMediaNotFound && info.MediaKey != nil {
-// 			switch portal.bridge.Config.Bridge.HistorySync.MediaRequests.RequestMethod {
-// 			case config.MediaRequestMethodImmediate:
-// 				err := source.Client.SendMediaRetryReceipt(info.MessageInfo, info.MediaKey)
-// 				if err != nil {
-// 					portal.log.Warnfln("Failed to send post-backfill media retry request for %s: %v", info.ID, err)
-// 				} else {
-// 					portal.log.Debugfln("Sent post-backfill media retry request for %s", info.ID)
-// 				}
-// 			case config.MediaRequestMethodLocalTime:
-// 				req := portal.bridge.DB.MediaBackfillRequest.NewMediaBackfillRequestWithValues(source.MXID, &portal.Key, eventIDs[i], info.MediaKey)
-// 				req.Upsert()
-// 			}
-// 		}
-// 	}
-// }
-
-// func (portal *Portal) appendBatchEvents(converted *ConvertedMessage, info *types.MessageInfo, raw *waProto.WebMessageInfo, eventsArray *[]*event.Event, infoArray *[]*wrappedInfo) error {
-// 	if portal.bridge.Config.Bridge.CaptionInMessage {
-// 		converted.MergeCaption()
-// 	}
-// 	mainEvt, err := portal.wrapBatchEvent(info, converted.Intent, converted.Type, converted.Content, converted.Extra, "")
-// 	if err != nil {
-// 		return err
-// 	}
-// 	expirationStart := raw.GetEphemeralStartTimestamp()
-// 	mainInfo := &wrappedInfo{
-// 		MessageInfo:     info,
-// 		Type:            database.MsgNormal,
-// 		Error:           converted.Error,
-// 		MediaKey:        converted.MediaKey,
-// 		ExpirationStart: expirationStart,
-// 		ExpiresIn:       converted.ExpiresIn,
-// 	}
-// 	if converted.Caption != nil {
-// 		captionEvt, err := portal.wrapBatchEvent(info, converted.Intent, converted.Type, converted.Caption, nil, "caption")
-// 		if err != nil {
-// 			return err
-// 		}
-// 		*eventsArray = append(*eventsArray, mainEvt, captionEvt)
-// 		*infoArray = append(*infoArray, mainInfo, nil)
-// 	} else {
-// 		*eventsArray = append(*eventsArray, mainEvt)
-// 		*infoArray = append(*infoArray, mainInfo)
-// 	}
-// 	if converted.MultiEvent != nil {
-// 		for i, subEvtContent := range converted.MultiEvent {
-// 			subEvt, err := portal.wrapBatchEvent(info, converted.Intent, converted.Type, subEvtContent, nil, fmt.Sprintf("multi-%d", i))
-// 			if err != nil {
-// 				return err
-// 			}
-// 			*eventsArray = append(*eventsArray, subEvt)
-// 			*infoArray = append(*infoArray, nil)
-// 		}
-// 	}
-// 	// Sending reactions in the same batch requires deterministic event IDs, so only do it on hungryserv
-// 	if portal.bridge.Config.Homeserver.Software == bridgeconfig.SoftwareHungry {
-// 		for _, reaction := range raw.GetReactions() {
-// 			reactionEvent, reactionInfo := portal.wrapBatchReaction(source, reaction, mainEvt.ID, info.Timestamp)
-// 			if reactionEvent != nil {
-// 				*eventsArray = append(*eventsArray, reactionEvent)
-// 				*infoArray = append(*infoArray, &wrappedInfo{
-// 					MessageInfo:    reactionInfo,
-// 					ReactionTarget: info.ID,
-// 					Type:           database.MsgReaction,
-// 				})
-// 			}
-// 		}
-// 	}
-// 	return nil
-// }
-
-// func (portal *Portal) wrapBatchEvent(slackSender string, slackID string, timestamp int64, intent *appservice.IntentAPI, eventType event.Type, content *event.MessageEventContent, extraContent map[string]interface{}, partName string) (*event.Event, error) {
-// 	wrappedContent := event.Content{
-// 		Parsed: content,
-// 		Raw:    extraContent,
-// 	}
-// 	newEventType, err := portal.encrypt(intent, &wrappedContent, eventType)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	if newEventType != eventType {
-// 		intent.AddDoublePuppetValue(&wrappedContent)
-// 	}
-// 	var eventID id.EventID
-// 	if portal.bridge.Config.Homeserver.Software == bridgeconfig.SoftwareHungry {
-// 		eventID = portal.deterministicEventID(slackSender, slackID, partName)
-// 	}
-
-// 	return &event.Event{
-// 		ID:        eventID,
-// 		Sender:    intent.UserID,
-// 		Type:      newEventType,
-// 		Timestamp: timestamp,
-// 		Content:   wrappedContent,
-// 	}, nil
-// }
-
 func (portal *Portal) finishBatch(txn dbutil.Transaction, eventIDs []id.EventID, convertedMessages *[]ConvertedSlackMessage) {
 	var idx int
-	// This is a dubious way to match up the received event IDs back to the converted slack messages
+
 	for _, converted := range *convertedMessages {
 		for _, file := range converted.FileAttachments {
 			if idx >= len(eventIDs) {
@@ -720,10 +492,11 @@ func (portal *Portal) finishBatch(txn dbutil.Transaction, eventIDs []id.EventID,
 			}
 		}
 	}
+	portal.sendPostBackfillDummy(eventIDs[0])
 	portal.log.Infofln("Successfully sent %d events", len(eventIDs))
 }
 
-func (portal *Portal) sendPostBackfillDummy(lastTimestamp time.Time, insertionEventId id.EventID) {
+func (portal *Portal) sendPostBackfillDummy(insertionEventId id.EventID) {
 	_, err := portal.MainIntent().SendMessageEvent(portal.MXID, HistorySyncMarker, map[string]interface{}{
 		"org.matrix.msc2716.marker.insertion": insertionEventId,
 		//"m.marker.insertion":                  insertionEventId,
@@ -732,14 +505,6 @@ func (portal *Portal) sendPostBackfillDummy(lastTimestamp time.Time, insertionEv
 		portal.log.Errorln("Error sending post-backfill dummy event:", err)
 		return
 	}
-	// msg := portal.bridge.DB.Message.New()
-	// msg.Channel = portal.Key
-	// msg.MatrixID = resp.EventID
-	// msg.JID = types.MessageID(resp.EventID)
-	// msg.Timestamp = lastTimestamp.Add(1 * time.Second)
-	// msg.Sent = true
-	// msg.Type = database.MsgFake
-	// msg.Insert(nil)
 }
 
 func (portal *Portal) updateBackfillStatus(backfillState *database.BackfillState) {
