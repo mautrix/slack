@@ -498,13 +498,6 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 		portal.log.Warnln("No messages to send in batch!")
 		return nil
 	}
-	if len(req.BatchID) == 0 {
-		portal.log.Debugln("Sending a dummy event to avoid forward extremity errors with backfill")
-		_, err := portal.MainIntent().SendMessageEvent(portal.MXID, event.Type{Type: "fi.mau.dummy.pre_backfill", Class: event.MessageEventType}, struct{}{})
-		if err != nil {
-			portal.log.Warnln("Error sending pre-backfill dummy event:", err)
-		}
-	}
 
 	beforeFirstMessageTimestampMillis := req.Events[0].Timestamp - 1
 
@@ -540,13 +533,20 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 		return nil
 	}
 
-	if len(req.BatchID) == 0 || isForward {
+	if isForward {
 		portal.log.Debugln("Sending a dummy event to avoid forward extremity errors with backfill")
 		_, err := portal.MainIntent().SendMessageEvent(portal.MXID, PreBackfillDummyEvent, struct{}{})
 		if err != nil {
 			portal.log.Warnln("Error sending pre-backfill dummy event:", err)
 		}
-		req.BeeperNewMessages = true
+		conversationInfo, err := userTeam.Client.GetConversationInfo(&slack.GetConversationInfoInput{
+			ChannelID: portal.Key.ChannelID,
+		})
+		if err != nil || conversationInfo.LastRead == convertedMessages[len(convertedMessages)-1].SlackTimestamp {
+			req.BeeperNewMessages = false
+		} else {
+			req.BeeperNewMessages = true
+		}
 	}
 
 	resp, err := portal.MainIntent().BatchSend(portal.MXID, &req)
@@ -566,7 +566,6 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 			if earliestBridged != "" {
 				portal.FirstSlackID = earliestBridged
 			}
-			//portal.NextBatchID = resp.NextBatchID
 			portal.Update(txn)
 		}
 
