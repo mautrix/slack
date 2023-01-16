@@ -240,7 +240,10 @@ func (portal *Portal) IsPrivateChat() bool {
 
 func (portal *Portal) MainIntent() *appservice.IntentAPI {
 	if portal.IsPrivateChat() && portal.DMUserID != "" {
-		return portal.bridge.GetPuppetByID(portal.Key.TeamID, portal.DMUserID).DefaultIntent()
+		puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, portal.DMUserID)
+		if puppet.CustomMXID == "" {
+			return puppet.IntentFor(portal)
+		}
 	}
 
 	return portal.bridge.Bot
@@ -248,6 +251,7 @@ func (portal *Portal) MainIntent() *appservice.IntentAPI {
 
 func (portal *Portal) syncParticipants(source *User, sourceTeam *database.UserTeam, participants []string) {
 	for _, participant := range participants {
+		portal.log.Infofln("Getting participant %s", participant)
 		puppet := portal.bridge.GetPuppetByID(sourceTeam.Key.TeamID, participant)
 
 		puppet.UpdateInfo(sourceTeam, nil)

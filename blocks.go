@@ -113,8 +113,8 @@ func (portal *Portal) renderRichTextSectionElements(elements []slack.RichTextSec
 			}
 		case *slack.RichTextSectionUserElement:
 			puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, e.UserID)
-			if puppet != nil && puppet.MXID != "" {
-				htmlText.WriteString(fmt.Sprintf(`<a href="https://matrix.to/#/%s">%s</a>`, puppet.MXID, puppet.Name))
+			if puppet != nil && puppet.GetCustomOrGhostMXID() != "" {
+				htmlText.WriteString(fmt.Sprintf(`<a href="https://matrix.to/#/%s">%s</a>`, puppet.GetCustomOrGhostMXID(), puppet.Name))
 			} else { // TODO: register puppet and get info if not exist
 				htmlText.WriteString(fmt.Sprintf("@%s", e.UserID))
 			}

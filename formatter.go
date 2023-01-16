@@ -238,8 +238,8 @@ func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source [
 	switch node := n.(type) {
 	case *astSlackUserMention:
 		puppet := r.portal.bridge.GetPuppetByID(r.portal.Key.TeamID, node.userID)
-		if puppet != nil && puppet.MXID != "" {
-			_, _ = fmt.Fprintf(w, `<a href="https://matrix.to/#/%s">%s</a>`, puppet.MXID, puppet.Name)
+		if puppet != nil && puppet.GetCustomOrGhostMXID() != "" {
+			_, _ = fmt.Fprintf(w, `<a href="https://matrix.to/#/%s">%s</a>`, puppet.GetCustomOrGhostMXID(), puppet.Name)
 		} else { // TODO: get puppet info if not exist
 			if node.label != "" {
 				_, _ = fmt.Fprintf(w, `@%s`, node.label)

@@ -53,6 +53,14 @@ func (puppet *Puppet) GetMXID() id.UserID {
 	return puppet.MXID
 }
 
+func (puppet *Puppet) GetCustomOrGhostMXID() id.UserID {
+	if puppet.CustomMXID != "" {
+		return puppet.CustomMXID
+	} else {
+		return puppet.MXID
+	}
+}
+
 var userIDRegex *regexp.Regexp
 
 func (br *SlackBridge) NewPuppet(dbPuppet *database.Puppet) *Puppet {

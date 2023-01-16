@@ -385,16 +385,15 @@ func (portal *Portal) makeBackfillEvent(intent *appservice.IntentAPI, msg *event
 
 func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Message, isForward, isLatest bool, prevEventID id.EventID) *mautrix.RespBatchSend {
 	req := mautrix.ReqBatchSend{
-		PrevEventID:        portal.FirstEventID,
 		Events:             []*event.Event{},
 		StateEventsAtStart: []*event.Event{},
 	}
 	if !isForward {
-		if portal.NextBatchID == "" {
-			portal.log.Errorln("No batch ID saved while backfilling backwards! Can't backfill")
+		if portal.FirstEventID == "" {
+			portal.log.Errorln("No first event ID saved while backfilling backwards! Can't backfill")
 			return nil
 		}
-		req.BatchID = portal.NextBatchID
+		req.PrevEventID = portal.FirstEventID
 	}
 	addedMembers := make(map[id.UserID]*Puppet)
 	convertedMessages := []ConvertedSlackMessage{}
@@ -446,11 +445,11 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 		ts := parseSlackTimestamp(converted.SlackTimestamp).UnixMilli()
 		puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, converted.SlackAuthor)
 		puppet.UpdateInfo(userTeam, nil)
-		if puppet == nil || puppet.MXID == "" {
+		if puppet == nil || puppet.GetCustomOrGhostMXID() == "" {
 			portal.log.Warnfln("No puppet found for %s while batch filling!", converted.SlackAuthor)
 			continue
 		} else {
-			addedMembers[puppet.MXID] = puppet
+			addedMembers[puppet.GetCustomOrGhostMXID()] = puppet
 		}
 		intent := puppet.IntentFor(portal)
 		for i, file := range converted.FileAttachments {
@@ -484,7 +483,7 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 					}
 					reactionPuppet.UpdateInfo(userTeam, nil)
 					req.Events = append(req.Events, &event.Event{
-						Sender:    reactionPuppet.MXID,
+						Sender:    reactionPuppet.GetCustomOrGhostMXID(),
 						Type:      event.EventReaction,
 						Timestamp: ts,
 						Content: event.Content{
@@ -514,7 +513,7 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 			// Hungryserv doesn't need state_events_at_start, it can figure out memberships automatically
 			continue
 		}
-		mxid := puppet.MXID.String()
+		mxid := puppet.GetCustomOrGhostMXID().String()
 		content := event.MemberEventContent{
 			Membership:  event.MembershipJoin,
 			Displayname: puppet.Name,
@@ -530,7 +529,7 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 			Content:   event.Content{Parsed: &inviteContent},
 		}, &event.Event{
 			Type:      event.StateMember,
-			Sender:    puppet.MXID,
+			Sender:    puppet.GetCustomOrGhostMXID(),
 			StateKey:  &mxid,
 			Timestamp: beforeFirstMessageTimestampMillis,
 			Content:   event.Content{Parsed: &content},
@@ -567,7 +566,7 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 			if earliestBridged != "" {
 				portal.FirstSlackID = earliestBridged
 			}
-			portal.NextBatchID = resp.NextBatchID
+			//portal.NextBatchID = resp.NextBatchID
 			portal.Update(txn)
 		}
 
