@@ -1292,8 +1292,14 @@ type ConvertedSlackMessage struct {
 	SlackThread     []slack.Message
 }
 
-// Returns bool: whether or not this resulted in a Matrix message in the room
 func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam, msg *slack.MessageEvent) {
+	if portal.bridge.Config.Bridge.Backfill.Enable {
+		backfillState := portal.bridge.DB.Backfill.GetBackfillState(&portal.Key)
+		if backfillState != nil && !backfillState.BackfillComplete && !backfillState.ImmediateComplete {
+			portal.log.Infofln("Ignoring Slack message %s because immediate backfill for this room is still pending", msg.Timestamp)
+			return
+		}
+	}
 	portal.slackMessageLock.Lock()
 	defer portal.slackMessageLock.Unlock()
 
