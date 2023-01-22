@@ -1153,8 +1153,8 @@ func (portal *Portal) UpdateName(meta *slack.Channel, sourceTeam *database.UserT
 	portal.PlainName = plainName
 
 	formattedName := portal.bridge.Config.Bridge.FormatChannelName(config.ChannelNameParams{
-		Name: plainName,
-		Type: portal.Type,
+		Name:     plainName,
+		Type:     portal.Type,
 		TeamName: sourceTeam.TeamName,
 	})
 
