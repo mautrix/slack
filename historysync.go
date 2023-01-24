@@ -354,13 +354,18 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 						continue
 					}
 					reactionPuppet.UpdateInfo(userTeam, nil)
+					eventContent := event.Content{
+						Raw:    map[string]interface{}{},
+						Parsed: content,
+					}
+					if reactionPuppet.CustomMXID != "" {
+						eventContent.Raw[doublePuppetKey] = doublePuppetValue
+					}
 					req.Events = append(req.Events, &event.Event{
 						Sender:    reactionPuppet.GetCustomOrGhostMXID(),
 						Type:      event.EventReaction,
 						Timestamp: ts,
-						Content: event.Content{
-							Parsed: content,
-						},
+						Content:   eventContent,
 					})
 				}
 			}
