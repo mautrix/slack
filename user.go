@@ -410,7 +410,6 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 		case *slack.InvalidAuthEvent:
 			user.log.Errorln("invalid authentication token")
 
-			user.LogoutUserTeam(userTeam)
 			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateBadCredentials})
 
 			// TODO: Should drop a message in the management room
