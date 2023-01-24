@@ -181,8 +181,9 @@ func (bc BridgeConfig) FormatBotDisplayname(bot *slack.Bot) string {
 }
 
 type ChannelNameParams struct {
-	Name string
-	Type database.ChannelType
+	Name     string
+	Type     database.ChannelType
+	TeamName string
 }
 
 func (bc BridgeConfig) FormatChannelName(params ChannelNameParams) string {
