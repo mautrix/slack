@@ -38,12 +38,19 @@ func shortcodeToEmoji(code string) string {
 }
 
 func emojiToShortcode(emoji string) string {
-	for code, e := range emojis {
-		if emoji == e {
-			return code
+	var partCodes []string
+	for _, r := range emoji {
+		if r == '\ufe0f' { // ignore unicode variation selector
+			continue
+		}
+		for code, e := range emojis {
+			if string(r) == e {
+				partCodes = append(partCodes, code)
+				continue
+			}
 		}
 	}
-	return ""
+	return strings.Join(partCodes, "::")
 }
 
 func init() {
