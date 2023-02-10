@@ -149,7 +149,7 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 		if len(msgs) > 0 {
 			time.Sleep(time.Duration(bridge.Config.Bridge.Backfill.Incremental.PostBatchDelay) * time.Second)
 			bridge.Log.Debugfln("Backfilling %d messages in %s", len(msgs), portal.Key)
-			resp := portal.backfill(userTeam, msgs, !backfillState.ImmediateComplete, isLatestEvents, forwardPrevID)
+			resp := portal.backfill(userTeam, msgs, !backfillState.ImmediateComplete, forwardPrevID)
 			if resp != nil && (resp.BaseInsertionEventID != "" || !isLatestEvents) {
 				backfillState.MessageCount += len(msgs)
 			} else if resp == nil {
@@ -255,7 +255,7 @@ func (portal *Portal) makeBackfillEvent(intent *appservice.IntentAPI, msg *event
 	return &e
 }
 
-func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Message, isForward, isLatest bool, prevEventID id.EventID) *mautrix.RespBatchSend {
+func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Message, isForward bool, prevEventID id.EventID) *mautrix.RespBatchSend {
 	req := mautrix.ReqBatchSend{
 		Events:             []*event.Event{},
 		StateEventsAtStart: []*event.Event{},

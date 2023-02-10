@@ -421,6 +421,23 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 			key := database.NewPortalKey(userTeam.Key.TeamID, event.Channel)
 			portal := user.bridge.GetPortalByID(key)
 			if portal != nil {
+				if portal.MXID == "" {
+					channel, err := userTeam.Client.GetConversationInfo(&slack.GetConversationInfoInput{
+						ChannelID:         event.Channel,
+						IncludeLocale:     true,
+						IncludeNumMembers: true,
+					})
+					if err != nil {
+						portal.log.Errorln("failed to lookup channel info:", err)
+						return
+					}
+
+					portal.log.Debugln("Creating Matrix room from incoming message")
+					if err := portal.CreateMatrixRoom(user, userTeam, channel, false); err != nil {
+						portal.log.Errorln("Failed to create portal room:", err)
+						return
+					}
+				}
 				portal.HandleSlackMessage(user, userTeam, event)
 			}
 		case *slack.ReactionAddedEvent:

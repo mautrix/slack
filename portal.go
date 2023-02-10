@@ -273,6 +273,9 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	portal.roomCreateLock.Lock()
 	defer portal.roomCreateLock.Unlock()
 
+	portal.slackMessageLock.Lock()
+	defer portal.slackMessageLock.Unlock()
+
 	// If we have a matrix id the room should exist so we have nothing to do.
 	if portal.MXID != "" {
 		return nil
@@ -391,10 +394,30 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		portal.Update(nil)
 	}
 
-	portal.log.Debugln("Enqueueing backfills")
-	backfillState := portal.bridge.DB.Backfill.NewBackfillState(&portal.Key)
-	backfillState.Upsert()
-	portal.bridge.BackfillQueue.ReCheck()
+	if portal.bridge.Config.Bridge.Backfill.Enable {
+		portal.log.Debugln("Performing initial backfill batch")
+		initialMessages, err := userTeam.Client.GetConversationHistory(&slack.GetConversationHistoryParameters{
+			ChannelID: portal.Key.ChannelID,
+			Inclusive: true,
+			Limit:     portal.bridge.Config.Bridge.Backfill.ImmediateMessages,
+		})
+		backfillState := portal.bridge.DB.Backfill.NewBackfillState(&portal.Key)
+		if err != nil {
+			portal.log.Errorfln("Error fetching initial backfill messages: %v", err)
+			backfillState.BackfillComplete = true
+		} else {
+			resp := portal.backfill(userTeam, initialMessages.Messages, true, "")
+			if resp != nil {
+				backfillState.ImmediateComplete = true
+				backfillState.MessageCount += len(initialMessages.Messages)
+			} else {
+				backfillState.BackfillComplete = true
+			}
+		}
+		portal.log.Debugln("Enqueueing backfill")
+		backfillState.Upsert()
+		portal.bridge.BackfillQueue.ReCheck()
+	}
 
 	return nil
 }
@@ -1294,13 +1317,6 @@ type ConvertedSlackMessage struct {
 }
 
 func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam, msg *slack.MessageEvent) {
-	if portal.bridge.Config.Bridge.Backfill.Enable {
-		backfillState := portal.bridge.DB.Backfill.GetBackfillState(&portal.Key)
-		if backfillState != nil && !backfillState.BackfillComplete && !backfillState.ImmediateComplete {
-			portal.log.Infofln("Ignoring Slack message %s because immediate backfill for this room is still pending", msg.Timestamp)
-			return
-		}
-	}
 	portal.slackMessageLock.Lock()
 	defer portal.slackMessageLock.Unlock()
 
@@ -1311,24 +1327,6 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 	if msg.Msg.IsEphemeral {
 		portal.log.Debugfln("Ignoring ephemeral message")
 		return
-	}
-
-	if portal.MXID == "" {
-		channel, err := userTeam.Client.GetConversationInfo(&slack.GetConversationInfoInput{
-			ChannelID:         msg.Channel,
-			IncludeLocale:     true,
-			IncludeNumMembers: true,
-		})
-		if err != nil {
-			portal.log.Errorln("failed to lookup channel info:", err)
-			return
-		}
-
-		portal.log.Debugln("Creating Matrix room from incoming message")
-		if err := portal.CreateMatrixRoom(user, userTeam, channel, false); err != nil {
-			portal.log.Errorln("Failed to create portal room:", err)
-			return
-		}
 	}
 
 	existing := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Msg.Timestamp)
