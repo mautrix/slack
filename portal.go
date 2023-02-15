@@ -306,7 +306,7 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	}}
 
 	creationContent := make(map[string]interface{})
-	creationContent["m.federate"] = false
+	creationContent["m.federate"] = portal.bridge.Config.Bridge.FederateRooms
 
 	var invite []id.UserID
 
