@@ -101,6 +101,8 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 	userTeam := bridge.DB.UserTeam.GetFirstUserTeamForPortal(&portal.Key)
 	if userTeam == nil {
 		bridge.Log.Errorfln("Couldn't find logged in user with access to %s for backfilling!", portal.Key)
+		backfillState.BackfillComplete = true
+		backfillState.Upsert()
 		return
 	}
 	if userTeam.CookieToken != "" {
@@ -113,6 +115,8 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 	resp, err := userTeam.Client.GetConversationHistory(&slackReqParams)
 	if err != nil {
 		bridge.Log.Errorfln("Error fetching Slack messages for backfilling %s: %v", portal.Key, err)
+		backfillState.BackfillComplete = true
+		backfillState.Upsert()
 		return
 	}
 	allMsgs := resp.Messages
