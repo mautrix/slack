@@ -947,6 +947,8 @@ func (portal *Portal) leave(userTeam *database.UserTeam) {
 
 	intent := portal.bridge.GetPuppetByID(portal.Key.TeamID, userTeam.Key.SlackID).IntentFor(portal)
 	intent.LeaveRoom(portal.MXID)
+
+	portal.cleanupIfEmpty()
 }
 
 func (portal *Portal) delete() {
@@ -972,6 +974,14 @@ func (portal *Portal) cleanupIfEmpty() {
 	if len(users) == 0 {
 		portal.log.Infoln("Room seems to be empty, cleaning up...")
 		portal.delete()
+		if portal.bridge.SpecVersions.UnstableFeatures["com.beeper.room_yeeting"] {
+			intent := portal.MainIntent()
+			err := intent.BeeperDeleteRoom(portal.MXID)
+			if err == nil || errors.Is(err, mautrix.MNotFound) {
+				return
+			}
+			portal.log.Warnfln("Failed to delete %s using hungryserv yeet endpoint, falling back to normal behavior: %v", portal.MXID, err)
+		}
 		portal.cleanup(false)
 	}
 }
