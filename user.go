@@ -508,7 +508,7 @@ func (user *User) isChannelOrOpenIM(channel *slack.Channel, userTeam *database.U
 			user.log.Errorfln("Error getting information about IM: %v", err)
 			return false
 		}
-		return info.IsOpen
+		return info.Latest != nil && info.Latest.SubType != "joiner_notification_for_inviter" && info.Latest.SubType != "joiner_notification"
 	}
 }
 
