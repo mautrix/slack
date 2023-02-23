@@ -429,13 +429,13 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 					})
 					if err != nil {
 						portal.log.Errorln("failed to lookup channel info:", err)
-						return
+						continue
 					}
 
 					portal.log.Debugln("Creating Matrix room from incoming message")
 					if err := portal.CreateMatrixRoom(user, userTeam, channel, false); err != nil {
 						portal.log.Errorln("Failed to create portal room:", err)
-						return
+						continue
 					}
 				}
 				portal.HandleSlackMessage(user, userTeam, event)
