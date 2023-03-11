@@ -1141,12 +1141,21 @@ func (portal *Portal) setChannelType(channel *slack.Channel) bool {
 	return false
 }
 
-func (portal *Portal) GetPlainName(meta *slack.Channel) string {
-	if portal.Type == database.ChannelTypeDM || portal.Type == database.ChannelTypeGroupDM {
-		return ""
-	} else {
-		return meta.Name
+func (portal *Portal) GetPlainName(meta *slack.Channel, sourceTeam *database.UserTeam) string {
+	plainName := ""
+
+	if portal.Type == database.ChannelTypeGroupDM {
+		for i := 0; i < len(meta.GroupConversation.Members); i++ {
+			if plainName != "" {
+				plainName += ", "
+			}
+			plainName += sourceTeam.GetSlackUserNameBySlackID(meta.GroupConversation.Members[i])
+		}
+	} else if portal.Type != database.ChannelTypeDM {
+		plainName = meta.Name
 	}
+
+	return plainName
 }
 
 func (portal *Portal) UpdateNameDirect(name string) bool {
@@ -1170,8 +1179,7 @@ func (portal *Portal) UpdateNameDirect(name string) bool {
 }
 
 func (portal *Portal) UpdateName(meta *slack.Channel, sourceTeam *database.UserTeam) bool {
-	plainName := portal.GetPlainName(meta)
-
+	plainName := portal.GetPlainName(meta, sourceTeam)
 	plainNameChanged := portal.PlainName != plainName
 	portal.PlainName = plainName
 

@@ -187,7 +187,7 @@ type ChannelNameParams struct {
 }
 
 func (bc BridgeConfig) FormatChannelName(params ChannelNameParams) string {
-	if params.Type == database.ChannelTypeDM || params.Type == database.ChannelTypeGroupDM {
+	if params.Type == database.ChannelTypeDM {
 		return ""
 	} else {
 		var buffer strings.Builder
