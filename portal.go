@@ -1356,7 +1356,7 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 	}
 
 	switch msg.Msg.SubType {
-	case "", "me_message", "bot_message": // Regular messages and /me
+	case "", "me_message", "bot_message", "thread_broadcast": // Regular messages and /me
 		portal.HandleSlackNormalMessage(user, userTeam, &msg.Msg, nil)
 	case "message_changed":
 		portal.HandleSlackNormalMessage(user, userTeam, msg.SubMessage, existing)
@@ -1386,7 +1386,7 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 				attachment.Delete()
 			}
 		}
-	case "message_replied", "group_join", "group_leave", "channel_join", "channel_leave", "thread_broadcast": // Not yet an exhaustive list.
+	case "message_replied", "group_join", "group_leave", "channel_join", "channel_leave": // Not yet an exhaustive list.
 		// These subtypes are simply ignored, because they're handled elsewhere/in other ways (Slack sends multiple info of these events)
 		portal.log.Debugfln("Received message subtype %s, which is ignored", msg.Msg.SubType)
 	default:
