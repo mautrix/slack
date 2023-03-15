@@ -519,6 +519,7 @@ func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 		// TODO: use pagination to make sure we get everything!
 		channels, _, err := userTeam.Client.GetConversationsForUser(&slack.GetConversationsForUserParameters{
 			Types: []string{"public_channel", "private_channel", "mpim", "im"},
+			Limit: 999,
 		})
 		if err != nil {
 			user.log.Warnfln("Error fetching channels: %v", err)
