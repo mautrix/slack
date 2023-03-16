@@ -103,6 +103,8 @@ type BridgeConfig struct {
 	Backfill struct {
 		Enable bool `yaml:"enable"`
 
+		ConversationsCount int `yaml:"conversations_count"`
+
 		UnreadHoursThreshold int `yaml:"unread_hours_threshold"`
 
 		ImmediateMessages int `yaml:"immediate_messages"`

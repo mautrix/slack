@@ -140,6 +140,10 @@ bridge:
         # Allow backfilling at all? Requires MSC2716 support on homeserver.
         enable: false
 
+        # Maximum number of conversations to fetch from Slack when syncing team from Slack.
+        # Must be 0-999
+        conversations_count: 200
+
         # If a backfilled chat is older than this number of hours, mark it as read even if it's unread on Slack.
         # Set to -1 to let any chat be unread.
         unread_hours_threshold: 720
