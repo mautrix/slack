@@ -423,7 +423,7 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 		conversationInfo, err := userTeam.Client.GetConversationInfo(&slack.GetConversationInfoInput{
 			ChannelID: portal.Key.ChannelID,
 		})
-		if err != nil || conversationInfo.LastRead == convertedMessages[len(convertedMessages)-1].SlackTimestamp {
+		if err != nil || conversationInfo.LastRead == convertedMessages[len(convertedMessages)-1].SlackTimestamp || time.Since(parseSlackTimestamp(convertedMessages[len(convertedMessages)-1].SlackTimestamp)).Hours() > 720 {
 			req.BeeperNewMessages = false
 		} else {
 			req.BeeperNewMessages = true
