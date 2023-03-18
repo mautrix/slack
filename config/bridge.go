@@ -75,6 +75,7 @@ type BridgeConfig struct {
 
 	SyncWithCustomPuppets bool `yaml:"sync_with_custom_puppets"`
 	SyncDirectChatList    bool `yaml:"sync_direct_chat_list"`
+	FederateRooms         bool `yaml:"federate_rooms"`
 	DefaultBridgeReceipts bool `yaml:"default_bridge_receipts"`
 	DefaultBridgePresence bool `yaml:"default_bridge_presence"`
 
@@ -101,6 +102,8 @@ type BridgeConfig struct {
 
 	Backfill struct {
 		Enable bool `yaml:"enable"`
+
+		ConversationsCount int `yaml:"conversations_count"`
 
 		UnreadHoursThreshold int `yaml:"unread_hours_threshold"`
 

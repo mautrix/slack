@@ -429,13 +429,13 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 					})
 					if err != nil {
 						portal.log.Errorln("failed to lookup channel info:", err)
-						return
+						continue
 					}
 
 					portal.log.Debugln("Creating Matrix room from incoming message")
 					if err := portal.CreateMatrixRoom(user, userTeam, channel, false); err != nil {
 						portal.log.Errorln("Failed to create portal room:", err)
-						return
+						continue
 					}
 				}
 				portal.HandleSlackMessage(user, userTeam, event)
@@ -508,7 +508,7 @@ func (user *User) isChannelOrOpenIM(channel *slack.Channel, userTeam *database.U
 			user.log.Errorfln("Error getting information about IM: %v", err)
 			return false
 		}
-		return info.IsOpen
+		return info.Latest != nil && info.Latest.SubType != "joiner_notification_for_inviter" && info.Latest.SubType != "joiner_notification"
 	}
 }
 
@@ -519,6 +519,7 @@ func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 		// TODO: use pagination to make sure we get everything!
 		channels, _, err := userTeam.Client.GetConversationsForUser(&slack.GetConversationsForUserParameters{
 			Types: []string{"public_channel", "private_channel", "mpim", "im"},
+			Limit: user.bridge.Config.Bridge.Backfill.ConversationsCount,
 		})
 		if err != nil {
 			user.log.Warnfln("Error fetching channels: %v", err)
@@ -590,7 +591,11 @@ func (user *User) UpdateTeam(userTeam *database.UserTeam, force bool) error {
 		currentTeamInfo.TeamUrl = teamInfo.URL
 		changed = true
 	}
-	if teamInfo.Icon["image_230"] != nil && currentTeamInfo.Avatar != teamInfo.Icon["image_230"] {
+	if teamInfo.Icon["image_default"] != nil && teamInfo.Icon["image_default"] == true && currentTeamInfo.Avatar != "" {
+		currentTeamInfo.Avatar = ""
+		currentTeamInfo.AvatarUrl = id.MustParseContentURI("")
+		changed = true
+	} else if teamInfo.Icon["image_default"] != nil && teamInfo.Icon["image_default"] == false && teamInfo.Icon["image_230"] != nil && currentTeamInfo.Avatar != teamInfo.Icon["image_230"] {
 		avatar, err := uploadAvatar(user.bridge.AS.BotIntent(), teamInfo.Icon["image_230"].(string))
 		if err != nil {
 			user.log.Warnfln("Error uploading new team avatar for team %s: %v", userTeam.Key.TeamID, err)

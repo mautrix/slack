@@ -96,6 +96,9 @@ bridge:
     # Note that updating the m.direct event is not atomic (except with mautrix-asmux)
     # and is therefore prone to race conditions.
     sync_direct_chat_list: false
+    # Whether or not created rooms should have federation enabled.
+    # If false, created portal rooms will never be federated.
+    federate_rooms: true
 
     # Servers to always allow double puppeting from
     double_puppet_server_map:
@@ -136,6 +139,10 @@ bridge:
     backfill:
         # Allow backfilling at all? Requires MSC2716 support on homeserver.
         enable: false
+
+        # Maximum number of conversations to fetch from Slack when syncing team from Slack.
+        # Must be 0-999
+        conversations_count: 200
 
         # If a backfilled chat is older than this number of hours, mark it as read even if it's unread on Slack.
         # Set to -1 to let any chat be unread.
