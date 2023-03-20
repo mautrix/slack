@@ -38,7 +38,7 @@ func (tiq *TeamInfoQuery) New() *TeamInfo {
 }
 
 func (tiq *TeamInfoQuery) GetBySlackTeam(team string) *TeamInfo {
-	query := `SELECT team_id, team_domain, team_url, team_name, avatar, avatar_url FROM team_info WHERE team_id=$1`
+	query := `SELECT team_id, team_domain, team_url, team_name, avatar, avatar_url, space_room FROM team_info WHERE team_id=$1`
 
 	row := tiq.db.QueryRow(query, team)
 	if row == nil {
@@ -58,6 +58,7 @@ type TeamInfo struct {
 	TeamName   string
 	Avatar     string
 	AvatarUrl  id.ContentURI
+	SpaceRoom  id.RoomID
 }
 
 func (ti *TeamInfo) Scan(row dbutil.Scannable) *TeamInfo {
@@ -66,8 +67,9 @@ func (ti *TeamInfo) Scan(row dbutil.Scannable) *TeamInfo {
 	var teamName sql.NullString
 	var avatar sql.NullString
 	var avatarUrl sql.NullString
+	var spaceRoom sql.NullString
 
-	err := row.Scan(&ti.TeamID, &teamDomain, &teamUrl, &teamName, &avatar, &avatarUrl)
+	err := row.Scan(&ti.TeamID, &teamDomain, &teamUrl, &teamName, &avatar, &avatarUrl, &spaceRoom)
 	if err != nil {
 		if err != sql.ErrNoRows {
 			ti.log.Errorln("Database scan failed:", err)
@@ -91,16 +93,19 @@ func (ti *TeamInfo) Scan(row dbutil.Scannable) *TeamInfo {
 	if avatarUrl.Valid {
 		ti.AvatarUrl, _ = id.ParseContentURI(avatarUrl.String)
 	}
+	if spaceRoom.Valid {
+		ti.SpaceRoom = id.RoomID(spaceRoom.String)
+	}
 
 	return ti
 }
 
 func (ti *TeamInfo) Upsert() {
 	query := `
-		INSERT INTO team_info (team_id, team_domain, team_url, team_name, avatar, avatar_url)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO team_info (team_id, team_domain, team_url, team_name, avatar, avatar_url, space_room)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (team_id) DO UPDATE
-			SET team_domain=excluded.team_domain, team_url=excluded.team_url, team_name=excluded.team_name, avatar=excluded.avatar, avatar_url=excluded.avatar_url
+			SET team_domain=excluded.team_domain, team_url=excluded.team_url, team_name=excluded.team_name, avatar=excluded.avatar, avatar_url=excluded.avatar_url, space_room=excluded.space_room
 	`
 
 	teamDomain := sqlNullString(ti.TeamDomain)

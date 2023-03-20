@@ -1,4 +1,4 @@
--- v1 -> v11: Latest revision
+-- v1 -> v12: Latest revision
 
 CREATE TABLE portal (
 	team_id    TEXT,
@@ -22,6 +22,8 @@ CREATE TABLE portal (
 	first_event_id TEXT,
 	next_batch_id  TEXT,
 	first_slack_id TEXT,
+
+	in_space BOOLEAN DEFAULT false,
 
 	PRIMARY KEY (team_id, channel_id)
 );
@@ -54,7 +56,8 @@ CREATE TABLE puppet (
 CREATE TABLE "user" (
 	mxid TEXT PRIMARY KEY,
 
-	management_room TEXT
+	management_room TEXT,
+	space_room      TEXT
 );
 
 CREATE TABLE "user_team" (
@@ -66,7 +69,7 @@ CREATE TABLE "user_team" (
 	team_name TEXT NOT NULL,
 	team_id   TEXT NOT NULL,
 
-	token TEXT,
+	token        TEXT,
     cookie_token TEXT,
 
 	PRIMARY KEY(mxid, slack_id, team_id)
@@ -132,7 +135,8 @@ CREATE TABLE "team_info" (
     team_url    TEXT,
     team_name   TEXT,
     avatar      TEXT,
-    avatar_url  TEXT
+    avatar_url  TEXT,
+	space_room  TEXT
 );
 
 CREATE TABLE backfill_state (
