@@ -1,4 +1,4 @@
--- v1 -> v15: Latest revision
+-- v1 -> v11: Latest revision
 
 CREATE TABLE portal (
 	team_id    TEXT,
@@ -61,10 +61,10 @@ CREATE TABLE "user_team" (
 	mxid TEXT NOT NULL,
 
 	slack_email TEXT NOT NULL,
-	slack_id TEXT NOT NULL,
+	slack_id    TEXT NOT NULL,
 
 	team_name TEXT NOT NULL,
-	team_id TEXT NOT NULL,
+	team_id   TEXT NOT NULL,
 
 	token TEXT,
     cookie_token TEXT,
@@ -73,9 +73,9 @@ CREATE TABLE "user_team" (
 );
 
 CREATE TABLE user_team_portal (
-    matrix_user_id TEXT NOT NULL,
-    slack_user_id TEXT NOT NULL,
-    slack_team_id TEXT NOT NULL,
+    matrix_user_id    TEXT NOT NULL,
+    slack_user_id     TEXT NOT NULL,
+    slack_team_id     TEXT NOT NULL,
     portal_channel_id TEXT NOT NULL,
     FOREIGN KEY(matrix_user_id, slack_user_id, slack_team_id) REFERENCES "user_team"(mxid, slack_id, team_id) ON DELETE CASCADE,
     FOREIGN KEY(slack_team_id, portal_channel_id) REFERENCES portal(team_id, channel_id) ON DELETE CASCADE
@@ -85,9 +85,9 @@ CREATE TABLE message (
 	team_id    TEXT NOT NULL,
 	channel_id TEXT NOT NULL,
 
-	slack_message_id TEXT NOT NULL,
-    slack_thread_id TEXT,
-	matrix_message_id  TEXT NOT NULL UNIQUE,
+	slack_message_id  TEXT NOT NULL,
+    slack_thread_id   TEXT,
+	matrix_message_id TEXT NOT NULL UNIQUE,
 
 	author_id TEXT   NOT NULL,
 
@@ -118,21 +118,32 @@ CREATE TABLE attachment (
 	channel_id TEXT NOT NULL,
 
 	slack_message_id TEXT NOT NULL,
-    slack_file_id TEXT NOT NULL,
-	matrix_event_id TEXT NOT NULL UNIQUE,
-	slack_thread_id TEXT,
+    slack_file_id    TEXT NOT NULL,
+	matrix_event_id  TEXT NOT NULL UNIQUE,
+	slack_thread_id  TEXT,
 
 	PRIMARY KEY(slack_message_id, slack_file_id, matrix_event_id),
 	FOREIGN KEY(team_id, channel_id) REFERENCES portal(team_id, channel_id) ON DELETE CASCADE
 );
 
 CREATE TABLE "team_info" (
-    team_id TEXT NOT NULL UNIQUE,
+    team_id     TEXT NOT NULL UNIQUE,
     team_domain TEXT,
-    team_url TEXT,
-    team_name TEXT,
-    avatar TEXT,
-    avatar_url TEXT
+    team_url    TEXT,
+    team_name   TEXT,
+    avatar      TEXT,
+    avatar_url  TEXT
+);
+
+CREATE TABLE backfill_state (
+    team_id            TEXT,
+    channel_id         TEXT,
+    backfill_complete  BOOLEAN,
+	dispatched         BOOLEAN,
+	message_count      INTEGER,
+	immediate_complete BOOLEAN
+    PRIMARY KEY (team_id, channel_id),
+    FOREIGN KEY (team_id, channel_id) REFERENCES portal (team_id, channel_id) ON DELETE CASCADE
 );
 
 CREATE TABLE backfill_state (
