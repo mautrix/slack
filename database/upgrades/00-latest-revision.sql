@@ -72,6 +72,8 @@ CREATE TABLE "user_team" (
 	token        TEXT,
     cookie_token TEXT,
 
+	in_space BOOLEAN DEFAULT false,
+
 	PRIMARY KEY(mxid, slack_id, team_id)
 );
 
@@ -136,7 +138,9 @@ CREATE TABLE "team_info" (
     team_name   TEXT,
     avatar      TEXT,
     avatar_url  TEXT,
-	space_room  TEXT
+	space_room  TEXT,
+	name_set    BOOLEAN DEFAULT false,
+	avatar_set  BOOLEAN DEFAULT false
 );
 
 CREATE TABLE backfill_state (

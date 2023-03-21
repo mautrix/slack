@@ -48,7 +48,9 @@ func (user *User) loadTeams() {
 }
 
 func (u *User) Scan(row dbutil.Scannable) *User {
-	err := row.Scan(&u.MXID, &u.ManagementRoom, &u.SpaceRoom)
+	var spaceRoom sql.NullString
+
+	err := row.Scan(&u.MXID, &u.ManagementRoom, &spaceRoom)
 	if err != nil {
 		if err != sql.ErrNoRows {
 			u.log.Errorln("Database scan failed:", err)
@@ -56,6 +58,8 @@ func (u *User) Scan(row dbutil.Scannable) *User {
 
 		return nil
 	}
+
+	u.SpaceRoom = id.RoomID(spaceRoom.String)
 
 	u.loadTeams()
 

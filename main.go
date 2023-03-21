@@ -65,6 +65,10 @@ type SlackBridge struct {
 	portalsByID   map[database.PortalKey]*Portal
 	portalsLock   sync.Mutex
 
+	teamsByMXID map[id.RoomID]*Team
+	teamsByID   map[string]*Team
+	teamsLock   sync.Mutex
+
 	puppets             map[string]*Puppet
 	puppetsByCustomMXID map[id.UserID]*Puppet
 	puppetsLock         sync.Mutex

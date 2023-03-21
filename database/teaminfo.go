@@ -38,9 +38,20 @@ func (tiq *TeamInfoQuery) New() *TeamInfo {
 }
 
 func (tiq *TeamInfoQuery) GetBySlackTeam(team string) *TeamInfo {
-	query := `SELECT team_id, team_domain, team_url, team_name, avatar, avatar_url, space_room FROM team_info WHERE team_id=$1`
+	query := `SELECT team_id, team_domain, team_url, team_name, avatar, avatar_url, space_room, name_set, avatar_set FROM team_info WHERE team_id=$1`
 
 	row := tiq.db.QueryRow(query, team)
+	if row == nil {
+		return nil
+	}
+
+	return tiq.New().Scan(row)
+}
+
+func (tiq *TeamInfoQuery) GetByMXID(mxid id.RoomID) *TeamInfo {
+	query := `SELECT team_id, team_domain, team_url, team_name, avatar, avatar_url, space_room, name_set, avatar_set FROM team_info WHERE space_room=$1`
+
+	row := tiq.db.QueryRow(query, mxid)
 	if row == nil {
 		return nil
 	}
@@ -59,6 +70,8 @@ type TeamInfo struct {
 	Avatar     string
 	AvatarUrl  id.ContentURI
 	SpaceRoom  id.RoomID
+	NameSet    bool
+	AvatarSet  bool
 }
 
 func (ti *TeamInfo) Scan(row dbutil.Scannable) *TeamInfo {
@@ -69,7 +82,7 @@ func (ti *TeamInfo) Scan(row dbutil.Scannable) *TeamInfo {
 	var avatarUrl sql.NullString
 	var spaceRoom sql.NullString
 
-	err := row.Scan(&ti.TeamID, &teamDomain, &teamUrl, &teamName, &avatar, &avatarUrl, &spaceRoom)
+	err := row.Scan(&ti.TeamID, &teamDomain, &teamUrl, &teamName, &avatar, &avatarUrl, &spaceRoom, &ti.NameSet, &ti.AvatarSet)
 	if err != nil {
 		if err != sql.ErrNoRows {
 			ti.log.Errorln("Database scan failed:", err)
@@ -102,10 +115,17 @@ func (ti *TeamInfo) Scan(row dbutil.Scannable) *TeamInfo {
 
 func (ti *TeamInfo) Upsert() {
 	query := `
-		INSERT INTO team_info (team_id, team_domain, team_url, team_name, avatar, avatar_url, space_room)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO team_info (team_id, team_domain, team_url, team_name, avatar, avatar_url, space_room, name_set, avatar_set)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (team_id) DO UPDATE
-			SET team_domain=excluded.team_domain, team_url=excluded.team_url, team_name=excluded.team_name, avatar=excluded.avatar, avatar_url=excluded.avatar_url, space_room=excluded.space_room
+			SET team_domain=excluded.team_domain,
+			team_url=excluded.team_url,
+			team_name=excluded.team_name,
+			avatar=excluded.avatar,
+			avatar_url=excluded.avatar_url,
+			space_room=excluded.space_room,
+			name_set=excluded.name_set,
+			avatar_set=excluded.avatar_set
 	`
 
 	teamDomain := sqlNullString(ti.TeamDomain)
@@ -114,7 +134,7 @@ func (ti *TeamInfo) Upsert() {
 	avatar := sqlNullString(ti.Avatar)
 	avatarUrl := sqlNullString(ti.AvatarUrl.String())
 
-	_, err := ti.db.Exec(query, ti.TeamID, teamDomain, teamUrl, teamName, avatar, avatarUrl)
+	_, err := ti.db.Exec(query, ti.TeamID, teamDomain, teamUrl, teamName, avatar, avatarUrl, ti.NameSet, ti.AvatarSet)
 
 	if err != nil {
 		ti.log.Warnfln("Failed to upsert team %s: %v", ti.TeamID, err)

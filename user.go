@@ -56,6 +56,8 @@ type User struct {
 	BridgeStates map[string]*bridge.BridgeStateQueue
 
 	PermissionLevel bridgeconfig.PermissionLevel
+
+	spaceCreateLock sync.Mutex
 }
 
 func (user *User) GetPermissionLevel() bridgeconfig.PermissionLevel {
@@ -629,46 +631,47 @@ func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 
 func (user *User) UpdateTeam(userTeam *database.UserTeam, force bool) error {
 	user.log.Debugfln("Updating team info for team %s", userTeam.Key.TeamID)
-	currentTeamInfo := user.bridge.DB.TeamInfo.GetBySlackTeam(userTeam.Key.TeamID)
-	if currentTeamInfo == nil {
-		currentTeamInfo = user.bridge.DB.TeamInfo.New()
-		currentTeamInfo.TeamID = userTeam.Key.TeamID
-	}
+	team := user.bridge.GetTeamByID(userTeam.Key.TeamID, true)
 
 	teamInfo, err := userTeam.Client.GetTeamInfo()
 	if err != nil {
-		user.log.Errorfln("Error fetching info for team %s: %v", userTeam.Key.TeamID, err)
-		return err
+		user.log.Errorln("Failed to fetch team info ", userTeam.Key.TeamID)
 	}
-	changed := false
 
-	if currentTeamInfo.TeamName != teamInfo.Name {
-		currentTeamInfo.TeamName = teamInfo.Name
+	var changed bool
+	if team.SpaceRoom == "" {
+		err = team.CreateMatrixRoom(user, teamInfo)
+	}
+
+	if team.TeamName != teamInfo.Name {
+		team.TeamName = teamInfo.Name
 		changed = true
 	}
-	if currentTeamInfo.TeamDomain != teamInfo.Domain {
-		currentTeamInfo.TeamDomain = teamInfo.Domain
+	if team.TeamDomain != teamInfo.Domain {
+		team.TeamDomain = teamInfo.Domain
 		changed = true
 	}
-	if currentTeamInfo.TeamUrl != teamInfo.URL {
-		currentTeamInfo.TeamUrl = teamInfo.URL
+	if team.TeamUrl != teamInfo.URL {
+		team.TeamUrl = teamInfo.URL
 		changed = true
 	}
-	if teamInfo.Icon["image_default"] != nil && teamInfo.Icon["image_default"] == true && currentTeamInfo.Avatar != "" {
-		currentTeamInfo.Avatar = ""
-		currentTeamInfo.AvatarUrl = id.MustParseContentURI("")
+	if teamInfo.Icon["image_default"] != nil && teamInfo.Icon["image_default"] == true && team.Avatar != "" {
+		team.Avatar = ""
+		team.AvatarUrl = id.MustParseContentURI("")
 		changed = true
-	} else if teamInfo.Icon["image_default"] != nil && teamInfo.Icon["image_default"] == false && teamInfo.Icon["image_230"] != nil && currentTeamInfo.Avatar != teamInfo.Icon["image_230"] {
+	} else if teamInfo.Icon["image_default"] != nil && teamInfo.Icon["image_default"] == false && teamInfo.Icon["image_230"] != nil && team.Avatar != teamInfo.Icon["image_230"] {
 		avatar, err := uploadPlainFile(user.bridge.AS.BotIntent(), teamInfo.Icon["image_230"].(string))
 		if err != nil {
 			user.log.Warnfln("Error uploading new team avatar for team %s: %v", userTeam.Key.TeamID, err)
 		} else {
-			currentTeamInfo.Avatar = teamInfo.Icon["image_230"].(string)
-			currentTeamInfo.AvatarUrl = avatar
+			team.Avatar = teamInfo.Icon["image_230"].(string)
+			team.AvatarUrl = avatar
 			changed = true
 		}
+	} else {
+		changed = team.UpdateInfo(user, teamInfo)
 	}
-	currentTeamInfo.Upsert()
+	team.Upsert()
 
 	emojis, err := userTeam.Client.GetEmoji()
 	if err != nil {
@@ -689,6 +692,11 @@ func (user *User) UpdateTeam(userTeam *database.UserTeam, force bool) error {
 	for _, puppet := range puppets {
 		puppet.UpdateInfo(userTeam, false, nil)
 	}
+
+	inSpace := user.addTeamToSpace(team.TeamInfo, userTeam.InSpace)
+	userTeam.InSpace = inSpace
+	userTeam.Upsert()
+
 	return user.SyncPortals(userTeam, changed || force)
 }
 
@@ -902,4 +910,92 @@ func (user *User) updateChatMute(portal *Portal, muted bool) {
 	if err != nil && !errors.Is(err, mautrix.MNotFound) {
 		user.log.Warnfln("Failed to update push rule for %s through double puppet: %v", portal.MXID, err)
 	}
+}
+
+func (user *User) getSpaceRoom(ptr *id.RoomID, name, topic string, parent id.RoomID) id.RoomID {
+	if len(*ptr) > 0 {
+		return *ptr
+	}
+	user.spaceCreateLock.Lock()
+	defer user.spaceCreateLock.Unlock()
+	if len(*ptr) > 0 {
+		return *ptr
+	}
+
+	initialState := []*event.Event{{
+		Type: event.StateRoomAvatar,
+		Content: event.Content{
+			Parsed: &event.RoomAvatarEventContent{
+				URL: user.bridge.Config.AppService.Bot.ParsedAvatar,
+			},
+		},
+	}}
+
+	if parent != "" {
+		parentIDStr := parent.String()
+		initialState = append(initialState, &event.Event{
+			Type:     event.StateSpaceParent,
+			StateKey: &parentIDStr,
+			Content: event.Content{
+				Parsed: &event.SpaceParentEventContent{
+					Canonical: true,
+					Via:       []string{user.bridge.AS.HomeserverDomain},
+				},
+			},
+		})
+	}
+
+	resp, err := user.bridge.Bot.CreateRoom(&mautrix.ReqCreateRoom{
+		Visibility:   "private",
+		Name:         name,
+		Topic:        topic,
+		InitialState: initialState,
+		CreationContent: map[string]interface{}{
+			"type": event.RoomTypeSpace,
+		},
+		PowerLevelOverride: &event.PowerLevelsEventContent{
+			Users: map[id.UserID]int{
+				user.bridge.Bot.UserID: 9001,
+				user.MXID:              50,
+			},
+		},
+	})
+
+	if err != nil {
+		user.log.Error("Failed to auto-create space room")
+	} else {
+		*ptr = resp.RoomID
+		user.Update()
+		user.ensureInvited(nil, *ptr, false)
+
+		if parent != "" {
+			_, err = user.bridge.Bot.SendStateEvent(parent, event.StateSpaceChild, resp.RoomID.String(), &event.SpaceChildEventContent{
+				Via:   []string{user.bridge.AS.HomeserverDomain},
+				Order: " 0000",
+			})
+			if err != nil {
+				user.log.Error("Failed to add created space room to parent space")
+			}
+		}
+	}
+	return *ptr
+}
+
+func (user *User) GetSpaceRoom() id.RoomID {
+	return user.getSpaceRoom(&user.SpaceRoom, "Slack", "Your Slack bridged chats", "")
+}
+
+func (user *User) addTeamToSpace(teamInfo *database.TeamInfo, isInSpace bool) bool {
+	if len(teamInfo.SpaceRoom) > 0 && !isInSpace {
+		_, err := user.bridge.Bot.SendStateEvent(user.GetSpaceRoom(), event.StateSpaceChild, teamInfo.SpaceRoom.String(), &event.SpaceChildEventContent{
+			Via: []string{user.bridge.AS.HomeserverDomain},
+		})
+		if err != nil {
+			user.log.Errorfln("Failed to add team space %s to user space", teamInfo.SpaceRoom)
+		} else {
+			isInSpace = true
+		}
+	}
+
+	return isInSpace
 }
