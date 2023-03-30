@@ -281,12 +281,21 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		return nil
 	}
 
-	portal.log.Infoln("Creating Matrix room for channel:", portal.Portal.Key.ChannelID)
-
 	channel = portal.UpdateInfo(user, userTeam, channel, false)
 	if channel == nil {
 		return fmt.Errorf("didn't find channel metadata")
 	}
+	typeFound := portal.setChannelType(channel)
+	if !typeFound {
+		portal.log.Warnln("No appropriate type found for channel")
+		return nil
+	}
+	if portal.Type == database.ChannelTypeGroupDM && len(channel.Members) == 0 {
+		portal.log.Warnln("Group DM with no members, not bridging")
+		return nil
+	}
+
+	portal.log.Infoln("Creating Matrix room for channel:", portal.Portal.Key.ChannelID)
 
 	intent := portal.MainIntent()
 	if err := intent.EnsureRegistered(); err != nil {
@@ -362,10 +371,6 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	portal.ensureUserInvited(user)
 	user.syncChatDoublePuppetDetails(portal, true)
 
-	typeFound := portal.setChannelType(channel)
-	if !typeFound {
-		portal.log.Warnln("No appropriate type found for channel!")
-	}
 	var members []string
 	// no members are included in channels, only in group DMs
 	switch portal.Type {
@@ -1479,6 +1484,10 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 		var err error
 		if file.URLPrivate != "" {
 			err = userTeam.Client.GetFile(file.URLPrivate, &data)
+			if err == slack.SlackFileHTMLError {
+				time.Sleep(5 * time.Second)
+				err = userTeam.Client.GetFile(file.URLPrivate, &data)
+			}
 		} else if file.PermalinkPublic != "" {
 			client := http.Client{}
 			var resp *http.Response
