@@ -1476,6 +1476,10 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 		var err error
 		if file.URLPrivate != "" {
 			err = userTeam.Client.GetFile(file.URLPrivate, &data)
+			if err == slack.SlackFileHTMLError {
+				time.Sleep(5 * time.Second)
+				err = userTeam.Client.GetFile(file.URLPrivate, &data)
+			}
 		} else if file.PermalinkPublic != "" {
 			client := http.Client{}
 			var resp *http.Response
