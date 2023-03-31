@@ -970,7 +970,7 @@ func (portal *Portal) delete() {
 
 func (portal *Portal) cleanupIfEmpty() {
 	users, err := portal.getMatrixUsers()
-	if err != nil {
+	if err != nil && !errors.Is(err, mautrix.MForbidden) {
 		portal.log.Errorfln("Failed to get Matrix user list to determine if portal needs to be cleaned up: %v", err)
 
 		return

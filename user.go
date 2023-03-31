@@ -357,7 +357,7 @@ func (user *User) LogoutUserTeam(userTeam *database.UserTeam) error {
 	}
 
 	if userTeam.RTM != nil {
-		if err := userTeam.RTM.Disconnect(); err != nil {
+		if err := userTeam.RTM.Disconnect(); err != nil && !errors.Is(err, slack.ErrAlreadyDisconnected) {
 			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: err.Error()})
 			return err
 		}
