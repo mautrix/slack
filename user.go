@@ -551,7 +551,7 @@ func (user *User) isChannelOrOpenIM(channel *slack.Channel) bool {
 	}
 }
 
-func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
+func (user *User) SyncPortals(team *Team, userTeam *database.UserTeam, force bool) error {
 	channelInfo := map[string]slack.Channel{}
 
 	if !strings.HasPrefix(userTeam.Token, "xoxs") {
@@ -610,6 +610,8 @@ func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 		} else {
 			portal.CreateMatrixRoom(user, userTeam, &channel, true)
 		}
+		portal.InSpace = team.addPortalToTeam(portal.Portal, portal.InSpace)
+		portal.Update(nil)
 		// Delete already handled ones from the map
 		delete(channelInfo, dbPortal.Key.ChannelID)
 	}
@@ -624,6 +626,8 @@ func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 		} else {
 			portal.CreateMatrixRoom(user, userTeam, &channel, true)
 		}
+		portal.InSpace = team.addPortalToTeam(portal.Portal, portal.InSpace)
+		portal.Update(nil)
 	}
 
 	return nil
@@ -697,7 +701,7 @@ func (user *User) UpdateTeam(userTeam *database.UserTeam, force bool) error {
 	userTeam.InSpace = inSpace
 	userTeam.Upsert()
 
-	return user.SyncPortals(userTeam, changed || force)
+	return user.SyncPortals(team, userTeam, changed || force)
 }
 
 func (user *User) Connect() error {

@@ -160,6 +160,9 @@ func main() {
 		portalsByMXID: make(map[id.RoomID]*Portal),
 		portalsByID:   make(map[database.PortalKey]*Portal),
 
+		teamsByMXID: make(map[id.RoomID]*Team),
+		teamsByID:   make(map[string]*Team),
+
 		puppets:             make(map[string]*Puppet),
 		puppetsByCustomMXID: make(map[id.UserID]*Puppet),
 	}

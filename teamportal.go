@@ -305,3 +305,23 @@ func (team *Team) RemoveMXID() {
 // 	team.bridge.teamsLock.Unlock()
 
 // }
+
+func (team *Team) addPortalToTeam(portal *database.Portal, isInSpace bool) bool {
+	if len(team.SpaceRoom) == 0 {
+		team.log.Errorln("Tried to add portal to space that has no matrix ID")
+		return false
+	}
+
+	if len(portal.MXID) > 0 && !isInSpace {
+		_, err := team.bridge.Bot.SendStateEvent(team.SpaceRoom, event.StateSpaceChild, portal.MXID.String(), &event.SpaceChildEventContent{
+			Via: []string{team.bridge.AS.HomeserverDomain},
+		})
+		if err != nil {
+			team.log.Errorfln("Failed to add portal %s to team space", portal.MXID)
+		} else {
+			isInSpace = true
+		}
+	}
+
+	return isInSpace
+}

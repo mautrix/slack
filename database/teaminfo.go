@@ -133,8 +133,9 @@ func (ti *TeamInfo) Upsert() {
 	teamName := sqlNullString(ti.TeamName)
 	avatar := sqlNullString(ti.Avatar)
 	avatarUrl := sqlNullString(ti.AvatarUrl.String())
+	spaceRoom := sqlNullString(ti.SpaceRoom.String())
 
-	_, err := ti.db.Exec(query, ti.TeamID, teamDomain, teamUrl, teamName, avatar, avatarUrl, ti.NameSet, ti.AvatarSet)
+	_, err := ti.db.Exec(query, ti.TeamID, teamDomain, teamUrl, teamName, avatar, avatarUrl, spaceRoom, ti.NameSet, ti.AvatarSet)
 
 	if err != nil {
 		ti.log.Warnfln("Failed to upsert team %s: %v", ti.TeamID, err)
