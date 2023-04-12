@@ -522,7 +522,7 @@ func (portal *Portal) ForwardBackfill() error {
 	defer portal.slackMessageLock.Unlock()
 
 	backfillState := portal.bridge.DB.Backfill.GetBackfillState(&portal.Key)
-	if !(backfillState.ImmediateComplete || backfillState.BackfillComplete) {
+	if backfillState != nil && !(backfillState.ImmediateComplete || backfillState.BackfillComplete) {
 		portal.log.Debugln("Not forward backfilling, backfill is not complete yet")
 		return nil
 	}
