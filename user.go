@@ -402,9 +402,18 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 			userTeam.Upsert()
 
 			user.tryAutomaticDoublePuppeting(userTeam)
-			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateConnected})
+			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateBackfilling})
 
 			user.log.Infofln("connected to team %s as %s", userTeam.TeamName, userTeam.SlackEmail)
+
+			portals := user.bridge.dbPortalsToPortals(user.bridge.DB.Portal.GetAllForUserTeam(userTeam.Key))
+			for _, portal := range portals {
+				err := portal.ForwardBackfill()
+				if err != nil {
+					user.log.Warnfln("Forward backfill for portal %s failed: %v", portal.Key, err)
+				}
+			}
+			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateConnected})
 		case *slack.HelloEvent:
 			// Ignored for now
 		case *slack.InvalidAuthEvent:

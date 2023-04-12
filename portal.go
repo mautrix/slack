@@ -411,7 +411,10 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 			portal.log.Errorfln("Error fetching initial backfill messages: %v", err)
 			backfillState.BackfillComplete = true
 		} else {
-			resp := portal.backfill(userTeam, initialMessages.Messages, true, "")
+			resp, err := portal.backfill(userTeam, initialMessages.Messages, true)
+			if err != nil {
+				portal.log.Errorfln("Error sending initial backfill batch: %v", err)
+			}
 			if resp != nil {
 				backfillState.ImmediateComplete = true
 				backfillState.MessageCount += len(initialMessages.Messages)
