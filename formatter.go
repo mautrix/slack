@@ -230,10 +230,6 @@ func (r *slackTagHTMLRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegist
 	reg.Register(astKindSlackTag, r.renderSlackTag)
 }
 
-type Stringifiable interface {
-	String() string
-}
-
 func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source []byte, n ast.Node, entering bool) (status ast.WalkStatus, err error) {
 	status = ast.WalkContinue
 	if !entering {
