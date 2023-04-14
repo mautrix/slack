@@ -29,7 +29,6 @@ import (
 	"github.com/yuin/goldmark/text"
 	goldmarkUtil "github.com/yuin/goldmark/util"
 	"go.mau.fi/mautrix-slack/database"
-	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/format"
 	"maunium.net/go/mautrix/id"
@@ -97,7 +96,8 @@ func (portal *Portal) renderSlackFile(file slack.File) event.MessageEventContent
 }
 
 func (bridge *SlackBridge) ParseMatrix(html string) string {
-	return bridge.MatrixHTMLParser.Parse(html, nil)
+	ctx := format.NewContext()
+	return bridge.MatrixHTMLParser.Parse(html, ctx)
 }
 
 func NewParser(bridge *SlackBridge) *format.HTMLParser {
@@ -230,6 +230,10 @@ func (r *slackTagHTMLRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegist
 	reg.Register(astKindSlackTag, r.renderSlackTag)
 }
 
+type Stringifiable interface {
+	String() string
+}
+
 func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source []byte, n ast.Node, entering bool) (status ast.WalkStatus, err error) {
 	status = ast.WalkContinue
 	if !entering {
@@ -271,7 +275,7 @@ func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source [
 		_, _ = fmt.Fprintf(w, `<a href="%s">%s</a>`, node.url, label)
 		return
 	}
-	stringifiable, ok := n.(mautrix.Stringifiable)
+	stringifiable, ok := n.(Stringifiable)
 	if ok {
 		_, _ = w.WriteString(stringifiable.String())
 	} else {

@@ -47,7 +47,7 @@ func (br *SlackBridge) newDoublePuppetClient(mxid id.UserID, accessToken string)
 	homeserverURL, found := br.Config.Bridge.DoublePuppetServerMap[homeserver]
 	if !found {
 		if homeserver == br.AS.HomeserverDomain {
-			homeserverURL = br.AS.HomeserverURL
+			homeserverURL = ""
 		} else if br.Config.Bridge.DoublePuppetAllowDiscovery {
 			resp, err := mautrix.DiscoverClientAPI(homeserver)
 			if err != nil {
@@ -66,7 +66,10 @@ func (br *SlackBridge) newDoublePuppetClient(mxid id.UserID, accessToken string)
 		return nil, err
 	}
 
-	client.Logger = br.AS.Log.Sub(mxid.String())
+	client.Log = br.AS.Log.With().
+		Str("component", "custompuppet").
+		Str("mxid", mxid.String()).
+		Logger()
 	client.Client = br.AS.HTTPClient
 	client.DefaultHTTPRetries = br.AS.DefaultHTTPRetries
 
