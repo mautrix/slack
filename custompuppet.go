@@ -61,19 +61,7 @@ func (br *SlackBridge) newDoublePuppetClient(mxid id.UserID, accessToken string)
 		}
 	}
 
-	client, err := mautrix.NewClient(homeserverURL, mxid, accessToken)
-	if err != nil {
-		return nil, err
-	}
-
-	client.Log = br.AS.Log.With().
-		Str("component", "custompuppet").
-		Str("mxid", mxid.String()).
-		Logger()
-	client.Client = br.AS.HTTPClient
-	client.DefaultHTTPRetries = br.AS.DefaultHTTPRetries
-
-	return client, nil
+	return br.AS.NewExternalMautrixClient(mxid, accessToken, homeserverURL)
 }
 
 // /////////////////////////////////////////////////////////////////////////////

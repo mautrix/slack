@@ -275,7 +275,7 @@ func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source [
 		_, _ = fmt.Fprintf(w, `<a href="%s">%s</a>`, node.url, label)
 		return
 	}
-	stringifiable, ok := n.(Stringifiable)
+	stringifiable, ok := n.(fmt.Stringer)
 	if ok {
 		_, _ = w.WriteString(stringifiable.String())
 	} else {
