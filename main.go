@@ -159,11 +159,14 @@ func main() {
 		puppetsByCustomMXID: make(map[id.UserID]*Puppet),
 	}
 	br.Bridge = bridge.Bridge{
-		Name:            "mautrix-slack",
-		URL:             "https://github.com/mautrix/slack",
-		Description:     "A Matrix-Slack puppeting bridge.",
-		Version:         "0.1.0",
-		ProtocolName:    "Slack",
+		Name:              "mautrix-slack",
+		URL:               "https://github.com/mautrix/slack",
+		Description:       "A Matrix-Slack puppeting bridge.",
+		Version:           "0.1.0",
+		ProtocolName:      "Slack",
+		BeeperServiceName: "slackgo",
+		BeeperNetworkName: "slack",
+
 		CryptoPickleKey: "maunium.net/go/mautrix-whatsapp",
 
 		ConfigUpgrader: &configupgrade.StructUpgrader{

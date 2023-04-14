@@ -302,7 +302,7 @@ func (user *User) login(info *auth.Info, force bool) {
 
 	user.log.Debugfln("logged into %s successfully", info.TeamName)
 
-	user.BridgeStates[info.TeamID] = user.bridge.NewBridgeStateQueue(userTeam, user.log)
+	user.BridgeStates[info.TeamID] = user.bridge.NewBridgeStateQueue(userTeam)
 	user.bridge.usersByID[fmt.Sprintf("%s-%s", userTeam.Key.TeamID, userTeam.Key.SlackID)] = user
 	user.connectTeam(userTeam)
 }
@@ -626,7 +626,7 @@ func (user *User) Connect() error {
 	user.log.Infofln("Connecting Slack teams for user %s", user.MXID)
 	for key, userTeam := range user.Teams {
 		user.bridge.usersByID[fmt.Sprintf("%s-%s", userTeam.Key.TeamID, userTeam.Key.SlackID)] = user
-		user.BridgeStates[key] = user.bridge.NewBridgeStateQueue(userTeam, user.log)
+		user.BridgeStates[key] = user.bridge.NewBridgeStateQueue(userTeam)
 		user.connectTeam(userTeam)
 		// if err != nil {
 		// 	user.log.Errorfln("Error connecting to Slack userteam %s: %v", userTeam.Key, err)
