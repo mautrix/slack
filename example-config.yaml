@@ -99,6 +99,11 @@ bridge:
     # Whether or not created rooms should have federation enabled.
     # If false, created portal rooms will never be federated.
     federate_rooms: true
+    # Whether to explicitly set the avatar and room name for private chat portal rooms.
+    # If set to `default`, this will be enabled in encrypted rooms and disabled in unencrypted rooms.
+    # If set to `always`, all DM rooms will have explicit names and avatars set.
+    # If set to `never`, DM rooms will never have names and avatars set.
+    private_chat_portal_meta: default
 
     # Servers to always allow double puppeting from
     double_puppet_server_map:

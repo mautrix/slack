@@ -60,7 +60,7 @@ type BridgeConfig struct {
 	DisplaynameTemplate    string `yaml:"displayname_template"`
 	BotDisplaynameTemplate string `yaml:"bot_displayname_template"`
 	ChannelNameTemplate    string `yaml:"channel_name_template"`
-	PrivateChatPortalMeta  bool   `yaml:"private_chat_portal_meta"`
+	PrivateChatPortalMeta  string `yaml:"private_chat_portal_meta"`
 
 	CommandPrefix string `yaml:"command_prefix"`
 

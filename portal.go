@@ -86,6 +86,12 @@ func (portal *Portal) MarkEncrypted() {
 	portal.Update(nil)
 }
 
+func (portal *Portal) shouldSetDMRoomMetadata() bool {
+	return !portal.IsPrivateChat() ||
+		portal.bridge.Config.Bridge.PrivateChatPortalMeta == "always" ||
+		(portal.IsEncrypted() && portal.bridge.Config.Bridge.PrivateChatPortalMeta != "never")
+}
+
 func (portal *Portal) ReceiveMatrixEvent(user bridge.User, evt *event.Event) {
 	if user.GetPermissionLevel() >= bridgeconfig.PermissionLevelUser /*|| portal.HasRelaybot()*/ {
 		portal.matrixMessages <- portalMatrixMessage{user: user.(*User), evt: evt, receivedAt: time.Now()}
@@ -334,7 +340,7 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		}
 	}
 
-	resp, err := intent.CreateRoom(&mautrix.ReqCreateRoom{
+	req := &mautrix.ReqCreateRoom{
 		Visibility:      "private",
 		Name:            portal.Name,
 		Topic:           portal.Topic,
@@ -343,13 +349,17 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		IsDirect:        portal.IsPrivateChat(),
 		InitialState:    initialState,
 		CreationContent: creationContent,
-	})
+	}
+	if !portal.shouldSetDMRoomMetadata() {
+		req.Name = ""
+	}
+	resp, err := intent.CreateRoom(req)
 	if err != nil {
 		portal.log.Warnln("Failed to create room:", err)
 		return err
 	}
 
-	portal.NameSet = portal.Name != ""
+	portal.NameSet = req.Name != ""
 	portal.TopicSet = true
 	portal.MXID = resp.RoomID
 	portal.bridge.portalsLock.Lock()
@@ -1169,15 +1179,13 @@ func (portal *Portal) GetPlainName(meta *slack.Channel) string {
 }
 
 func (portal *Portal) UpdateNameDirect(name string) bool {
-	if portal.Name == name && (portal.NameSet || portal.MXID == "") {
-		return false
-	} else if !portal.Encrypted && !portal.bridge.Config.Bridge.PrivateChatPortalMeta && portal.IsPrivateChat() {
+	if portal.Name == name && (portal.NameSet || portal.MXID == "" || !portal.shouldSetDMRoomMetadata()) {
 		return false
 	}
 	portal.log.Debugfln("Updating name %q -> %q", portal.Name, name)
 	portal.Name = name
 	portal.NameSet = false
-	if portal.MXID != "" && portal.Name != "" {
+	if portal.MXID != "" && portal.Name != "" && portal.shouldSetDMRoomMetadata() {
 		_, err := portal.MainIntent().SetRoomName(portal.MXID, portal.Name)
 		if err != nil {
 			portal.log.Warnln("Failed to update room name:", err)
@@ -1204,7 +1212,7 @@ func (portal *Portal) UpdateName(meta *slack.Channel, sourceTeam *database.UserT
 }
 
 func (portal *Portal) updateRoomAvatar() {
-	if portal.MXID == "" {
+	if portal.MXID == "" || !portal.shouldSetDMRoomMetadata() {
 		return
 	}
 	_, err := portal.MainIntent().SetRoomAvatar(portal.MXID, portal.AvatarURL)
@@ -1216,7 +1224,7 @@ func (portal *Portal) updateRoomAvatar() {
 }
 
 func (portal *Portal) UpdateAvatarFromPuppet(puppet *Puppet) bool {
-	if portal.Avatar == puppet.Avatar && portal.AvatarURL == puppet.AvatarURL && (portal.AvatarSet || portal.MXID == "") {
+	if portal.Avatar == puppet.Avatar && portal.AvatarURL == puppet.AvatarURL && (portal.AvatarSet || portal.MXID == "" || !portal.shouldSetDMRoomMetadata()) {
 		return false
 	}
 
@@ -1303,10 +1311,6 @@ func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, me
 		portal.DMUserID = meta.User
 		portal.log.Infoln("Found other user ID:", portal.DMUserID)
 		changed = true
-	}
-
-	if portal.Type == database.ChannelTypeChannel {
-		changed = portal.UpdateName(meta, sourceTeam) || changed
 	}
 
 	changed = portal.UpdateName(meta, sourceTeam) || changed
