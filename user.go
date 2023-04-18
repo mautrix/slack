@@ -473,6 +473,26 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 			if portal != nil {
 				portal.HandleSlackChannelMarked(user, userTeam, event)
 			}
+		case *slack.ChannelJoinedEvent:
+			key := database.NewPortalKey(userTeam.Key.TeamID, event.Channel.ID)
+			portal := user.bridge.GetPortalByID(key)
+			if portal != nil {
+				if portal.MXID == "" {
+					portal.log.Debugln("Creating Matrix room from joined channel")
+					if err := portal.CreateMatrixRoom(user, userTeam, &event.Channel, false); err != nil {
+						portal.log.Errorln("Failed to create portal room:", err)
+						continue
+					}
+				}
+			} else {
+				portal.ensureUserInvited(user)
+			}
+		case *slack.ChannelLeftEvent:
+			key := database.NewPortalKey(userTeam.Key.TeamID, event.Channel)
+			portal := user.bridge.GetPortalByID(key)
+			if portal != nil {
+				portal.leave(userTeam)
+			}
 		case *slack.RTMError:
 			user.log.Errorln("rtm error:", event.Error())
 			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: event.Error()})
