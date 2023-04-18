@@ -504,20 +504,11 @@ func (user *User) connectTeam(userTeam *database.UserTeam) {
 	user.UpdateTeam(userTeam, false)
 }
 
-func (user *User) isChannelOrOpenIM(channel *slack.Channel, userTeam *database.UserTeam) bool {
+func (user *User) isChannelOrOpenIM(channel *slack.Channel) bool {
 	if !channel.IsIM {
 		return true
 	} else {
-		info, err := userTeam.Client.GetConversationInfo(&slack.GetConversationInfoInput{
-			ChannelID:         channel.ID,
-			IncludeLocale:     true,
-			IncludeNumMembers: true,
-		})
-		if err != nil {
-			user.log.Errorfln("Error getting information about IM: %v", err)
-			return false
-		}
-		return info.Latest != nil && info.Latest.SubType != "joiner_notification_for_inviter" && info.Latest.SubType != "joiner_notification"
+		return channel.Latest != nil && channel.Latest.SubType != "joiner_notification_for_inviter" && channel.Latest.SubType != "joiner_notification"
 	}
 }
 
@@ -533,8 +524,30 @@ func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 		if err != nil {
 			user.log.Warnfln("Error fetching channels: %v", err)
 		}
+		for i, channel := range channels {
+			// replace channel entry in list with one that has more metadata
+			c, err := userTeam.Client.GetConversationInfo(&slack.GetConversationInfoInput{
+				ChannelID:         channel.ID,
+				IncludeLocale:     true,
+				IncludeNumMembers: true,
+			})
+			if err != nil {
+				user.log.Errorfln("Error getting information about IM: %v", err)
+				return err
+			}
+			channels[i] = *c
+		}
+		sort.Slice(channels, func(i, j int) bool {
+			if channels[i].LastRead == "" {
+				return false
+			}
+			if channels[j].LastRead == "" {
+				return true
+			}
+			return parseSlackTimestamp(channels[i].LastRead).After(parseSlackTimestamp(channels[j].LastRead))
+		})
 		for _, channel := range channels {
-			if user.isChannelOrOpenIM(&channel, userTeam) {
+			if user.isChannelOrOpenIM(&channel) {
 				channelInfo[channel.ID] = channel
 			}
 		}
