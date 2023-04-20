@@ -5,7 +5,8 @@ WORKDIR /build
 
 RUN go install github.com/mitranim/gow@latest
 
-COPY go.mod go.sum /build
+COPY go.mod go.sum /build/
+COPY slackgo/ /build/slackgo/
 RUN go mod download
 
 COPY . /build

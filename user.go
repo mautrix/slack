@@ -493,6 +493,12 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 			if portal != nil {
 				portal.leave(userTeam)
 			}
+		case *slack.ChannelUpdateEvent:
+			key := database.NewPortalKey(userTeam.Key.TeamID, event.Channel)
+			portal := user.bridge.GetPortalByID(key)
+			if portal != nil {
+				portal.UpdateInfo(user, userTeam, nil, true)
+			}
 		case *slack.RTMError:
 			user.log.Errorln("rtm error:", event.Error())
 			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: event.Error()})
