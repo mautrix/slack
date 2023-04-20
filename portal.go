@@ -1482,9 +1482,16 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 		portal.addThreadMetadata(&content, msg.ThreadTimestamp)
 		var data bytes.Buffer
 		var err error
-		if file.URLPrivate != "" {
-			err = userTeam.Client.GetFile(file.URLPrivate, &data)
+		var url string
+		if file.URLPrivateDownload != "" {
+			url = file.URLPrivateDownload
+		} else if file.URLPrivate != "" {
+			url = file.URLPrivate
+		}
+		if url != "" {
+			err = userTeam.Client.GetFile(url, &data)
 			if err == slack.SlackFileHTMLError {
+				portal.log.Warnfln("Received HTML file from Slack (URL %s), trying again in 5 seconds", url)
 				time.Sleep(5 * time.Second)
 				err = userTeam.Client.GetFile(file.URLPrivate, &data)
 			}

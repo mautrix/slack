@@ -502,6 +502,8 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 		case *slack.RTMError:
 			user.log.Errorln("rtm error:", event.Error())
 			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: event.Error()})
+		case *slack.FileSharedEvent, *slack.FilePublicEvent, *slack.FilePrivateEvent, *slack.FileCreatedEvent, *slack.FileChangeEvent, *slack.FileDeletedEvent, *slack.DesktopNotificationEvent:
+			// ignored intentionally, these are duplicates or do not contain useful information
 		default:
 			user.log.Warnln("unknown message", msg)
 		}
