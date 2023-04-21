@@ -44,7 +44,7 @@ CREATE TABLE puppet (
 	access_token TEXT,
 	next_batch   TEXT,
 
-	contact_info_set BOOLEAN NOT NULL DEFAULT false
+	contact_info_set BOOLEAN NOT NULL DEFAULT false,
 
 	PRIMARY KEY(team_id, user_id)
 );
