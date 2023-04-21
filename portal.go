@@ -255,7 +255,8 @@ func (portal *Portal) MainIntent() *appservice.IntentAPI {
 	return portal.bridge.Bot
 }
 
-func (portal *Portal) syncParticipants(source *User, sourceTeam *database.UserTeam, participants []string) {
+func (portal *Portal) syncParticipants(source *User, sourceTeam *database.UserTeam, participants []string, invite bool) []id.UserID {
+	userIDs := make([]id.UserID, 0, len(participants))
 	for _, participant := range participants {
 		portal.log.Infofln("Getting participant %s", participant)
 		puppet := portal.bridge.GetPuppetByID(sourceTeam.Key.TeamID, participant)
@@ -263,16 +264,27 @@ func (portal *Portal) syncParticipants(source *User, sourceTeam *database.UserTe
 		puppet.UpdateInfo(sourceTeam, nil)
 
 		user := portal.bridge.GetUserByID(sourceTeam.Key.TeamID, participant)
+
 		if user != nil {
-			portal.ensureUserInvited(user)
+			userIDs = append(userIDs, user.MXID)
+		}
+		if user == nil || puppet.CustomMXID != user.MXID {
+			userIDs = append(userIDs, puppet.MXID)
 		}
 
-		if user == nil || !puppet.IntentFor(portal).IsCustomPuppet {
-			if err := puppet.IntentFor(portal).EnsureJoined(portal.MXID); err != nil {
-				portal.log.Warnfln("Failed to make puppet of %s join %s: %v", participant, portal.MXID, err)
+		if invite {
+			if user != nil {
+				portal.ensureUserInvited(user)
+			}
+
+			if user == nil || !puppet.IntentFor(portal).IsCustomPuppet {
+				if err := puppet.IntentFor(portal).EnsureJoined(portal.MXID); err != nil {
+					portal.log.Warnfln("Failed to make puppet of %s join %s: %v", participant, portal.MXID, err)
+				}
 			}
 		}
 	}
+	return userIDs
 }
 
 func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, channel *slack.Channel, fill bool) error {
@@ -340,15 +352,34 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		}
 	}
 
+	var members []string
+	// no members are included in channels, only in group DMs
+	switch portal.Type {
+	case database.ChannelTypeChannel:
+		user.updateChatMute(portal, true)
+		members = portal.getChannelMembers(userTeam, 3) // TODO: this just fetches 3 members so channels don't have to look like DMs
+	case database.ChannelTypeDM:
+		members = []string{channel.User, userTeam.Key.SlackID}
+	case database.ChannelTypeGroupDM:
+		members = channel.Members
+	}
+
+	autoJoinInvites := portal.bridge.Config.Homeserver.Software == bridgeconfig.SoftwareHungry
+	if autoJoinInvites {
+		portal.log.Debugfln("Hungryserv mode: adding all group members in create request")
+		participants := portal.syncParticipants(user, userTeam, members, false)
+		invite = append(invite, participants...)
+	}
 	req := &mautrix.ReqCreateRoom{
-		Visibility:      "private",
-		Name:            portal.Name,
-		Topic:           portal.Topic,
-		Invite:          invite,
-		Preset:          "private_chat",
-		IsDirect:        portal.IsPrivateChat(),
-		InitialState:    initialState,
-		CreationContent: creationContent,
+		Visibility:            "private",
+		Name:                  portal.Name,
+		Topic:                 portal.Topic,
+		Invite:                invite,
+		Preset:                "private_chat",
+		IsDirect:              portal.IsPrivateChat(),
+		InitialState:          initialState,
+		CreationContent:       creationContent,
+		BeeperAutoJoinInvites: autoJoinInvites,
 	}
 	if !portal.shouldSetDMRoomMetadata() {
 		req.Name = ""
@@ -378,21 +409,20 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		}
 	}
 
-	portal.ensureUserInvited(user)
-	user.syncChatDoublePuppetDetails(portal, true)
-
-	var members []string
-	// no members are included in channels, only in group DMs
-	switch portal.Type {
-	case database.ChannelTypeChannel:
-		user.updateChatMute(portal, true)
-		members = portal.getChannelMembers(userTeam, 3) // TODO: this just fetches 3 members so channels don't have to look like DMs
-	case database.ChannelTypeDM:
-		members = []string{channel.User, userTeam.Key.SlackID}
-	case database.ChannelTypeGroupDM:
-		members = channel.Members
+	// We set the memberships beforehand to make sure the encryption key exchange in initial backfill knows the users are here.
+	inviteMembership := event.MembershipInvite
+	if autoJoinInvites {
+		inviteMembership = event.MembershipJoin
 	}
-	portal.syncParticipants(user, userTeam, members)
+	for _, userID := range invite {
+		portal.bridge.StateStore.SetMembership(portal.MXID, userID, inviteMembership)
+	}
+
+	if !autoJoinInvites {
+		portal.ensureUserInvited(user)
+		user.syncChatDoublePuppetDetails(portal, true)
+		portal.syncParticipants(user, userTeam, members, true)
+	}
 
 	// if portal.IsPrivateChat() {
 	// 	puppet := user.bridge.GetPuppetByID(userTeam.Key.TeamID, portal.Key.UserID)
