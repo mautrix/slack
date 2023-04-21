@@ -56,6 +56,10 @@ func (pq *PuppetQuery) GetAll() []*Puppet {
 	return pq.getAll(puppetSelect)
 }
 
+func (pq *PuppetQuery) GetAllForTeam(teamID string) []*Puppet {
+	return pq.getAll(puppetSelect+" WHERE team_id=$1", teamID)
+}
+
 func (pq *PuppetQuery) GetAllWithCustomMXID() []*Puppet {
 	return pq.getAll(puppetSelect + " WHERE custom_mxid<>''")
 }

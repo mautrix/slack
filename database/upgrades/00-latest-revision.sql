@@ -1,4 +1,4 @@
--- v1 -> v7: Latest revision
+-- v1 -> v12: Latest revision
 
 CREATE TABLE portal (
 	team_id    TEXT,
@@ -20,6 +20,8 @@ CREATE TABLE portal (
 	encrypted BOOLEAN NOT NULL DEFAULT false,
 
 	first_event_id TEXT,
+	next_batch_id  TEXT,
+	first_slack_id TEXT,
 
 	PRIMARY KEY (team_id, channel_id)
 );
@@ -41,6 +43,8 @@ CREATE TABLE puppet (
 	custom_mxid  TEXT,
 	access_token TEXT,
 	next_batch   TEXT,
+
+	contact_info_set BOOLEAN NOT NULL DEFAULT false
 
 	PRIMARY KEY(team_id, user_id)
 );
@@ -114,6 +118,7 @@ CREATE TABLE attachment (
 	slack_message_id TEXT NOT NULL,
     slack_file_id TEXT NOT NULL,
 	matrix_event_id TEXT NOT NULL UNIQUE,
+	slack_thread_id TEXT,
 
 	PRIMARY KEY(slack_message_id, slack_file_id, matrix_event_id),
 	FOREIGN KEY(team_id, channel_id) REFERENCES portal(team_id, channel_id) ON DELETE CASCADE
@@ -126,4 +131,15 @@ CREATE TABLE "team_info" (
     team_name TEXT,
     avatar TEXT,
     avatar_url TEXT
+);
+
+CREATE TABLE backfill_state (
+    team_id            TEXT,
+    channel_id         TEXT,
+    backfill_complete  BOOLEAN,
+    dispatched         BOOLEAN,
+    message_count      INTEGER,
+    immediate_complete BOOLEAN,
+    PRIMARY KEY (team_id, channel_id),
+    FOREIGN KEY (team_id, channel_id) REFERENCES portal (team_id, channel_id) ON DELETE CASCADE
 );

@@ -86,6 +86,12 @@ func (portal *Portal) MarkEncrypted() {
 	portal.Update(nil)
 }
 
+func (portal *Portal) shouldSetDMRoomMetadata() bool {
+	return !portal.IsPrivateChat() ||
+		portal.bridge.Config.Bridge.PrivateChatPortalMeta == "always" ||
+		(portal.IsEncrypted() && portal.bridge.Config.Bridge.PrivateChatPortalMeta != "never")
+}
+
 func (portal *Portal) ReceiveMatrixEvent(user bridge.User, evt *event.Event) {
 	if user.GetPermissionLevel() >= bridgeconfig.PermissionLevelUser /*|| portal.HasRelaybot()*/ {
 		portal.matrixMessages <- portalMatrixMessage{user: user.(*User), evt: evt, receivedAt: time.Now()}
@@ -334,7 +340,7 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		}
 	}
 
-	resp, err := intent.CreateRoom(&mautrix.ReqCreateRoom{
+	req := &mautrix.ReqCreateRoom{
 		Visibility:      "private",
 		Name:            portal.Name,
 		Topic:           portal.Topic,
@@ -343,13 +349,17 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		IsDirect:        portal.IsPrivateChat(),
 		InitialState:    initialState,
 		CreationContent: creationContent,
-	})
+	}
+	if !portal.shouldSetDMRoomMetadata() {
+		req.Name = ""
+	}
+	resp, err := intent.CreateRoom(req)
 	if err != nil {
 		portal.log.Warnln("Failed to create room:", err)
 		return err
 	}
 
-	portal.NameSet = portal.Name != ""
+	portal.NameSet = req.Name != ""
 	portal.TopicSet = true
 	portal.MXID = resp.RoomID
 	portal.bridge.portalsLock.Lock()
@@ -411,7 +421,10 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 			portal.log.Errorfln("Error fetching initial backfill messages: %v", err)
 			backfillState.BackfillComplete = true
 		} else {
-			resp := portal.backfill(userTeam, initialMessages.Messages, true, "")
+			resp, err := portal.backfill(userTeam, initialMessages.Messages, true)
+			if err != nil {
+				portal.log.Errorfln("Error sending initial backfill batch: %v", err)
+			}
 			if resp != nil {
 				backfillState.ImmediateComplete = true
 				backfillState.MessageCount += len(initialMessages.Messages)
@@ -970,7 +983,7 @@ func (portal *Portal) delete() {
 
 func (portal *Portal) cleanupIfEmpty() {
 	users, err := portal.getMatrixUsers()
-	if err != nil {
+	if err != nil && !errors.Is(err, mautrix.MForbidden) {
 		portal.log.Errorfln("Failed to get Matrix user list to determine if portal needs to be cleaned up: %v", err)
 
 		return
@@ -978,22 +991,23 @@ func (portal *Portal) cleanupIfEmpty() {
 
 	if len(users) == 0 {
 		portal.log.Infoln("Room seems to be empty, cleaning up...")
-		portal.delete()
-		if portal.bridge.SpecVersions.UnstableFeatures["com.beeper.room_yeeting"] {
-			intent := portal.MainIntent()
-			err := intent.BeeperDeleteRoom(portal.MXID)
-			if err == nil || errors.Is(err, mautrix.MNotFound) {
-				return
-			}
-			portal.log.Warnfln("Failed to delete %s using hungryserv yeet endpoint, falling back to normal behavior: %v", portal.MXID, err)
-		}
 		portal.cleanup(false)
+		portal.delete()
 	}
 }
 
 func (portal *Portal) cleanup(puppetsOnly bool) {
 	if portal.MXID == "" {
 		return
+	}
+
+	if portal.bridge.SpecVersions.UnstableFeatures["com.beeper.room_yeeting"] {
+		intent := portal.MainIntent()
+		err := intent.BeeperDeleteRoom(portal.MXID)
+		if err == nil || errors.Is(err, mautrix.MNotFound) {
+			return
+		}
+		portal.log.Warnfln("Failed to delete %s using hungryserv yeet endpoint, falling back to normal behavior: %v", portal.MXID, err)
 	}
 
 	if portal.IsPrivateChat() {
@@ -1174,15 +1188,13 @@ func (portal *Portal) GetPlainName(meta *slack.Channel, sourceTeam *database.Use
 }
 
 func (portal *Portal) UpdateNameDirect(name string) bool {
-	if portal.Name == name && (portal.NameSet || portal.MXID == "") {
-		return false
-	} else if !portal.Encrypted && !portal.bridge.Config.Bridge.PrivateChatPortalMeta && portal.IsPrivateChat() {
+	if portal.Name == name && (portal.NameSet || portal.MXID == "" || !portal.shouldSetDMRoomMetadata()) {
 		return false
 	}
 	portal.log.Debugfln("Updating name %q -> %q", portal.Name, name)
 	portal.Name = name
 	portal.NameSet = false
-	if portal.MXID != "" && portal.Name != "" {
+	if portal.MXID != "" && portal.Name != "" && portal.shouldSetDMRoomMetadata() {
 		_, err := portal.MainIntent().SetRoomName(portal.MXID, portal.Name)
 		if err != nil {
 			portal.log.Warnln("Failed to update room name:", err)
@@ -1208,7 +1220,7 @@ func (portal *Portal) UpdateName(meta *slack.Channel, sourceTeam *database.UserT
 }
 
 func (portal *Portal) updateRoomAvatar() {
-	if portal.MXID == "" {
+	if portal.MXID == "" || !portal.shouldSetDMRoomMetadata() {
 		return
 	}
 	_, err := portal.MainIntent().SetRoomAvatar(portal.MXID, portal.AvatarURL)
@@ -1220,7 +1232,7 @@ func (portal *Portal) updateRoomAvatar() {
 }
 
 func (portal *Portal) UpdateAvatarFromPuppet(puppet *Puppet) bool {
-	if portal.Avatar == puppet.Avatar && portal.AvatarURL == puppet.AvatarURL && (portal.AvatarSet || portal.MXID == "") {
+	if portal.Avatar == puppet.Avatar && portal.AvatarURL == puppet.AvatarURL && (portal.AvatarSet || portal.MXID == "" || !portal.shouldSetDMRoomMetadata()) {
 		return false
 	}
 
@@ -1307,10 +1319,6 @@ func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, me
 		portal.DMUserID = meta.User
 		portal.log.Infoln("Found other user ID:", portal.DMUserID)
 		changed = true
-	}
-
-	if portal.Type == database.ChannelTypeChannel {
-		changed = portal.UpdateName(meta, sourceTeam) || changed
 	}
 
 	changed = portal.UpdateName(meta, sourceTeam) || changed
@@ -1482,9 +1490,16 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 		portal.addThreadMetadata(&content, msg.ThreadTimestamp)
 		var data bytes.Buffer
 		var err error
-		if file.URLPrivate != "" {
-			err = userTeam.Client.GetFile(file.URLPrivate, &data)
+		var url string
+		if file.URLPrivateDownload != "" {
+			url = file.URLPrivateDownload
+		} else if file.URLPrivate != "" {
+			url = file.URLPrivate
+		}
+		if url != "" {
+			err = userTeam.Client.GetFile(url, &data)
 			if err == slack.SlackFileHTMLError {
+				portal.log.Warnfln("Received HTML file from Slack (URL %s), trying again in 5 seconds", url)
 				time.Sleep(5 * time.Second)
 				err = userTeam.Client.GetFile(file.URLPrivate, &data)
 			}

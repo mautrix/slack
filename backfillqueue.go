@@ -59,7 +59,7 @@ func (bridge *SlackBridge) HandleBackfillRequestsLoop() {
 
 	for {
 		state := bridge.BackfillQueue.GetNextBackfill(reCheckChannel)
-		bridge.Log.Infofln("Handling backfill %s", state)
+		bridge.Log.Infofln("Handling backfill for portal %s", state.Portal)
 
 		portal := bridge.GetPortalByID(*state.Portal)
 

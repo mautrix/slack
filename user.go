@@ -302,7 +302,7 @@ func (user *User) login(info *auth.Info, force bool) {
 
 	user.log.Debugfln("logged into %s successfully", info.TeamName)
 
-	user.BridgeStates[info.TeamID] = user.bridge.NewBridgeStateQueue(userTeam, user.log)
+	user.BridgeStates[info.TeamID] = user.bridge.NewBridgeStateQueue(userTeam)
 	user.bridge.usersByID[fmt.Sprintf("%s-%s", userTeam.Key.TeamID, userTeam.Key.SlackID)] = user
 	user.connectTeam(userTeam)
 }
@@ -357,7 +357,7 @@ func (user *User) LogoutUserTeam(userTeam *database.UserTeam) error {
 	}
 
 	if userTeam.RTM != nil {
-		if err := userTeam.RTM.Disconnect(); err != nil {
+		if err := userTeam.RTM.Disconnect(); err != nil && !errors.Is(err, slack.ErrAlreadyDisconnected) {
 			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: err.Error()})
 			return err
 		}
@@ -402,9 +402,18 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 			userTeam.Upsert()
 
 			user.tryAutomaticDoublePuppeting(userTeam)
-			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateConnected})
+			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateBackfilling})
 
 			user.log.Infofln("connected to team %s as %s", userTeam.TeamName, userTeam.SlackEmail)
+
+			portals := user.bridge.dbPortalsToPortals(user.bridge.DB.Portal.GetAllForUserTeam(userTeam.Key))
+			for _, portal := range portals {
+				err := portal.ForwardBackfill()
+				if err != nil {
+					user.log.Warnfln("Forward backfill for portal %s failed: %v", portal.Key, err)
+				}
+			}
+			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateConnected})
 		case *slack.HelloEvent:
 			// Ignored for now
 		case *slack.InvalidAuthEvent:
@@ -464,9 +473,37 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 			if portal != nil {
 				portal.HandleSlackChannelMarked(user, userTeam, event)
 			}
+		case *slack.ChannelJoinedEvent:
+			key := database.NewPortalKey(userTeam.Key.TeamID, event.Channel.ID)
+			portal := user.bridge.GetPortalByID(key)
+			if portal != nil {
+				if portal.MXID == "" {
+					portal.log.Debugln("Creating Matrix room from joined channel")
+					if err := portal.CreateMatrixRoom(user, userTeam, &event.Channel, false); err != nil {
+						portal.log.Errorln("Failed to create portal room:", err)
+						continue
+					}
+				}
+			} else {
+				portal.ensureUserInvited(user)
+			}
+		case *slack.ChannelLeftEvent:
+			key := database.NewPortalKey(userTeam.Key.TeamID, event.Channel)
+			portal := user.bridge.GetPortalByID(key)
+			if portal != nil {
+				portal.leave(userTeam)
+			}
+		case *slack.ChannelUpdateEvent:
+			key := database.NewPortalKey(userTeam.Key.TeamID, event.Channel)
+			portal := user.bridge.GetPortalByID(key)
+			if portal != nil {
+				portal.UpdateInfo(user, userTeam, nil, true)
+			}
 		case *slack.RTMError:
 			user.log.Errorln("rtm error:", event.Error())
 			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: event.Error()})
+		case *slack.FileSharedEvent, *slack.FilePublicEvent, *slack.FilePrivateEvent, *slack.FileCreatedEvent, *slack.FileChangeEvent, *slack.FileDeletedEvent, *slack.DesktopNotificationEvent:
+			// ignored intentionally, these are duplicates or do not contain useful information
 		default:
 			user.log.Warnln("unknown message", msg)
 		}
@@ -495,20 +532,11 @@ func (user *User) connectTeam(userTeam *database.UserTeam) {
 	user.UpdateTeam(userTeam, false)
 }
 
-func (user *User) isChannelOrOpenIM(channel *slack.Channel, userTeam *database.UserTeam) bool {
+func (user *User) isChannelOrOpenIM(channel *slack.Channel) bool {
 	if !channel.IsIM {
 		return true
 	} else {
-		info, err := userTeam.Client.GetConversationInfo(&slack.GetConversationInfoInput{
-			ChannelID:         channel.ID,
-			IncludeLocale:     true,
-			IncludeNumMembers: true,
-		})
-		if err != nil {
-			user.log.Errorfln("Error getting information about IM: %v", err)
-			return false
-		}
-		return info.Latest != nil && info.Latest.SubType != "joiner_notification_for_inviter" && info.Latest.SubType != "joiner_notification"
+		return channel.Latest != nil && channel.Latest.SubType != "joiner_notification_for_inviter" && channel.Latest.SubType != "joiner_notification"
 	}
 }
 
@@ -524,8 +552,30 @@ func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 		if err != nil {
 			user.log.Warnfln("Error fetching channels: %v", err)
 		}
+		for i, channel := range channels {
+			// replace channel entry in list with one that has more metadata
+			c, err := userTeam.Client.GetConversationInfo(&slack.GetConversationInfoInput{
+				ChannelID:         channel.ID,
+				IncludeLocale:     true,
+				IncludeNumMembers: true,
+			})
+			if err != nil {
+				user.log.Errorfln("Error getting information about IM: %v", err)
+				return err
+			}
+			channels[i] = *c
+		}
+		sort.Slice(channels, func(i, j int) bool {
+			if channels[i].LastRead == "" {
+				return false
+			}
+			if channels[j].LastRead == "" {
+				return true
+			}
+			return parseSlackTimestamp(channels[i].LastRead).After(parseSlackTimestamp(channels[j].LastRead))
+		})
 		for _, channel := range channels {
-			if user.isChannelOrOpenIM(&channel, userTeam) {
+			if user.isChannelOrOpenIM(&channel) {
 				channelInfo[channel.ID] = channel
 			}
 		}
@@ -605,8 +655,12 @@ func (user *User) UpdateTeam(userTeam *database.UserTeam, force bool) error {
 			changed = true
 		}
 	}
-
 	currentTeamInfo.Upsert()
+
+	puppets := user.bridge.GetAllPuppetsForTeam(userTeam.Key.TeamID)
+	for _, puppet := range puppets {
+		puppet.UpdateInfo(userTeam, nil)
+	}
 	return user.SyncPortals(userTeam, changed || force)
 }
 
@@ -617,7 +671,7 @@ func (user *User) Connect() error {
 	user.log.Infofln("Connecting Slack teams for user %s", user.MXID)
 	for key, userTeam := range user.Teams {
 		user.bridge.usersByID[fmt.Sprintf("%s-%s", userTeam.Key.TeamID, userTeam.Key.SlackID)] = user
-		user.BridgeStates[key] = user.bridge.NewBridgeStateQueue(userTeam, user.log)
+		user.BridgeStates[key] = user.bridge.NewBridgeStateQueue(userTeam)
 		user.connectTeam(userTeam)
 		// if err != nil {
 		// 	user.log.Errorfln("Error connecting to Slack userteam %s: %v", userTeam.Key, err)

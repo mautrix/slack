@@ -68,27 +68,15 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 		ChannelID: portal.Key.ChannelID,
 		Inclusive: false,
 	}
-	var forwardPrevID id.EventID
 	var isLatestEvents bool
 	portal.latestEventBackfillLock.Lock()
-	// TODO: forward backfill isn't a thing yet
-	// if req.BackfillType == database.BackfillForward {
-	// 	lastMessage := portal.bridge.DB.Message.GetLast(portal.Key)
-	// 	if lastMessage == nil {
-	// 		bridge.Log.Warnfln("Empty portal %s, can't fetch Slack history for forward backfilling", portal.Key)
-	// 		return
-	// 	}
-	// 	slackReqParams.Oldest = lastMessage.SlackID
-	// 	forwardPrevID = lastMessage.MatrixID
-	// 	// Sending events at the end of the room (= latest events)
-	// 	isLatestEvents = true
-	// } else {
+
 	slackReqParams.Latest = portal.FirstSlackID
 	if portal.FirstSlackID == "" {
 		// Portal is empty -> events are latest
 		isLatestEvents = true
 	}
-	//}
+
 	if !isLatestEvents {
 		// We'll use normal batch sending, so no need to keep blocking new message processing
 		portal.latestEventBackfillLock.Unlock()
@@ -153,10 +141,10 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 		if len(msgs) > 0 {
 			time.Sleep(time.Duration(bridge.Config.Bridge.Backfill.Incremental.PostBatchDelay) * time.Second)
 			bridge.Log.Debugfln("Backfilling %d messages in %s", len(msgs), portal.Key)
-			resp := portal.backfill(userTeam, msgs, !backfillState.ImmediateComplete, forwardPrevID)
+			resp, err := portal.backfill(userTeam, msgs, !backfillState.ImmediateComplete)
 			if resp != nil && (resp.BaseInsertionEventID != "" || !isLatestEvents) {
 				backfillState.MessageCount += len(msgs)
-			} else if resp == nil {
+			} else if err != nil {
 				// the backfill function has already logged an error; just store state in DB and stop filling
 				if len(allMsgs) != 0 {
 					portal.FirstSlackID = allMsgs[len(msgs)-1].Timestamp
@@ -259,7 +247,7 @@ func (portal *Portal) makeBackfillEvent(intent *appservice.IntentAPI, msg *event
 	return &e
 }
 
-func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Message, isForward bool, prevEventID id.EventID) *mautrix.RespBatchSend {
+func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Message, isForward bool) (*mautrix.RespBatchSend, error) {
 	req := mautrix.ReqBatchSend{
 		Events:             []*event.Event{},
 		StateEventsAtStart: []*event.Event{},
@@ -267,7 +255,7 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 	if !isForward {
 		if portal.FirstEventID == "" {
 			portal.log.Errorln("No first event ID saved while backfilling backwards! Can't backfill")
-			return nil
+			return nil, fmt.Errorf("no first event ID saved while backfilling backwards, can't backfill")
 		}
 		req.PrevEventID = portal.FirstEventID
 	}
@@ -376,8 +364,8 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 		}
 	}
 	if len(req.Events) == 0 {
-		portal.log.Warnln("No messages to send in batch!")
-		return nil
+		portal.log.Debugln("No messages to send in batch!")
+		return nil, nil
 	}
 
 	beforeFirstMessageTimestampMillis := req.Events[0].Timestamp - 1
@@ -411,10 +399,11 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 	}
 
 	if len(req.Events) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	if isForward {
+		req.BeeperNewMessages = true
 		portal.log.Debugln("Sending a dummy event to avoid forward extremity errors with backfill")
 		_, err := portal.MainIntent().SendMessageEvent(portal.MXID, PreBackfillDummyEvent, struct{}{})
 		if err != nil {
@@ -424,27 +413,25 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 			ChannelID: portal.Key.ChannelID,
 		})
 		if err != nil || conversationInfo.LastRead == convertedMessages[len(convertedMessages)-1].SlackTimestamp || time.Since(parseSlackTimestamp(convertedMessages[len(convertedMessages)-1].SlackTimestamp)).Hours() > float64(portal.bridge.Config.Bridge.Backfill.UnreadHoursThreshold) {
-			req.BeeperNewMessages = false
-		} else {
-			req.BeeperNewMessages = true
+			req.BeeperMarkReadBy = userTeam.Key.MXID
 		}
 	}
 
 	resp, err := portal.MainIntent().BatchSend(portal.MXID, &req)
 	if err != nil {
 		portal.log.Errorln("Error batch sending messages:", err)
-		return nil
+		return nil, err
 	} else {
 		txn, err := portal.bridge.DB.Begin()
 		if err != nil {
 			portal.log.Errorln("Failed to start transaction to save batch messages:", err)
-			return nil
+			return nil, err
 		}
 
 		// Do the following block in the transaction
 		{
 			portal.finishBatch(txn, resp.EventIDs, &convertedMessages)
-			if earliestBridged != "" {
+			if earliestBridged != "" && (portal.FirstSlackID == "" || !isForward) {
 				portal.FirstSlackID = earliestBridged
 			}
 			portal.Update(txn)
@@ -453,9 +440,9 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 		err = txn.Commit()
 		if err != nil {
 			portal.log.Errorln("Failed to commit transaction to save batch messages:", err)
-			return nil
+			return nil, err
 		}
-		return resp
+		return resp, nil
 	}
 }
 
@@ -528,6 +515,51 @@ func (portal *Portal) updateBackfillStatus(backfillState *database.BackfillState
 	if err != nil {
 		portal.log.Errorln("Error sending backfill status event:", err)
 	}
+}
+
+func (portal *Portal) ForwardBackfill() error {
+	portal.slackMessageLock.Lock()
+	defer portal.slackMessageLock.Unlock()
+
+	backfillState := portal.bridge.DB.Backfill.GetBackfillState(&portal.Key)
+	if backfillState != nil && !(backfillState.ImmediateComplete || backfillState.BackfillComplete) {
+		portal.log.Debugln("Not forward backfilling, backfill is not complete yet")
+		return nil
+	}
+
+	portal.log.Infoln("Forward backfilling messages after reconnect")
+	userTeam := portal.bridge.DB.UserTeam.GetFirstUserTeamForPortal(&portal.Key)
+	if userTeam == nil {
+		portal.log.Errorln("Couldn't find logged in user for backfilling!")
+		return nil
+	}
+	if userTeam.CookieToken != "" {
+		userTeam.Client = slack.New(userTeam.Token, slack.OptionCookie("d", userTeam.CookieToken))
+	} else {
+		userTeam.Client = slack.New(userTeam.Token)
+	}
+
+	lastMessage := portal.bridge.DB.Message.GetLast(portal.Key)
+	if lastMessage == nil {
+		portal.log.Debugln("No last message for portal, can't forward backfill")
+		return nil
+	}
+	messages, err := userTeam.Client.GetConversationHistory(&slack.GetConversationHistoryParameters{
+		ChannelID: portal.Key.ChannelID,
+		Oldest:    lastMessage.SlackID,
+		Inclusive: false,
+		Limit:     portal.bridge.Config.Bridge.Backfill.ImmediateMessages,
+	})
+	if err != nil {
+		portal.log.Errorln("Error fetching messages for forward backfill", err)
+		return err
+	}
+	_, err = portal.backfill(userTeam, messages.Messages, true)
+	if err != nil {
+		portal.log.Errorln("Error forward backfilling messages", err)
+		return err
+	}
+	return nil
 }
 
 // endregion

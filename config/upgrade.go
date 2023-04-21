@@ -36,6 +36,15 @@ func DoUpgrade(helper *up.Helper) {
 	helper.Copy(up.Bool, "bridge", "sync_with_custom_puppets")
 	helper.Copy(up.Bool, "bridge", "sync_direct_chat_list")
 	helper.Copy(up.Bool, "bridge", "federate_rooms")
+	if legacyPrivateChatPortalMeta, ok := helper.Get(up.Bool, "bridge", "private_chat_portal_meta"); ok {
+		updatedPrivateChatPortalMeta := "default"
+		if legacyPrivateChatPortalMeta == "true" {
+			updatedPrivateChatPortalMeta = "always"
+		}
+		helper.Set(up.Str, updatedPrivateChatPortalMeta, "bridge", "private_chat_portal_meta")
+	} else {
+		helper.Copy(up.Str, "bridge", "private_chat_portal_meta")
+	}
 	helper.Copy(up.Bool, "bridge", "default_bridge_receipts")
 	helper.Copy(up.Bool, "bridge", "default_bridge_presence")
 	helper.Copy(up.Map, "bridge", "double_puppet_server_map")
@@ -52,6 +61,13 @@ func DoUpgrade(helper *up.Helper) {
 	helper.Copy(up.Bool, "bridge", "encryption", "require")
 	helper.Copy(up.Bool, "bridge", "encryption", "appservice")
 	helper.Copy(up.Bool, "bridge", "encryption", "allow_key_sharing")
+	helper.Copy(up.Bool, "bridge", "encryption", "delete_keys", "delete_outbound_on_ack")
+	helper.Copy(up.Bool, "bridge", "encryption", "delete_keys", "dont_store_outbound")
+	helper.Copy(up.Bool, "bridge", "encryption", "delete_keys", "ratchet_on_decrypt")
+	helper.Copy(up.Bool, "bridge", "encryption", "delete_keys", "delete_fully_used_on_decrypt")
+	helper.Copy(up.Bool, "bridge", "encryption", "delete_keys", "delete_prev_on_new_session")
+	helper.Copy(up.Bool, "bridge", "encryption", "delete_keys", "delete_on_device_delete")
+	helper.Copy(up.Bool, "bridge", "encryption", "delete_keys", "periodically_delete_expired")
 	helper.Copy(up.Str, "bridge", "encryption", "verification_levels", "receive")
 	helper.Copy(up.Str, "bridge", "encryption", "verification_levels", "send")
 	helper.Copy(up.Str, "bridge", "encryption", "verification_levels", "share")
