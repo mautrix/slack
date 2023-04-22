@@ -657,10 +657,10 @@ func (user *User) UpdateTeam(userTeam *database.UserTeam, force bool) error {
 	}
 	currentTeamInfo.Upsert()
 
-	puppets := user.bridge.GetAllPuppetsForTeam(userTeam.Key.TeamID)
-	for _, puppet := range puppets {
-		puppet.UpdateInfo(userTeam, nil)
-	}
+	// puppets := user.bridge.GetAllPuppetsForTeam(userTeam.Key.TeamID)
+	// for _, puppet := range puppets {
+	// 	puppet.UpdateInfo(userTeam, nil)
+	// }
 	return user.SyncPortals(userTeam, changed || force)
 }
 
