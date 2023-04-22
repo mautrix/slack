@@ -1518,14 +1518,19 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 		} else if file.URLPrivate != "" {
 			url = file.URLPrivate
 		}
+		portal.log.Debugfln("File download URLs: urlPrivate=%s, urlPrivateDownload=%s", file.URLPrivate, file.URLPrivateDownload)
 		if url != "" {
+			portal.log.Debugfln("Downloading private file from Slack: %s", url)
 			err = userTeam.Client.GetFile(url, &data)
 			if err == slack.SlackFileHTMLError {
 				portal.log.Warnfln("Received HTML file from Slack (URL %s), trying again in 5 seconds", url)
 				time.Sleep(5 * time.Second)
 				err = userTeam.Client.GetFile(file.URLPrivate, &data)
+			} else {
+				portal.log.Debugfln("Download success, expectedSize=%d, downloadedSize=%d", file.Size, data.Len())
 			}
 		} else if file.PermalinkPublic != "" {
+			portal.log.Debugfln("Downloading public file from Slack: %s", file.PermalinkPublic)
 			client := http.Client{}
 			var resp *http.Response
 			resp, err = client.Get(file.PermalinkPublic)
