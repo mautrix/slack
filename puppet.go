@@ -429,12 +429,11 @@ func (puppet *Puppet) UpdateContactInfo(profile *slack.UserProfile, isBot bool) 
 	}
 	if !puppet.ContactInfoSet {
 		contactInfo := map[string]any{
-			"com.beeper.bridge.identifiers":   []string{},
-			"com.beeper.bridge.remote_id":     puppet.UserID,
-			"com.beeper.bridge.service":       "slackgo",
-			"com.beeper.bridge.network":       "slack",
-			"com.beeper.bridge.is_bridge_bot": false,
-			"com.beeper.bridge.is_bot":        isBot,
+			"com.beeper.bridge.identifiers":    []string{},
+			"com.beeper.bridge.remote_id":      puppet.UserID,
+			"com.beeper.bridge.service":        "slackgo",
+			"com.beeper.bridge.network":        "slack",
+			"com.beeper.bridge.is_network_bot": isBot,
 		}
 		if profile != nil && profile.Email != "" {
 			contactInfo["com.beeper.bridge.identifiers"] = []string{fmt.Sprintf("mailto:%s", profile.Email)}
