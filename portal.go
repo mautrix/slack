@@ -261,7 +261,7 @@ func (portal *Portal) syncParticipants(source *User, sourceTeam *database.UserTe
 		portal.log.Infofln("Getting participant %s", participant)
 		puppet := portal.bridge.GetPuppetByID(sourceTeam.Key.TeamID, participant)
 
-		puppet.UpdateInfo(sourceTeam, nil)
+		puppet.UpdateInfo(sourceTeam, true, nil)
 
 		user := portal.bridge.GetUserByID(sourceTeam.Key.TeamID, participant)
 
@@ -1650,7 +1650,7 @@ func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTea
 		portal.log.Errorfln("Not sending reaction: can't find puppet for Slack user %s", msg.User)
 		return
 	}
-	puppet.UpdateInfo(userTeam, nil)
+	puppet.UpdateInfo(userTeam, true, nil)
 	intent := puppet.IntentFor(portal)
 
 	targetMessage := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Item.Timestamp)
@@ -1706,7 +1706,7 @@ func (portal *Portal) HandleSlackReactionRemoved(user *User, userTeam *database.
 		portal.log.Errorfln("Not redacting reaction: can't find puppet for Slack user %s %s", portal.Key.TeamID, msg.User)
 		return
 	}
-	puppet.UpdateInfo(userTeam, nil)
+	puppet.UpdateInfo(userTeam, true, nil)
 	intent := puppet.IntentFor(portal)
 
 	_, err := intent.RedactEvent(portal.MXID, dbReaction.MatrixEventID)
@@ -1727,7 +1727,7 @@ func (portal *Portal) HandleSlackTyping(user *User, userTeam *database.UserTeam,
 		portal.log.Errorfln("Not sending typing status: can't find puppet for Slack user %s", msg.User)
 		return
 	}
-	puppet.UpdateInfo(userTeam, nil)
+	puppet.UpdateInfo(userTeam, true, nil)
 	intent := puppet.IntentFor(portal)
 
 	_, err := intent.UserTyping(portal.MXID, true, time.Duration(time.Second*5))
@@ -1745,7 +1745,7 @@ func (portal *Portal) HandleSlackChannelMarked(user *User, userTeam *database.Us
 		portal.log.Errorfln("Not marking room as read: can't find puppet for Slack user %s", msg.User)
 		return
 	}
-	puppet.UpdateInfo(userTeam, nil)
+	puppet.UpdateInfo(userTeam, true, nil)
 	intent := puppet.IntentFor(portal)
 
 	message := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Timestamp)

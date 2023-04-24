@@ -308,7 +308,7 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 	for _, converted := range convertedMessages {
 		ts := parseSlackTimestamp(converted.SlackTimestamp).UnixMilli()
 		puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, converted.SlackAuthor)
-		puppet.UpdateInfo(userTeam, nil)
+		puppet.UpdateInfo(userTeam, true, nil)
 		if puppet == nil || puppet.GetCustomOrGhostMXID() == "" {
 			portal.log.Warnfln("No puppet found for %s while batch filling!", converted.SlackAuthor)
 			continue
@@ -345,7 +345,7 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 						portal.log.Errorfln("Not backfilling reaction: can't find puppet for Slack user %s", user)
 						continue
 					}
-					reactionPuppet.UpdateInfo(userTeam, nil)
+					reactionPuppet.UpdateInfo(userTeam, true, nil)
 					eventContent := event.Content{
 						Raw:    map[string]interface{}{},
 						Parsed: content,

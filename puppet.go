@@ -378,7 +378,7 @@ func (puppet *Puppet) UpdateAvatar(url string) bool {
 	return true
 }
 
-func (puppet *Puppet) UpdateInfo(userTeam *database.UserTeam, info *slack.User) {
+func (puppet *Puppet) UpdateInfo(userTeam *database.UserTeam, fetch bool, info *slack.User) {
 	if strings.HasPrefix(strings.ToLower(puppet.UserID), "b") {
 		puppet.UpdateInfoBot(userTeam)
 		return
@@ -387,7 +387,7 @@ func (puppet *Puppet) UpdateInfo(userTeam *database.UserTeam, info *slack.User) 
 	puppet.syncLock.Lock()
 	defer puppet.syncLock.Unlock()
 
-	if info == nil {
+	if info == nil && fetch {
 		var err error
 		puppet.log.Debugfln("Fetching info through team %s to update", userTeam.Key.TeamID)
 
@@ -398,45 +398,35 @@ func (puppet *Puppet) UpdateInfo(userTeam *database.UserTeam, info *slack.User) 
 		}
 	}
 
-	profile, err := userTeam.Client.GetUserProfile(&slack.GetUserProfileParameters{
-		UserID: puppet.UserID,
-	})
-	if err != nil {
-		puppet.log.Errorfln("Failed to fetch user profile through %s: %v", userTeam.Key.TeamID, err)
-		return
-	}
-
-	err = puppet.DefaultIntent().EnsureRegistered()
+	err := puppet.DefaultIntent().EnsureRegistered()
 	if err != nil {
 		puppet.log.Errorln("Failed to ensure registered:", err)
 	}
 
 	changed := false
 
-	newName := puppet.bridge.Config.Bridge.FormatDisplayname(info)
-	changed = puppet.UpdateName(newName) || changed
-	changed = puppet.UpdateAvatar(info.Profile.ImageOriginal) || changed
-	changed = puppet.UpdateContactInfo(profile, strings.ToLower(puppet.UserID) == "uslackbot") || changed
+	if info != nil {
+		newName := puppet.bridge.Config.Bridge.FormatDisplayname(info)
+		changed = puppet.UpdateName(newName) || changed
+		changed = puppet.UpdateAvatar(info.Profile.ImageOriginal) || changed
+	}
+	changed = puppet.UpdateContactInfo(strings.ToLower(puppet.UserID) == "uslackbot") || changed
 
 	if changed {
 		puppet.Update()
 	}
 }
 
-func (puppet *Puppet) UpdateContactInfo(profile *slack.UserProfile, isBot bool) bool {
+func (puppet *Puppet) UpdateContactInfo(isBot bool) bool {
 	if puppet.bridge.Config.Homeserver.Software != bridgeconfig.SoftwareHungry {
 		return false
 	}
 	if !puppet.ContactInfoSet {
 		contactInfo := map[string]any{
-			"com.beeper.bridge.identifiers":    []string{},
 			"com.beeper.bridge.remote_id":      puppet.UserID,
 			"com.beeper.bridge.service":        "slackgo",
 			"com.beeper.bridge.network":        "slack",
 			"com.beeper.bridge.is_network_bot": isBot,
-		}
-		if profile != nil && profile.Email != "" {
-			contactInfo["com.beeper.bridge.identifiers"] = []string{fmt.Sprintf("mailto:%s", profile.Email)}
 		}
 		err := puppet.DefaultIntent().BeeperUpdateProfile(contactInfo)
 		if err != nil {
@@ -471,7 +461,7 @@ func (puppet *Puppet) UpdateInfoBot(userTeam *database.UserTeam) {
 	newName := puppet.bridge.Config.Bridge.FormatBotDisplayname(info)
 	changed = puppet.UpdateName(newName) || changed
 	changed = puppet.UpdateAvatar(info.Icons.Image72) || changed
-	changed = puppet.UpdateContactInfo(nil, true) || changed
+	changed = puppet.UpdateContactInfo(true) || changed
 
 	if changed {
 		puppet.Update()
