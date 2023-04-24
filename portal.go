@@ -1522,7 +1522,7 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 		if url != "" {
 			portal.log.Debugfln("Downloading private file from Slack: %s", url)
 			err = userTeam.Client.GetFile(url, &data)
-			if err == slack.SlackFileHTMLError {
+			if bytes.HasPrefix(data.Bytes(), []byte("<!DOCTYPE html>")) {
 				portal.log.Warnfln("Received HTML file from Slack (URL %s), trying again in 5 seconds", url)
 				time.Sleep(5 * time.Second)
 				err = userTeam.Client.GetFile(file.URLPrivate, &data)
