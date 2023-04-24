@@ -254,7 +254,6 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 	}
 	if !isForward {
 		if portal.FirstEventID == "" {
-			portal.log.Errorln("No first event ID saved while backfilling backwards! Can't backfill")
 			return nil, fmt.Errorf("no first event ID saved while backfilling backwards, can't backfill")
 		}
 		req.PrevEventID = portal.FirstEventID
@@ -419,12 +418,10 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 
 	resp, err := portal.MainIntent().BatchSend(portal.MXID, &req)
 	if err != nil {
-		portal.log.Errorln("Error batch sending messages:", err)
 		return nil, err
 	} else {
 		txn, err := portal.bridge.DB.Begin()
 		if err != nil {
-			portal.log.Errorln("Failed to start transaction to save batch messages:", err)
 			return nil, err
 		}
 
@@ -439,7 +436,6 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 
 		err = txn.Commit()
 		if err != nil {
-			portal.log.Errorln("Failed to commit transaction to save batch messages:", err)
 			return nil, err
 		}
 		return resp, nil
@@ -540,13 +536,25 @@ func (portal *Portal) ForwardBackfill() error {
 	}
 
 	lastMessage := portal.bridge.DB.Message.GetLast(portal.Key)
-	if lastMessage == nil {
+	lastAttachment := portal.bridge.DB.Attachment.GetLast(portal.Key)
+	var lastID string
+	if lastMessage == nil && lastAttachment == nil {
 		portal.log.Debugln("No last message for portal, can't forward backfill")
 		return nil
+	} else if lastMessage == nil {
+		lastID = lastAttachment.SlackMessageID
+	} else if lastAttachment == nil {
+		lastID = lastMessage.SlackID
+	} else {
+		if parseSlackTimestamp(lastAttachment.SlackMessageID).After(parseSlackTimestamp(lastMessage.SlackID)) {
+			lastID = lastAttachment.SlackMessageID
+		} else {
+			lastID = lastMessage.SlackID
+		}
 	}
 	messages, err := userTeam.Client.GetConversationHistory(&slack.GetConversationHistoryParameters{
 		ChannelID: portal.Key.ChannelID,
-		Oldest:    lastMessage.SlackID,
+		Oldest:    lastID,
 		Inclusive: false,
 		Limit:     portal.bridge.Config.Bridge.Backfill.ImmediateMessages,
 	})
