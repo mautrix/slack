@@ -1510,7 +1510,7 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 		}
 		content := portal.renderSlackFile(file)
 		portal.addThreadMetadata(&content, msg.ThreadTimestamp)
-		data := *bytes.NewBuffer([]byte{})
+		var data bytes.Buffer
 		var err error
 		var url string
 		if file.URLPrivateDownload != "" {
@@ -1525,7 +1525,7 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 			if bytes.HasPrefix(data.Bytes(), []byte("<!DOCTYPE html>")) {
 				portal.log.Warnfln("Received HTML file from Slack (URL %s), trying again in 5 seconds", url)
 				time.Sleep(5 * time.Second)
-				data = *bytes.NewBuffer([]byte{})
+				data.Reset()
 				err = userTeam.Client.GetFile(file.URLPrivate, &data)
 			} else {
 				portal.log.Debugfln("Download success, expectedSize=%d, downloadedSize=%d", file.Size, data.Len())
