@@ -1185,18 +1185,18 @@ func (portal *Portal) setChannelType(channel *slack.Channel) bool {
 	}
 
 	// Slack Conversations structures are weird
-	if channel.GroupConversation.Conversation.IsMpIM {
+	if channel.IsMpIM {
 		portal.Type = database.ChannelTypeGroupDM
 		return true
-	} else if channel.GroupConversation.Conversation.IsIM {
+	} else if channel.IsIM {
 		portal.Type = database.ChannelTypeDM
 		return true
-	} else if channel.IsChannel {
+	} else if channel.Name != "" {
 		portal.Type = database.ChannelTypeChannel
 		return true
 	}
 
-	portal.log.Errorfln("unknown channel type in metadata")
+	portal.log.Errorfln("unknown channel type, metadata %v", channel)
 	return false
 }
 
