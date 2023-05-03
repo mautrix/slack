@@ -181,7 +181,7 @@ func (portal *Portal) renderSlackBlock(block slack.Block) (string, bool) {
 		}
 		return format.UnwrapSingleParagraph(htmlText.String()), false
 	default:
-		portal.log.Debugfln("Unsupported Slack block: %T", b)
+		portal.log.Debugfln("Unsupported Slack block: %s", b.BlockType())
 		return "<i>Slack message contains unsupported elements.</i>", true
 	}
 }
@@ -225,22 +225,10 @@ func (portal *Portal) renderSlackRichTextElement(numElements int, element slack.
 	}
 }
 
-func (portal *Portal) SlackBlocksToMatrix(blocks slack.Blocks) (*event.MessageEventContent, error) {
-	if len(blocks.BlockSet) == 0 {
-		return nil, nil
-	}
-
-	// Special case for bots like the Giphy bot which send images in a specific format
-	if len(blocks.BlockSet) == 2 &&
-		blocks.BlockSet[0].BlockType() == slack.MBTImage &&
-		blocks.BlockSet[1].BlockType() == slack.MBTContext {
-		imageBlock := blocks.BlockSet[0].(*slack.ImageBlock)
-		return portal.renderImageBlock(*imageBlock)
-	}
-
+func (portal *Portal) blocksToHtml(blocks slack.Blocks, alwaysWrap bool) string {
 	var htmlText strings.Builder
 
-	if len(blocks.BlockSet) == 1 {
+	if len(blocks.BlockSet) == 1 && !alwaysWrap {
 		// don't wrap in <p> tag if there's only one block
 		text, _ := portal.renderSlackBlock(blocks.BlockSet[0])
 		htmlText.WriteString(text)
@@ -252,6 +240,33 @@ func (portal *Portal) SlackBlocksToMatrix(blocks slack.Blocks) (*event.MessageEv
 				htmlText.WriteString(fmt.Sprintf("<p>%s</p>", text))
 			}
 			lastBlockWasUnsupported = unsupported
+		}
+	}
+
+	return htmlText.String()
+}
+
+func (portal *Portal) SlackBlocksToMatrix(blocks slack.Blocks, attachments []slack.Attachment) (*event.MessageEventContent, error) {
+
+	// Special case for bots like the Giphy bot which send images in a specific format
+	if len(blocks.BlockSet) == 2 &&
+		blocks.BlockSet[0].BlockType() == slack.MBTImage &&
+		blocks.BlockSet[1].BlockType() == slack.MBTContext {
+		imageBlock := blocks.BlockSet[0].(*slack.ImageBlock)
+		return portal.renderImageBlock(*imageBlock)
+	}
+
+	var htmlText strings.Builder
+
+	htmlText.WriteString(portal.blocksToHtml(blocks, false))
+
+	for _, attachment := range attachments {
+		if attachment.IsMsgUnfurl {
+			for _, message_block := range attachment.MessageBlocks {
+				renderedAttachment := portal.blocksToHtml(message_block.Message.Blocks, true)
+				htmlText.WriteString(fmt.Sprintf("<blockquote><b>%s</b><br>%s<a href=\"%s\"><i>%s</i></a><br></blockquote>",
+					attachment.AuthorName, renderedAttachment, attachment.FromURL, attachment.Footer))
+			}
 		}
 	}
 

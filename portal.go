@@ -1495,9 +1495,9 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 		}
 	}
 
-	if len(msg.Blocks.BlockSet) != 0 {
+	if len(msg.Blocks.BlockSet) != 0 || len(msg.Attachments) != 0 {
 		var err error
-		converted.Event, err = portal.SlackBlocksToMatrix(msg.Blocks)
+		converted.Event, err = portal.SlackBlocksToMatrix(msg.Blocks, msg.Attachments)
 		if err != nil {
 			portal.log.Warnfln("Error rendering Slack blocks: %v", err)
 			converted.Event = nil
