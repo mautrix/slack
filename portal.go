@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/exp/slices"
 	log "maunium.net/go/maulogger/v2"
 
 	"github.com/slack-go/slack"
@@ -256,7 +257,7 @@ func (portal *Portal) MainIntent() *appservice.IntentAPI {
 }
 
 func (portal *Portal) syncParticipants(source *User, sourceTeam *database.UserTeam, participants []string, invite bool) []id.UserID {
-	userIDs := make([]id.UserID, 0, len(participants))
+	userIDs := make([]id.UserID, 0, len(participants)+1)
 	for _, participant := range participants {
 		portal.log.Infofln("Getting participant %s", participant)
 		puppet := portal.bridge.GetPuppetByID(sourceTeam.Key.TeamID, participant)
@@ -356,7 +357,6 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	// no members are included in channels, only in group DMs
 	switch portal.Type {
 	case database.ChannelTypeChannel:
-		user.updateChatMute(portal, true)
 		members = portal.getChannelMembers(userTeam, 3) // TODO: this just fetches 3 members so channels don't have to look like DMs
 	case database.ChannelTypeDM:
 		members = []string{channel.User, userTeam.Key.SlackID}
@@ -369,6 +369,9 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		portal.log.Debugfln("Hungryserv mode: adding all group members in create request")
 		participants := portal.syncParticipants(user, userTeam, members, false)
 		invite = append(invite, participants...)
+		if !slices.Contains(invite, user.MXID) {
+			invite = append(invite, user.MXID)
+		}
 	}
 	req := &mautrix.ReqCreateRoom{
 		Visibility:            "private",
@@ -422,6 +425,9 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		portal.ensureUserInvited(user)
 		user.syncChatDoublePuppetDetails(portal, true)
 		portal.syncParticipants(user, userTeam, members, true)
+	}
+	if portal.Type == database.ChannelTypeChannel {
+		user.updateChatMute(portal, true)
 	}
 
 	// if portal.IsPrivateChat() {
