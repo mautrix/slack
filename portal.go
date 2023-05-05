@@ -1585,6 +1585,7 @@ func (portal *Portal) HandleSlackNormalMessage(user *User, userTeam *database.Us
 		portal.log.Errorfln("Can't find puppet for %s", e.SlackAuthor)
 		return
 	}
+	puppet.UpdateInfo(userTeam, true, nil)
 	intent := puppet.IntentFor(portal)
 
 	for _, file := range e.FileAttachments {
