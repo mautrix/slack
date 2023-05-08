@@ -826,7 +826,19 @@ func (portal *Portal) handleMatrixReaction(sender *User, evt *event.Event, ms *m
 		return
 	}
 
-	emojiID := emojiToShortcode(reaction.RelatesTo.Key)
+	var emojiID string
+	if strings.HasPrefix(reaction.RelatesTo.Key, "mxc://") {
+		uri, err := id.ParseContentURI(reaction.RelatesTo.Key)
+		if err == nil {
+			customEmoji := portal.bridge.DB.Emoji.GetByMXC(uri)
+			if customEmoji != nil {
+				emojiID = customEmoji.SlackID
+			}
+		}
+	} else {
+		emojiID = emojiToShortcode(reaction.RelatesTo.Key)
+	}
+
 	if emojiID == "" {
 		portal.log.Errorfln("Couldn't find shortcode for emoji %s", reaction.RelatesTo.Key)
 		ms.sendMessageMetrics(evt, errEmojiShortcodeNotFound, "Error sending", true)
@@ -1497,7 +1509,7 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 
 	if len(msg.Blocks.BlockSet) != 0 || len(msg.Attachments) != 0 {
 		var err error
-		converted.Event, err = portal.SlackBlocksToMatrix(msg.Blocks, msg.Attachments)
+		converted.Event, err = portal.SlackBlocksToMatrix(msg.Blocks, msg.Attachments, userTeam)
 		if err != nil {
 			portal.log.Warnfln("Error rendering Slack blocks: %v", err)
 			converted.Event = nil
@@ -1667,15 +1679,31 @@ func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTea
 		return
 	}
 
-	emoji := convertSlackReaction(msg.Reaction)
+	slackReaction := strings.Trim(msg.Reaction, ":")
+
+	key := portal.bridge.GetEmoji(slackReaction, userTeam)
 
 	var content event.ReactionEventContent
 	content.RelatesTo = event.RelatesTo{
 		Type:    event.RelAnnotation,
 		EventID: targetMessage.MatrixID,
-		Key:     emoji,
+		Key:     key,
 	}
-	resp, err := intent.SendMassagedMessageEvent(portal.MXID, event.EventReaction, &content, parseSlackTimestamp(msg.EventTimestamp).UnixMilli())
+	extraContent := map[string]any{}
+	if strings.HasPrefix(key, "mxc://") {
+		extraContent["fi.mau.slack.reaction"] = map[string]any{
+			"name": slackReaction,
+			"mxc":  key,
+		}
+		if !portal.bridge.Config.Bridge.CustomEmojiReactions {
+			content.RelatesTo.Key = slackReaction
+		}
+	}
+
+	resp, err := intent.SendMassagedMessageEvent(portal.MXID, event.EventReaction, &event.Content{
+		Parsed: &content,
+		Raw:    extraContent,
+	}, parseSlackTimestamp(msg.EventTimestamp).UnixMilli())
 	if err != nil {
 		portal.log.Errorfln("Failed to bridge reaction: %v", err)
 		return
@@ -1686,7 +1714,7 @@ func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTea
 	dbReaction.SlackMessageID = msg.Item.Timestamp
 	dbReaction.MatrixEventID = resp.EventID
 	dbReaction.AuthorID = msg.User
-	dbReaction.MatrixName = emoji
+	dbReaction.MatrixName = key
 	dbReaction.SlackName = msg.Reaction
 	dbReaction.Insert(nil)
 }

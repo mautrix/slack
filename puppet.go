@@ -355,7 +355,7 @@ func (puppet *Puppet) UpdateAvatar(url string) bool {
 
 	// TODO should we just use slack's default avatars for users with no avatar?
 	if puppet.Avatar != "" && (puppet.AvatarURL.IsEmpty() || avatarChanged) {
-		url, err := uploadAvatar(puppet.DefaultIntent(), url)
+		url, err := uploadPlainFile(puppet.DefaultIntent(), url)
 		if err != nil {
 			puppet.log.Warnfln("Failed to reupload user avatar %s: %v", puppet.Avatar, err)
 			return true

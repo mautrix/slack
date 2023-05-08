@@ -143,3 +143,12 @@ CREATE TABLE backfill_state (
     PRIMARY KEY (team_id, channel_id),
     FOREIGN KEY (team_id, channel_id) REFERENCES portal (team_id, channel_id) ON DELETE CASCADE
 );
+
+CREATE TABLE emoji (
+	slack_id   TEXT NOT NULL,
+	slack_team TEXT NOT NULL,
+	alias      TEXT,
+	image_url  TEXT,
+
+	PRIMARY KEY (slack_id, slack_team)
+);
