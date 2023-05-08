@@ -21,6 +21,17 @@ func (eq *EmojiQuery) New() *Emoji {
 	}
 }
 
+func (eq *EmojiQuery) HasEmojisForTeam(slackTeam string) bool {
+	query := `SELECT slack_id, slack_team, alias, image_url FROM emoji WHERE slack_team=$1`
+
+	rows, _ := eq.db.Query(query, slackTeam)
+	if rows == nil || !rows.Next() {
+		return false
+	} else {
+		return true
+	}
+}
+
 func (eq *EmojiQuery) GetBySlackID(slackID string, slackTeam string) *Emoji {
 	query := `SELECT slack_id, slack_team, alias, image_url FROM emoji WHERE slack_id=$1 AND slack_team=$2`
 
