@@ -1,4 +1,4 @@
--- v1 -> v12: Latest revision
+-- v1 -> v13: Latest revision
 
 CREATE TABLE portal (
 	team_id    TEXT,
@@ -44,7 +44,7 @@ CREATE TABLE puppet (
 	access_token TEXT,
 	next_batch   TEXT,
 
-	contact_info_set BOOLEAN NOT NULL DEFAULT false
+	contact_info_set BOOLEAN NOT NULL DEFAULT false,
 
 	PRIMARY KEY(team_id, user_id)
 );
@@ -142,4 +142,13 @@ CREATE TABLE backfill_state (
     immediate_complete BOOLEAN,
     PRIMARY KEY (team_id, channel_id),
     FOREIGN KEY (team_id, channel_id) REFERENCES portal (team_id, channel_id) ON DELETE CASCADE
+);
+
+CREATE TABLE emoji (
+	slack_id   TEXT NOT NULL,
+	slack_team TEXT NOT NULL,
+	alias      TEXT,
+	image_url  TEXT,
+
+	PRIMARY KEY (slack_id, slack_team)
 );

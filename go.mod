@@ -24,6 +24,7 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	go.mau.fi/zeroconfig v0.1.2 // indirect
 	golang.org/x/crypto v0.8.0 // indirect
+	golang.org/x/exp v0.0.0-20230425010034-47ecfdc1ba53
 	golang.org/x/net v0.9.0 // indirect
 	golang.org/x/sys v0.7.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
@@ -31,4 +32,4 @@ require (
 	maunium.net/go/mauflag v1.0.0 // indirect
 )
 
-replace github.com/slack-go/slack => github.com/beeper/slackgo v0.0.0-20230420083726-824931c8b9d0
+replace github.com/slack-go/slack => github.com/beeper/slackgo v0.0.0-20230503153722-8b0e7827de67

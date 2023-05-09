@@ -41,6 +41,7 @@ type Database struct {
 	Attachment *AttachmentQuery
 	TeamInfo   *TeamInfoQuery
 	Backfill   *BackfillQuery
+	Emoji      *EmojiQuery
 }
 
 func New(baseDB *dbutil.Database, log maulogger.Logger) *Database {
@@ -82,6 +83,10 @@ func New(baseDB *dbutil.Database, log maulogger.Logger) *Database {
 	db.Backfill = &BackfillQuery{
 		db:  db,
 		log: log.Sub("Backfill"),
+	}
+	db.Emoji = &EmojiQuery{
+		db:  db,
+		log: log.Sub("Emoji"),
 	}
 
 	return db

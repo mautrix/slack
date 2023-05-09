@@ -87,3 +87,15 @@ func (aq *AttachmentQuery) get(query string, args ...interface{}) *Attachment {
 
 	return aq.New().Scan(row)
 }
+
+func (aq *AttachmentQuery) GetLast(key PortalKey) *Attachment {
+	query := attachmentSelect + " WHERE team_id=$1 AND channel_id=$2 ORDER BY slack_message_id DESC LIMIT 1"
+
+	row := aq.db.QueryRow(query, key.TeamID, key.ChannelID)
+	if row == nil {
+		aq.log.Debugfln("failed to find last attachment for portal` %s", key)
+		return nil
+	}
+
+	return aq.New().Scan(row)
+}

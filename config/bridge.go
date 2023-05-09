@@ -64,10 +64,11 @@ type BridgeConfig struct {
 
 	CommandPrefix string `yaml:"command_prefix"`
 
-	DeliveryReceipts    bool `yaml:"delivery_receipts"`
-	ResendBridgeInfo    bool `yaml:"resend_bridge_info"`
-	MessageStatusEvents bool `yaml:"message_status_events"`
-	MessageErrorNotices bool `yaml:"message_error_notices"`
+	DeliveryReceipts     bool `yaml:"delivery_receipts"`
+	ResendBridgeInfo     bool `yaml:"resend_bridge_info"`
+	MessageStatusEvents  bool `yaml:"message_status_events"`
+	MessageErrorNotices  bool `yaml:"message_error_notices"`
+	CustomEmojiReactions bool `yaml:"custom_emoji_reactions"`
 
 	ManagementRoomText bridgeconfig.ManagementRoomTexts `yaml:"management_room_text"`
 

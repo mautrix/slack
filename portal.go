@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/exp/slices"
 	log "maunium.net/go/maulogger/v2"
 
 	"github.com/slack-go/slack"
@@ -255,24 +256,36 @@ func (portal *Portal) MainIntent() *appservice.IntentAPI {
 	return portal.bridge.Bot
 }
 
-func (portal *Portal) syncParticipants(source *User, sourceTeam *database.UserTeam, participants []string) {
+func (portal *Portal) syncParticipants(source *User, sourceTeam *database.UserTeam, participants []string, invite bool) []id.UserID {
+	userIDs := make([]id.UserID, 0, len(participants)+1)
 	for _, participant := range participants {
 		portal.log.Infofln("Getting participant %s", participant)
 		puppet := portal.bridge.GetPuppetByID(sourceTeam.Key.TeamID, participant)
 
-		puppet.UpdateInfo(sourceTeam, nil)
+		puppet.UpdateInfo(sourceTeam, true, nil)
 
 		user := portal.bridge.GetUserByID(sourceTeam.Key.TeamID, participant)
+
 		if user != nil {
-			portal.ensureUserInvited(user)
+			userIDs = append(userIDs, user.MXID)
+		}
+		if user == nil || puppet.CustomMXID != user.MXID {
+			userIDs = append(userIDs, puppet.MXID)
 		}
 
-		if user == nil || !puppet.IntentFor(portal).IsCustomPuppet {
-			if err := puppet.IntentFor(portal).EnsureJoined(portal.MXID); err != nil {
-				portal.log.Warnfln("Failed to make puppet of %s join %s: %v", participant, portal.MXID, err)
+		if invite {
+			if user != nil {
+				portal.ensureUserInvited(user)
+			}
+
+			if user == nil || !puppet.IntentFor(portal).IsCustomPuppet {
+				if err := puppet.IntentFor(portal).EnsureJoined(portal.MXID); err != nil {
+					portal.log.Warnfln("Failed to make puppet of %s join %s: %v", participant, portal.MXID, err)
+				}
 			}
 		}
 	}
+	return userIDs
 }
 
 func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, channel *slack.Channel, fill bool) error {
@@ -340,15 +353,36 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		}
 	}
 
+	var members []string
+	// no members are included in channels, only in group DMs
+	switch portal.Type {
+	case database.ChannelTypeChannel:
+		members = portal.getChannelMembers(userTeam, 3) // TODO: this just fetches 3 members so channels don't have to look like DMs
+	case database.ChannelTypeDM:
+		members = []string{channel.User, userTeam.Key.SlackID}
+	case database.ChannelTypeGroupDM:
+		members = channel.Members
+	}
+
+	autoJoinInvites := portal.bridge.Config.Homeserver.Software == bridgeconfig.SoftwareHungry
+	if autoJoinInvites {
+		portal.log.Debugfln("Hungryserv mode: adding all group members in create request")
+		participants := portal.syncParticipants(user, userTeam, members, false)
+		invite = append(invite, participants...)
+		if !slices.Contains(invite, user.MXID) {
+			invite = append(invite, user.MXID)
+		}
+	}
 	req := &mautrix.ReqCreateRoom{
-		Visibility:      "private",
-		Name:            portal.Name,
-		Topic:           portal.Topic,
-		Invite:          invite,
-		Preset:          "private_chat",
-		IsDirect:        portal.IsPrivateChat(),
-		InitialState:    initialState,
-		CreationContent: creationContent,
+		Visibility:            "private",
+		Name:                  portal.Name,
+		Topic:                 portal.Topic,
+		Invite:                invite,
+		Preset:                "private_chat",
+		IsDirect:              portal.IsPrivateChat(),
+		InitialState:          initialState,
+		CreationContent:       creationContent,
+		BeeperAutoJoinInvites: autoJoinInvites,
 	}
 	if !portal.shouldSetDMRoomMetadata() {
 		req.Name = ""
@@ -378,21 +412,23 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		}
 	}
 
-	portal.ensureUserInvited(user)
-	user.syncChatDoublePuppetDetails(portal, true)
-
-	var members []string
-	// no members are included in channels, only in group DMs
-	switch portal.Type {
-	case database.ChannelTypeChannel:
-		user.updateChatMute(portal, true)
-		members = portal.getChannelMembers(userTeam, 3) // TODO: this just fetches 3 members so channels don't have to look like DMs
-	case database.ChannelTypeDM:
-		members = []string{channel.User, userTeam.Key.SlackID}
-	case database.ChannelTypeGroupDM:
-		members = channel.Members
+	// We set the memberships beforehand to make sure the encryption key exchange in initial backfill knows the users are here.
+	inviteMembership := event.MembershipInvite
+	if autoJoinInvites {
+		inviteMembership = event.MembershipJoin
 	}
-	portal.syncParticipants(user, userTeam, members)
+	for _, userID := range invite {
+		portal.bridge.StateStore.SetMembership(portal.MXID, userID, inviteMembership)
+	}
+
+	if !autoJoinInvites {
+		portal.ensureUserInvited(user)
+		user.syncChatDoublePuppetDetails(portal, true)
+		portal.syncParticipants(user, userTeam, members, true)
+	}
+	if portal.Type == database.ChannelTypeChannel {
+		user.updateChatMute(portal, true)
+	}
 
 	// if portal.IsPrivateChat() {
 	// 	puppet := user.bridge.GetPuppetByID(userTeam.Key.TeamID, portal.Key.UserID)
@@ -790,7 +826,19 @@ func (portal *Portal) handleMatrixReaction(sender *User, evt *event.Event, ms *m
 		return
 	}
 
-	emojiID := emojiToShortcode(reaction.RelatesTo.Key)
+	var emojiID string
+	if strings.HasPrefix(reaction.RelatesTo.Key, "mxc://") {
+		uri, err := id.ParseContentURI(reaction.RelatesTo.Key)
+		if err == nil {
+			customEmoji := portal.bridge.DB.Emoji.GetByMXC(uri)
+			if customEmoji != nil {
+				emojiID = customEmoji.SlackID
+			}
+		}
+	} else {
+		emojiID = emojiToShortcode(reaction.RelatesTo.Key)
+	}
+
 	if emojiID == "" {
 		portal.log.Errorfln("Couldn't find shortcode for emoji %s", reaction.RelatesTo.Key)
 		ms.sendMessageMetrics(evt, errEmojiShortcodeNotFound, "Error sending", true)
@@ -1155,18 +1203,18 @@ func (portal *Portal) setChannelType(channel *slack.Channel) bool {
 	}
 
 	// Slack Conversations structures are weird
-	if channel.GroupConversation.Conversation.IsMpIM {
+	if channel.IsMpIM {
 		portal.Type = database.ChannelTypeGroupDM
 		return true
-	} else if channel.GroupConversation.Conversation.IsIM {
+	} else if channel.IsIM {
 		portal.Type = database.ChannelTypeDM
 		return true
-	} else if channel.IsChannel {
+	} else if channel.Name != "" {
 		portal.Type = database.ChannelTypeChannel
 		return true
 	}
 
-	portal.log.Errorfln("unknown channel type in metadata")
+	portal.log.Errorfln("unknown channel type, metadata %v", channel)
 	return false
 }
 
@@ -1467,9 +1515,9 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 		}
 	}
 
-	if len(msg.Blocks.BlockSet) != 0 {
+	if len(msg.Blocks.BlockSet) != 0 || len(msg.Attachments) != 0 {
 		var err error
-		converted.Event, err = portal.SlackBlocksToMatrix(msg.Blocks)
+		converted.Event, err = portal.SlackBlocksToMatrix(msg.Blocks, msg.Attachments, userTeam)
 		if err != nil {
 			portal.log.Warnfln("Error rendering Slack blocks: %v", err)
 			converted.Event = nil
@@ -1496,14 +1544,20 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 		} else if file.URLPrivate != "" {
 			url = file.URLPrivate
 		}
+		portal.log.Debugfln("File download URLs: urlPrivate=%s, urlPrivateDownload=%s", file.URLPrivate, file.URLPrivateDownload)
 		if url != "" {
+			portal.log.Debugfln("Downloading private file from Slack: %s", url)
 			err = userTeam.Client.GetFile(url, &data)
-			if err == slack.SlackFileHTMLError {
+			if bytes.HasPrefix(data.Bytes(), []byte("<!DOCTYPE html>")) {
 				portal.log.Warnfln("Received HTML file from Slack (URL %s), trying again in 5 seconds", url)
 				time.Sleep(5 * time.Second)
+				data.Reset()
 				err = userTeam.Client.GetFile(file.URLPrivate, &data)
+			} else {
+				portal.log.Debugfln("Download success, expectedSize=%d, downloadedSize=%d", file.Size, data.Len())
 			}
 		} else if file.PermalinkPublic != "" {
+			portal.log.Debugfln("Downloading public file from Slack: %s", file.PermalinkPublic)
 			client := http.Client{}
 			var resp *http.Response
 			resp, err = client.Get(file.PermalinkPublic)
@@ -1551,6 +1605,7 @@ func (portal *Portal) HandleSlackNormalMessage(user *User, userTeam *database.Us
 		portal.log.Errorfln("Can't find puppet for %s", e.SlackAuthor)
 		return
 	}
+	puppet.UpdateInfo(userTeam, true, nil)
 	intent := puppet.IntentFor(portal)
 
 	for _, file := range e.FileAttachments {
@@ -1623,7 +1678,7 @@ func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTea
 		portal.log.Errorfln("Not sending reaction: can't find puppet for Slack user %s", msg.User)
 		return
 	}
-	puppet.UpdateInfo(userTeam, nil)
+	puppet.UpdateInfo(userTeam, true, nil)
 	intent := puppet.IntentFor(portal)
 
 	targetMessage := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Item.Timestamp)
@@ -1632,15 +1687,31 @@ func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTea
 		return
 	}
 
-	emoji := convertSlackReaction(msg.Reaction)
+	slackReaction := strings.Trim(msg.Reaction, ":")
+
+	key := portal.bridge.GetEmoji(slackReaction, userTeam)
 
 	var content event.ReactionEventContent
 	content.RelatesTo = event.RelatesTo{
 		Type:    event.RelAnnotation,
 		EventID: targetMessage.MatrixID,
-		Key:     emoji,
+		Key:     key,
 	}
-	resp, err := intent.SendMassagedMessageEvent(portal.MXID, event.EventReaction, &content, parseSlackTimestamp(msg.EventTimestamp).UnixMilli())
+	extraContent := map[string]any{}
+	if strings.HasPrefix(key, "mxc://") {
+		extraContent["fi.mau.slack.reaction"] = map[string]any{
+			"name": slackReaction,
+			"mxc":  key,
+		}
+		if !portal.bridge.Config.Bridge.CustomEmojiReactions {
+			content.RelatesTo.Key = slackReaction
+		}
+	}
+
+	resp, err := intent.SendMassagedMessageEvent(portal.MXID, event.EventReaction, &event.Content{
+		Parsed: &content,
+		Raw:    extraContent,
+	}, parseSlackTimestamp(msg.EventTimestamp).UnixMilli())
 	if err != nil {
 		portal.log.Errorfln("Failed to bridge reaction: %v", err)
 		return
@@ -1651,7 +1722,7 @@ func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTea
 	dbReaction.SlackMessageID = msg.Item.Timestamp
 	dbReaction.MatrixEventID = resp.EventID
 	dbReaction.AuthorID = msg.User
-	dbReaction.MatrixName = emoji
+	dbReaction.MatrixName = key
 	dbReaction.SlackName = msg.Reaction
 	dbReaction.Insert(nil)
 }
@@ -1679,7 +1750,7 @@ func (portal *Portal) HandleSlackReactionRemoved(user *User, userTeam *database.
 		portal.log.Errorfln("Not redacting reaction: can't find puppet for Slack user %s %s", portal.Key.TeamID, msg.User)
 		return
 	}
-	puppet.UpdateInfo(userTeam, nil)
+	puppet.UpdateInfo(userTeam, true, nil)
 	intent := puppet.IntentFor(portal)
 
 	_, err := intent.RedactEvent(portal.MXID, dbReaction.MatrixEventID)
@@ -1700,7 +1771,7 @@ func (portal *Portal) HandleSlackTyping(user *User, userTeam *database.UserTeam,
 		portal.log.Errorfln("Not sending typing status: can't find puppet for Slack user %s", msg.User)
 		return
 	}
-	puppet.UpdateInfo(userTeam, nil)
+	puppet.UpdateInfo(userTeam, true, nil)
 	intent := puppet.IntentFor(portal)
 
 	_, err := intent.UserTyping(portal.MXID, true, time.Duration(time.Second*5))
@@ -1718,7 +1789,7 @@ func (portal *Portal) HandleSlackChannelMarked(user *User, userTeam *database.Us
 		portal.log.Errorfln("Not marking room as read: can't find puppet for Slack user %s", msg.User)
 		return
 	}
-	puppet.UpdateInfo(userTeam, nil)
+	puppet.UpdateInfo(userTeam, true, nil)
 	intent := puppet.IntentFor(portal)
 
 	message := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Timestamp)

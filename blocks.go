@@ -77,7 +77,7 @@ func (portal *Portal) renderSlackTextBlock(block slack.TextBlockObject) string {
 	}
 }
 
-func (portal *Portal) renderRichTextSectionElements(elements []slack.RichTextSectionElement) string {
+func (portal *Portal) renderRichTextSectionElements(elements []slack.RichTextSectionElement, userTeam *database.UserTeam) string {
 	var htmlText strings.Builder
 	for _, element := range elements {
 		switch e := element.(type) {
@@ -147,8 +147,14 @@ func (portal *Portal) renderRichTextSectionElements(elements []slack.RichTextSec
 					htmlText.WriteString(unquoted)
 				}
 			} else {
-				htmlText.WriteString(shortcodeToEmoji(fmt.Sprintf(":%s:", e.Name)))
-				// TODO: handle Slack custom emojis
+				emoji := portal.bridge.GetEmoji(e.Name, userTeam)
+				if strings.HasPrefix(emoji, "mxc://") {
+					htmlText.WriteString(fmt.Sprintf(`<img data-mx-emoticon src="%[1]s" alt="%[2]s" title="%[2]s" height="32"/>`, emoji, e.Name))
+				} else if emoji != e.Name {
+					htmlText.WriteString(emoji)
+				} else {
+					htmlText.WriteString(fmt.Sprintf(":%s:", e.Name))
+				}
 			}
 		case *slack.RichTextSectionColorElement:
 			htmlText.WriteString(e.Value)
@@ -161,7 +167,7 @@ func (portal *Portal) renderRichTextSectionElements(elements []slack.RichTextSec
 	return htmlText.String()
 }
 
-func (portal *Portal) renderSlackBlock(block slack.Block) (string, bool) {
+func (portal *Portal) renderSlackBlock(block slack.Block, userTeam *database.UserTeam) (string, bool) {
 	switch b := block.(type) {
 	case *slack.HeaderBlock:
 		return fmt.Sprintf("<h1>%s</h1>", portal.renderSlackTextBlock(*b.Text)), false
@@ -177,16 +183,16 @@ func (portal *Portal) renderSlackBlock(block slack.Block) (string, bool) {
 	case *slack.RichTextBlock:
 		var htmlText strings.Builder
 		for _, element := range b.Elements {
-			htmlText.WriteString(portal.renderSlackRichTextElement(len(b.Elements), element))
+			htmlText.WriteString(portal.renderSlackRichTextElement(len(b.Elements), element, userTeam))
 		}
 		return format.UnwrapSingleParagraph(htmlText.String()), false
 	default:
-		portal.log.Debugfln("Unsupported Slack block: %T", b)
+		portal.log.Debugfln("Unsupported Slack block: %s", b.BlockType())
 		return "<i>Slack message contains unsupported elements.</i>", true
 	}
 }
 
-func (portal *Portal) renderSlackRichTextElement(numElements int, element slack.RichTextElement) string {
+func (portal *Portal) renderSlackRichTextElement(numElements int, element slack.RichTextElement, userTeam *database.UserTeam) string {
 	switch e := element.(type) {
 	case *slack.RichTextSection:
 		var htmlTag string
@@ -201,7 +207,7 @@ func (portal *Portal) renderSlackRichTextElement(numElements int, element slack.
 			htmlTag = "<p>"
 			htmlCloseTag = "</p>"
 		}
-		return fmt.Sprintf("%s%s%s", htmlTag, portal.renderRichTextSectionElements(e.Elements), htmlCloseTag)
+		return fmt.Sprintf("%s%s%s", htmlTag, portal.renderRichTextSectionElements(e.Elements, userTeam), htmlCloseTag)
 	case *slack.RichTextList:
 		var htmlText strings.Builder
 		var htmlTag string
@@ -215,7 +221,7 @@ func (portal *Portal) renderSlackRichTextElement(numElements int, element slack.
 		}
 		htmlText.WriteString(htmlTag)
 		for _, e := range e.Elements {
-			htmlText.WriteString(fmt.Sprintf("<li>%s</li>", portal.renderSlackRichTextElement(1, &e)))
+			htmlText.WriteString(fmt.Sprintf("<li>%s</li>", portal.renderSlackRichTextElement(1, &e, userTeam)))
 		}
 		htmlText.WriteString(htmlCloseTag)
 		return htmlText.String()
@@ -225,10 +231,28 @@ func (portal *Portal) renderSlackRichTextElement(numElements int, element slack.
 	}
 }
 
-func (portal *Portal) SlackBlocksToMatrix(blocks slack.Blocks) (*event.MessageEventContent, error) {
-	if len(blocks.BlockSet) == 0 {
-		return nil, nil
+func (portal *Portal) blocksToHtml(blocks slack.Blocks, alwaysWrap bool, userTeam *database.UserTeam) string {
+	var htmlText strings.Builder
+
+	if len(blocks.BlockSet) == 1 && !alwaysWrap {
+		// don't wrap in <p> tag if there's only one block
+		text, _ := portal.renderSlackBlock(blocks.BlockSet[0], userTeam)
+		htmlText.WriteString(text)
+	} else {
+		var lastBlockWasUnsupported bool = false
+		for _, block := range blocks.BlockSet {
+			text, unsupported := portal.renderSlackBlock(block, userTeam)
+			if !(unsupported && lastBlockWasUnsupported) {
+				htmlText.WriteString(fmt.Sprintf("<p>%s</p>", text))
+			}
+			lastBlockWasUnsupported = unsupported
+		}
 	}
+
+	return htmlText.String()
+}
+
+func (portal *Portal) SlackBlocksToMatrix(blocks slack.Blocks, attachments []slack.Attachment, userTeam *database.UserTeam) (*event.MessageEventContent, error) {
 
 	// Special case for bots like the Giphy bot which send images in a specific format
 	if len(blocks.BlockSet) == 2 &&
@@ -240,18 +264,15 @@ func (portal *Portal) SlackBlocksToMatrix(blocks slack.Blocks) (*event.MessageEv
 
 	var htmlText strings.Builder
 
-	if len(blocks.BlockSet) == 1 {
-		// don't wrap in <p> tag if there's only one block
-		text, _ := portal.renderSlackBlock(blocks.BlockSet[0])
-		htmlText.WriteString(text)
-	} else {
-		var lastBlockWasUnsupported bool = false
-		for _, block := range blocks.BlockSet {
-			text, unsupported := portal.renderSlackBlock(block)
-			if !(unsupported && lastBlockWasUnsupported) {
-				htmlText.WriteString(fmt.Sprintf("<p>%s</p>", text))
+	htmlText.WriteString(portal.blocksToHtml(blocks, false, userTeam))
+
+	for _, attachment := range attachments {
+		if attachment.IsMsgUnfurl {
+			for _, message_block := range attachment.MessageBlocks {
+				renderedAttachment := portal.blocksToHtml(message_block.Message.Blocks, true, userTeam)
+				htmlText.WriteString(fmt.Sprintf("<blockquote><b>%s</b><br>%s<a href=\"%s\"><i>%s</i></a><br></blockquote>",
+					attachment.AuthorName, renderedAttachment, attachment.FromURL, attachment.Footer))
 			}
-			lastBlockWasUnsupported = unsupported
 		}
 	}
 

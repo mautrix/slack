@@ -25,7 +25,7 @@ import (
 	"maunium.net/go/mautrix/id"
 )
 
-func uploadAvatar(intent *appservice.IntentAPI, url string) (id.ContentURI, error) {
+func uploadPlainFile(intent *appservice.IntentAPI, url string) (id.ContentURI, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return id.ContentURI{}, fmt.Errorf("failed to prepare request: %w", err)
