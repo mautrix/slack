@@ -65,36 +65,41 @@ func init() {
 	json.Unmarshal(emojiFileData, &emojis)
 }
 
-func (br *SlackBridge) ImportEmojis(userTeam *database.UserTeam) error {
-	list, err := userTeam.Client.GetEmoji()
-	if err != nil {
-		br.ZLog.Err(err).Msg("failed to fetch emoji list from Slack")
-		return err
+func (br *SlackBridge) ImportEmojis(userTeam *database.UserTeam, list *map[string]string, overwrite bool) error {
+	if list == nil {
+		resp, err := userTeam.Client.GetEmoji()
+		if err != nil {
+			br.ZLog.Err(err).Msg("failed to fetch emoji list from Slack")
+			return err
+		}
+		*list = resp
 	}
 
 	deferredAliases := map[string]string{}
 	uploaded := map[string]id.ContentURI{}
-	converted := []database.Emoji{}
 
-	for key, url := range list {
-		if strings.HasPrefix(url, "alias:") {
-			deferredAliases[key] = strings.TrimPrefix(url, "alias:")
-			continue
+	for key, url := range *list {
+		existing := br.DB.Emoji.GetBySlackID(key, userTeam.Key.TeamID)
+		if existing == nil || overwrite {
+			if strings.HasPrefix(url, "alias:") {
+				deferredAliases[key] = strings.TrimPrefix(url, "alias:")
+				continue
+			}
+
+			uri, err := uploadPlainFile(br.AS.BotIntent(), url)
+			if err != nil {
+				br.ZLog.Err(err).Str("url", url).Msg("failed to upload emoji to matrix")
+				continue
+			}
+
+			uploaded[key] = uri
+
+			dbEmoji := br.DB.Emoji.New()
+			dbEmoji.SlackID = key
+			dbEmoji.SlackTeam = userTeam.Key.TeamID
+			dbEmoji.ImageURL = uri
+			dbEmoji.Upsert(nil)
 		}
-
-		uri, err := uploadPlainFile(br.AS.BotIntent(), url)
-		if err != nil {
-			br.ZLog.Err(err).Str("url", url).Msg("failed to upload emoji to matrix")
-			continue
-		}
-
-		uploaded[key] = uri
-
-		dbEmoji := br.DB.Emoji.New()
-		dbEmoji.SlackID = key
-		dbEmoji.SlackTeam = userTeam.Key.TeamID
-		dbEmoji.ImageURL = uri
-		converted = append(converted, *dbEmoji)
 	}
 
 	for key, alias := range deferredAliases {
@@ -104,36 +109,28 @@ func (br *SlackBridge) ImportEmojis(userTeam *database.UserTeam) error {
 			dbEmoji.SlackTeam = userTeam.Key.TeamID
 			dbEmoji.Alias = alias
 			dbEmoji.ImageURL = uri
-			converted = append(converted, *dbEmoji)
+			dbEmoji.Upsert(nil)
 		} else if unicode := shortcodeToEmoji(alias); unicode != alias {
 			dbEmoji := br.DB.Emoji.New()
 			dbEmoji.SlackID = key
 			dbEmoji.SlackTeam = userTeam.Key.TeamID
 			dbEmoji.Alias = unicode
-			converted = append(converted, *dbEmoji)
+			dbEmoji.Upsert(nil)
 		}
 	}
 
-	txn, err := br.DB.Begin()
-	if err != nil {
-		br.ZLog.Err(err).Msg("failed to start DB transaction")
-		return err
-	}
-	for _, emoji := range converted {
-		emoji.Upsert(txn)
-	}
-	err = txn.Commit()
-	if err != nil {
-		br.ZLog.Err(err).Msg("failed to finish DB transaction")
-		return err
-	}
 	return nil
 }
 
 func (br *SlackBridge) GetEmoji(shortcode string, userTeam *database.UserTeam) string {
+	converted := convertSlackReaction(shortcode)
+	if converted != shortcode {
+		return converted
+	}
+
 	dbEmoji := br.DB.Emoji.GetBySlackID(shortcode, userTeam.Key.TeamID)
 	if dbEmoji == nil {
-		br.ImportEmojis(userTeam)
+		br.ImportEmojis(userTeam, nil, false)
 		dbEmoji = br.DB.Emoji.GetBySlackID(shortcode, userTeam.Key.TeamID)
 	}
 
@@ -142,6 +139,6 @@ func (br *SlackBridge) GetEmoji(shortcode string, userTeam *database.UserTeam) s
 	} else if dbEmoji != nil {
 		return dbEmoji.Alias
 	} else {
-		return convertSlackReaction(shortcode)
+		return shortcode
 	}
 }

@@ -657,9 +657,19 @@ func (user *User) UpdateTeam(userTeam *database.UserTeam, force bool) error {
 	}
 	currentTeamInfo.Upsert()
 
-	if !user.bridge.DB.Emoji.HasEmojisForTeam(userTeam.Key.TeamID) {
-		user.log.Info("Importing emojis for team")
-		go user.bridge.ImportEmojis(userTeam)
+	emojis, err := userTeam.Client.GetEmoji()
+	if err != nil {
+		user.log.Error("Fetching emojis for team failed", err)
+	} else {
+		emojiCount, err := user.bridge.DB.Emoji.GetEmojiCount(userTeam.Key.TeamID)
+		if err != nil {
+			user.log.Error("Getting emoji count from database failed", err)
+		} else {
+			if emojiCount != len(emojis) {
+				user.log.Info("Importing emojis for team")
+				go user.bridge.ImportEmojis(userTeam, &emojis, true)
+			}
+		}
 	}
 
 	puppets := user.bridge.GetAllPuppetsForTeam(userTeam.Key.TeamID)
