@@ -20,6 +20,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/slack-go/slack"
@@ -326,7 +327,9 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 		// Sending reactions in the same batch requires deterministic event IDs, so only do it on hungryserv
 		if portal.bridge.Config.Homeserver.Software == bridgeconfig.SoftwareHungry {
 			for _, reaction := range converted.SlackReactions {
-				emoji := convertSlackReaction(reaction.Name)
+				slackReaction := strings.Trim(reaction.Name, ":")
+				emoji := portal.bridge.GetEmoji(slackReaction, userTeam)
+
 				originalEventID := portal.getLastEventID(&converted)
 				if originalEventID == nil {
 					portal.log.Errorln("No converted event to react to!")
@@ -338,6 +341,16 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 						Type:    event.RelAnnotation,
 						EventID: *originalEventID,
 						Key:     emoji,
+					}
+					extraContent := map[string]any{}
+					if strings.HasPrefix(emoji, "mxc://") {
+						extraContent["fi.mau.slack.reaction"] = map[string]any{
+							"name": slackReaction,
+							"mxc":  emoji,
+						}
+						if !portal.bridge.Config.Bridge.CustomEmojiReactions {
+							content.RelatesTo.Key = slackReaction
+						}
 					}
 					reactionPuppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, user)
 					if reactionPuppet == nil {
