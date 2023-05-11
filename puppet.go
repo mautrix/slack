@@ -409,8 +409,13 @@ func (puppet *Puppet) UpdateInfo(userTeam *database.UserTeam, fetch bool, info *
 		newName := puppet.bridge.Config.Bridge.FormatDisplayname(info)
 		changed = puppet.UpdateName(newName) || changed
 		changed = puppet.UpdateAvatar(info.Profile.ImageOriginal) || changed
+
+		if (info.IsBot || info.IsAppUser) && !puppet.IsBot {
+			puppet.IsBot = true
+			changed = true
+		}
 	}
-	changed = puppet.UpdateContactInfo(strings.ToLower(puppet.UserID) == "uslackbot") || changed
+	changed = puppet.UpdateContactInfo(puppet.IsBot || strings.ToLower(puppet.UserID) == "uslackbot") || changed
 
 	if changed {
 		puppet.Update()
