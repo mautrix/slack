@@ -536,7 +536,7 @@ func (user *User) isChannelOrOpenIM(channel *slack.Channel) bool {
 	if !channel.IsIM {
 		return true
 	} else {
-		return channel.Latest != nil && channel.Latest.SubType != "joiner_notification_for_inviter" && channel.Latest.SubType != "joiner_notification"
+		return channel.Latest != nil && channel.Latest.SubType == ""
 	}
 }
 
