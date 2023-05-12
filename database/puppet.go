@@ -28,7 +28,7 @@ import (
 const (
 	puppetSelect = "SELECT team_id, user_id, name, name_set, avatar," +
 		" avatar_url, avatar_set, enable_presence, custom_mxid, access_token," +
-		" next_batch, enable_receipts, contact_info_set" +
+		" next_batch, is_bot, enable_receipts, contact_info_set" +
 		" FROM puppet "
 )
 
@@ -53,6 +53,8 @@ type Puppet struct {
 
 	NextBatch string
 
+	IsBot bool
+
 	EnableReceipts bool
 
 	ContactInfoSet bool
@@ -65,7 +67,7 @@ func (p *Puppet) Scan(row dbutil.Scannable) *Puppet {
 
 	err := row.Scan(&teamID, &userID, &p.Name, &p.NameSet, &avatar, &avatarURL,
 		&p.AvatarSet, &enablePresence, &customMXID, &accessToken, &nextBatch,
-		&p.EnableReceipts, &p.ContactInfoSet)
+		&p.IsBot, &p.EnableReceipts, &p.ContactInfoSet)
 
 	if err != nil {
 		if err != sql.ErrNoRows {
@@ -91,12 +93,12 @@ func (p *Puppet) Insert() {
 	query := "INSERT INTO puppet" +
 		" (team_id, user_id, name, name_set, avatar, avatar_url, avatar_set," +
 		" enable_presence, custom_mxid, access_token, next_batch," +
-		" enable_receipts, contact_info_set)" +
-		" VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"
+		" is_bot, enable_receipts, contact_info_set)" +
+		" VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"
 
 	_, err := p.db.Exec(query, p.TeamID, p.UserID, p.Name, p.NameSet, p.Avatar,
 		p.AvatarURL.String(), p.AvatarSet, p.EnablePresence, p.CustomMXID,
-		p.AccessToken, p.NextBatch, p.EnableReceipts, p.ContactInfoSet)
+		p.AccessToken, p.NextBatch, p.IsBot, p.EnableReceipts, p.ContactInfoSet)
 
 	if err != nil {
 		p.log.Warnfln("Failed to insert %s-%s: %v", p.TeamID, p.UserID, err)
@@ -107,12 +109,12 @@ func (p *Puppet) Update() {
 	query := "UPDATE puppet" +
 		" SET name=$1, name_set=$2, avatar=$3, avatar_url=$4, avatar_set=$5," +
 		"     enable_presence=$6, custom_mxid=$7, access_token=$8," +
-		"     next_batch=$9, enable_receipts=$10, contact_info_set=$11" +
-		" WHERE team_id=$12 AND user_id=$13"
+		"     next_batch=$9, is_bot=$10, enable_receipts=$11, contact_info_set=$12" +
+		" WHERE team_id=$13 AND user_id=$14"
 
 	_, err := p.db.Exec(query, p.Name, p.NameSet, p.Avatar,
 		p.AvatarURL.String(), p.AvatarSet, p.EnablePresence, p.CustomMXID,
-		p.AccessToken, p.NextBatch, p.EnableReceipts, p.ContactInfoSet, p.TeamID, p.UserID)
+		p.AccessToken, p.NextBatch, p.IsBot, p.EnableReceipts, p.ContactInfoSet, p.TeamID, p.UserID)
 
 	if err != nil {
 		p.log.Warnfln("Failed to update %s-%s: %v", p.TeamID, p.UserID, err)

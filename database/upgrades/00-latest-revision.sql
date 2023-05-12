@@ -1,4 +1,4 @@
--- v1 -> v13: Latest revision
+-- v1 -> v15: Latest revision
 
 CREATE TABLE portal (
 	team_id    TEXT,
@@ -43,6 +43,8 @@ CREATE TABLE puppet (
 	custom_mxid  TEXT,
 	access_token TEXT,
 	next_batch   TEXT,
+
+	is_bot BOOLEAN NOT NULL DEFAULT false,
 
 	contact_info_set BOOLEAN NOT NULL DEFAULT false,
 
