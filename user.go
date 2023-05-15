@@ -667,7 +667,7 @@ func (user *User) UpdateTeam(userTeam *database.UserTeam, force bool) error {
 		} else {
 			if emojiCount != len(emojis) {
 				user.log.Info("Importing emojis for team")
-				go user.bridge.ImportEmojis(userTeam, &emojis, true)
+				go user.bridge.ImportEmojis(userTeam, &emojis, false)
 			}
 		}
 	}
