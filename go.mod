@@ -1,6 +1,6 @@
 module go.mau.fi/mautrix-slack
 
-go 1.18
+go 1.19
 
 require (
 	github.com/gorilla/websocket v1.5.0
