@@ -512,7 +512,7 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 	user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: "Disconnected for unknown reason"})
 }
 
-func (user *User) connectTeam(userTeam *database.UserTeam) {
+func (user *User) connectTeam(userTeam *database.UserTeam) error {
 	user.log.Infofln("Connecting %s to Slack userteam %s (%s)", user.MXID, userTeam.Key, userTeam.TeamName)
 	slackOptions := []slack.Option{
 		slack.OptionLog(SlackgoLogger{user.log.Sub(fmt.Sprintf("SlackGo/%s", userTeam.Key))}),
@@ -523,6 +523,13 @@ func (user *User) connectTeam(userTeam *database.UserTeam) {
 	}
 	userTeam.Client = slack.New(userTeam.Token, slackOptions...)
 
+	// test Slack connection before trying to go further
+	_, err := userTeam.Client.GetUserProfile(&slack.GetUserProfileParameters{})
+	if err != nil {
+		user.log.Errorln("Error connecting to Slack team", err)
+		return err
+	}
+
 	userTeam.RTM = userTeam.Client.NewRTM()
 
 	go userTeam.RTM.ManageConnection()
@@ -530,6 +537,8 @@ func (user *User) connectTeam(userTeam *database.UserTeam) {
 	go user.slackMessageHandler(userTeam)
 
 	go user.UpdateTeam(userTeam, false)
+
+	return nil
 }
 
 func (user *User) isChannelOrOpenIM(channel *slack.Channel) bool {
@@ -687,7 +696,13 @@ func (user *User) Connect() error {
 	for key, userTeam := range user.Teams {
 		user.bridge.usersByID[fmt.Sprintf("%s-%s", userTeam.Key.TeamID, userTeam.Key.SlackID)] = user
 		user.BridgeStates[key] = user.bridge.NewBridgeStateQueue(userTeam)
-		user.connectTeam(userTeam)
+		err := user.connectTeam(userTeam)
+		if err != nil && (err.Error() == "user_removed_from_team" || err.Error() == "invalid_auth") {
+			user.LogoutUserTeam(userTeam)
+			user.log.Infoln("User not logged in to Slack team, deleting")
+		} else if err != nil {
+			user.log.Errorln("Error connecting to Slack team", err)
+		}
 		// if err != nil {
 		// 	user.log.Errorfln("Error connecting to Slack userteam %s: %v", userTeam.Key, err)
 		// 	// TODO: more detailed error state
