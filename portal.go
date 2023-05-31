@@ -1211,7 +1211,6 @@ func (portal *Portal) setChannelType(channel *slack.Channel) bool {
 		return false
 	}
 
-	// Slack Conversations structures are weird
 	if channel.IsMpIM {
 		portal.Type = database.ChannelTypeGroupDM
 		return true
@@ -1236,7 +1235,7 @@ func (portal *Portal) GetPlainName(meta *slack.Channel) string {
 }
 
 func (portal *Portal) UpdateNameDirect(name string) bool {
-	if portal.Name == name && (portal.NameSet || portal.MXID == "" || !portal.shouldSetDMRoomMetadata()) {
+	if name == "#" || portal.Name == name && (portal.NameSet || portal.MXID == "" || !portal.shouldSetDMRoomMetadata()) {
 		return false
 	}
 	portal.log.Debugfln("Updating name %q -> %q", portal.Name, name)

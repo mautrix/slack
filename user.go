@@ -598,7 +598,11 @@ func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 		portal := user.bridge.GetPortalByID(dbPortal.Key)
 		channel := channelInfo[dbPortal.Key.ChannelID]
 		if portal.MXID != "" {
-			portal.UpdateInfo(user, userTeam, &channel, force)
+			if channel.ID == "" {
+				portal.UpdateInfo(user, userTeam, nil, force)
+			} else {
+				portal.UpdateInfo(user, userTeam, &channel, force)
+			}
 			portal.ensureUserInvited(user)
 			portal.InsertUser(userTeam.Key)
 		} else {
