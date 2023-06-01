@@ -72,7 +72,7 @@ func (br *SlackBridge) ImportEmojis(userTeam *database.UserTeam, list *map[strin
 			br.ZLog.Err(err).Msg("failed to fetch emoji list from Slack")
 			return err
 		}
-		*list = resp
+		list = &resp
 	}
 
 	deferredAliases := map[string]string{}

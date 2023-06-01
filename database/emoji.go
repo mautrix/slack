@@ -22,7 +22,7 @@ func (eq *EmojiQuery) New() *Emoji {
 }
 
 func (eq *EmojiQuery) GetEmojiCount(slackTeam string) (count int, err error) {
-	row := eq.db.QueryRow(`SELECT COUNT(*) FROM emoji WHERE slack_team=?1`, slackTeam)
+	row := eq.db.QueryRow(`SELECT COUNT(*) FROM emoji WHERE slack_team=$1`, slackTeam)
 	err = row.Scan(&count)
 	return
 }

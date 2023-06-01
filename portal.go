@@ -1211,7 +1211,6 @@ func (portal *Portal) setChannelType(channel *slack.Channel) bool {
 		return false
 	}
 
-	// Slack Conversations structures are weird
 	if channel.IsMpIM {
 		portal.Type = database.ChannelTypeGroupDM
 		return true
@@ -1245,7 +1244,7 @@ func (portal *Portal) GetPlainName(meta *slack.Channel, sourceTeam *database.Use
 }
 
 func (portal *Portal) UpdateNameDirect(name string) bool {
-	if portal.Name == name && (portal.NameSet || portal.MXID == "" || !portal.shouldSetDMRoomMetadata()) {
+	if name == "#" || portal.Name == name && (portal.NameSet || portal.MXID == "" || !portal.shouldSetDMRoomMetadata()) {
 		return false
 	}
 	portal.log.Debugfln("Updating name %q -> %q", portal.Name, name)
@@ -1536,24 +1535,33 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 	}
 
 	for _, file := range msg.Files {
-		if file.Size > int(portal.bridge.MediaConfig.UploadSize) {
-			portal.log.Errorfln("%d is too large to upload to Matrix, not bridging file %s", file.Size, file.ID)
+		fileInfo := file
+		if file.FileAccess == "check_file_info" {
+			connectFile, _, _, err := userTeam.Client.GetFileInfo(file.ID, 0, 0)
+			if err != nil || connectFile == nil {
+				portal.log.Errorln("Error fetching slack connect file info", err)
+				continue
+			}
+			fileInfo = *connectFile
+		}
+		if fileInfo.Size > int(portal.bridge.MediaConfig.UploadSize) {
+			portal.log.Errorfln("%d is too large to upload to Matrix, not bridging file %s", fileInfo.Size, fileInfo.ID)
 			continue
 		}
 		convertedFile := ConvertedSlackFile{
-			SlackFileID: file.ID,
+			SlackFileID: fileInfo.ID,
 		}
-		content := portal.renderSlackFile(file)
+		content := portal.renderSlackFile(fileInfo)
 		portal.addThreadMetadata(&content, msg.ThreadTimestamp)
 		var data bytes.Buffer
 		var err error
 		var url string
-		if file.URLPrivateDownload != "" {
-			url = file.URLPrivateDownload
-		} else if file.URLPrivate != "" {
-			url = file.URLPrivate
+		if fileInfo.URLPrivateDownload != "" {
+			url = fileInfo.URLPrivateDownload
+		} else if fileInfo.URLPrivate != "" {
+			url = fileInfo.URLPrivate
 		}
-		portal.log.Debugfln("File download URLs: urlPrivate=%s, urlPrivateDownload=%s", file.URLPrivate, file.URLPrivateDownload)
+		portal.log.Debugfln("File download URLs: urlPrivate=%s, urlPrivateDownload=%s", fileInfo.URLPrivate, fileInfo.URLPrivateDownload)
 		if url != "" {
 			portal.log.Debugfln("Downloading private file from Slack: %s", url)
 			err = userTeam.Client.GetFile(url, &data)
@@ -1561,17 +1569,17 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 				portal.log.Warnfln("Received HTML file from Slack (URL %s), trying again in 5 seconds", url)
 				time.Sleep(5 * time.Second)
 				data.Reset()
-				err = userTeam.Client.GetFile(file.URLPrivate, &data)
+				err = userTeam.Client.GetFile(fileInfo.URLPrivate, &data)
 			} else {
-				portal.log.Debugfln("Download success, expectedSize=%d, downloadedSize=%d", file.Size, data.Len())
+				portal.log.Debugfln("Download success, expectedSize=%d, downloadedSize=%d", fileInfo.Size, data.Len())
 			}
-		} else if file.PermalinkPublic != "" {
-			portal.log.Debugfln("Downloading public file from Slack: %s", file.PermalinkPublic)
+		} else if fileInfo.PermalinkPublic != "" {
+			portal.log.Debugfln("Downloading public file from Slack: %s", fileInfo.PermalinkPublic)
 			client := http.Client{}
 			var resp *http.Response
-			resp, err = client.Get(file.PermalinkPublic)
+			resp, err = client.Get(fileInfo.PermalinkPublic)
 			if err != nil {
-				portal.log.Errorfln("Error downloading Slack file %s: %v", file.ID, err)
+				portal.log.Errorfln("Error downloading Slack file %s: %v", fileInfo.ID, err)
 				continue
 			}
 			_, err = data.ReadFrom(resp.Body)
@@ -1580,19 +1588,19 @@ func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slac
 			continue
 		}
 		if err != nil {
-			portal.log.Errorfln("Error downloading Slack file %s: %v", file.ID, err)
+			portal.log.Errorfln("Error downloading Slack file %s: %v", fileInfo.ID, err)
 			continue
 		}
 		err = portal.uploadMedia(portal.MainIntent(), data.Bytes(), &content)
 		if err != nil {
 			if errors.Is(err, mautrix.MTooLarge) {
-				portal.log.Errorfln("File %s too large for Matrix server: %v", file.ID, err)
+				portal.log.Errorfln("File %s too large for Matrix server: %v", fileInfo.ID, err)
 				continue
 			} else if httpErr, ok := err.(mautrix.HTTPError); ok && httpErr.IsStatus(413) {
-				portal.log.Errorfln("Proxy rejected too large file %s: %v", file.ID, err)
+				portal.log.Errorfln("Proxy rejected too large file %s: %v", fileInfo.ID, err)
 				continue
 			} else {
-				portal.log.Errorfln("Error uploading file %s to Matrix: %v", file.ID, err)
+				portal.log.Errorfln("Error uploading file %s to Matrix: %v", fileInfo.ID, err)
 				continue
 			}
 		}
