@@ -102,6 +102,7 @@ func (br *SlackBridge) Start() {
 		log:             br.Log.Sub("BackfillQueue"),
 	}
 
+	br.WaitWebsocketConnected()
 	go br.startUsers()
 }
 
