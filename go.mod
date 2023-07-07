@@ -9,7 +9,7 @@ require (
 	github.com/slack-go/slack v0.10.3
 	github.com/yuin/goldmark v1.5.4
 	maunium.net/go/maulogger/v2 v2.4.1
-	maunium.net/go/mautrix v0.15.4-0.20230706102851-1278ac4bff17
+	maunium.net/go/mautrix v0.15.4-0.20230707134221-ace2efd4888b
 )
 
 require (
