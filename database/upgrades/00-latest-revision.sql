@@ -1,4 +1,4 @@
--- v1 -> v12: Latest revision
+-- v1 -> v16: Latest revision
 
 CREATE TABLE portal (
 	team_id    TEXT,
