@@ -149,18 +149,7 @@ CREATE TABLE backfill_state (
     backfill_complete  BOOLEAN,
 	dispatched         BOOLEAN,
 	message_count      INTEGER,
-	immediate_complete BOOLEAN
-    PRIMARY KEY (team_id, channel_id),
-    FOREIGN KEY (team_id, channel_id) REFERENCES portal (team_id, channel_id) ON DELETE CASCADE
-);
-
-CREATE TABLE backfill_state (
-    team_id            TEXT,
-    channel_id         TEXT,
-    backfill_complete  BOOLEAN,
-    dispatched         BOOLEAN,
-    message_count      INTEGER,
-    immediate_complete BOOLEAN,
+	immediate_complete BOOLEAN,
     PRIMARY KEY (team_id, channel_id),
     FOREIGN KEY (team_id, channel_id) REFERENCES portal (team_id, channel_id) ON DELETE CASCADE
 );
