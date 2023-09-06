@@ -224,7 +224,7 @@ func (puppet *Puppet) updateName(source *User) bool {
 		return false
 	}
 
-	newName := puppet.bridge.Config.Bridge.FormatDisplayname(user)
+	newName := puppet.bridge.Config.Bridge.FormatDisplayname(user, userTeam)
 
 	if puppet.Name != newName {
 		err := puppet.DefaultIntent().SetDisplayName(newName)
@@ -406,7 +406,7 @@ func (puppet *Puppet) UpdateInfo(userTeam *database.UserTeam, fetch bool, info *
 	changed := false
 
 	if info != nil {
-		newName := puppet.bridge.Config.Bridge.FormatDisplayname(info)
+		newName := puppet.bridge.Config.Bridge.FormatDisplayname(info, userTeam)
 		changed = puppet.UpdateName(newName) || changed
 		changed = puppet.UpdateAvatar(info.Profile.ImageOriginal) || changed
 

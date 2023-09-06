@@ -172,9 +172,16 @@ func (bc BridgeConfig) FormatUsername(userid string) string {
 	return buffer.String()
 }
 
-func (bc BridgeConfig) FormatDisplayname(user *slack.User) string {
+func (bc BridgeConfig) FormatDisplayname(user *slack.User, team *database.UserTeam) string {
+	userProfile := struct {
+		slack.UserProfile
+		UserTeam *database.UserTeam `json:"user_team"`
+	}{
+		UserProfile: user.Profile,
+		UserTeam:    team,
+	}
 	var buffer strings.Builder
-	_ = bc.displaynameTemplate.Execute(&buffer, user.Profile)
+	_ = bc.displaynameTemplate.Execute(&buffer, userProfile)
 	return buffer.String()
 }
 
