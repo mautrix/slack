@@ -363,6 +363,10 @@ func (user *User) LogoutUserTeam(userTeam *database.UserTeam) error {
 		}
 	}
 
+	if _, err := userTeam.Client.SendAuthSignout(); err != nil {
+		user.log.Errorfln("Failed to send auth.signout request to Slack! %v", err)
+	}
+
 	userTeam.Client = nil
 
 	user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateLoggedOut})
