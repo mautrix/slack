@@ -19,9 +19,11 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math/rand"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	log "maunium.net/go/maulogger/v2"
 
@@ -412,6 +414,9 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 
 			portals := user.bridge.dbPortalsToPortals(user.bridge.DB.Portal.GetAllForUserTeam(userTeam.Key))
 			for _, portal := range portals {
+				// Don't hit rate limits here or we'll never progress
+				r := rand.Intn(len(user.Teams) * 10)
+				time.Sleep(time.Duration(r) * time.Second)
 				err := portal.ForwardBackfill()
 				if err != nil {
 					user.log.Warnfln("Forward backfill for portal %s failed: %v", portal.Key, err)
@@ -520,7 +525,7 @@ func (user *User) connectTeam(userTeam *database.UserTeam) error {
 	user.log.Infofln("Connecting %s to Slack userteam %s (%s)", user.MXID, userTeam.Key, userTeam.TeamName)
 	slackOptions := []slack.Option{
 		slack.OptionLog(SlackgoLogger{user.log.Sub(fmt.Sprintf("SlackGo/%s", userTeam.Key))}),
-		//slack.OptionDebug(user.bridge.Config.Logging.PrintLevel <= 0),
+		// slack.OptionDebug(user.bridge.Config.Logging.PrintLevel <= 0),
 	}
 	if userTeam.CookieToken != "" {
 		slackOptions = append(slackOptions, slack.OptionCookie("d", userTeam.CookieToken))
