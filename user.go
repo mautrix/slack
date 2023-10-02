@@ -365,6 +365,10 @@ func (user *User) LogoutUserTeam(userTeam *database.UserTeam) error {
 		}
 	}
 
+	if _, err := userTeam.Client.SendAuthSignout(); err != nil {
+		user.log.Errorfln("Failed to send auth.signout request to Slack! %v", err)
+	}
+
 	userTeam.Client = nil
 
 	user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateLoggedOut})
@@ -404,15 +408,17 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 			userTeam.Upsert()
 
 			user.tryAutomaticDoublePuppeting(userTeam)
-			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateBackfilling})
-
 			user.log.Infofln("connected to team %s as %s", userTeam.TeamName, userTeam.SlackEmail)
 
-			portals := user.bridge.dbPortalsToPortals(user.bridge.DB.Portal.GetAllForUserTeam(userTeam.Key))
-			for _, portal := range portals {
-				err := portal.ForwardBackfill()
-				if err != nil {
-					user.log.Warnfln("Forward backfill for portal %s failed: %v", portal.Key, err)
+			if user.bridge.Config.Bridge.Backfill.Enable {
+				user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateBackfilling})
+
+				portals := user.bridge.dbPortalsToPortals(user.bridge.DB.Portal.GetAllForUserTeam(userTeam.Key))
+				for _, portal := range portals {
+					err := portal.ForwardBackfill()
+					if err != nil {
+						user.log.Warnfln("Forward backfill for portal %s failed: %v", portal.Key, err)
+					}
 				}
 			}
 			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateConnected})
