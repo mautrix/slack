@@ -8,6 +8,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/slack-go/slack"
 	"github.com/yuin/goldmark"
@@ -266,6 +267,10 @@ func (portal *Portal) SlackBlocksToMatrix(blocks slack.Blocks, attachments []sla
 
 	htmlText.WriteString(portal.blocksToHtml(blocks, false, userTeam))
 
+	if len(attachments) > 0 && htmlText.String() != "" {
+		htmlText.WriteString("<br>")
+	}
+
 	for _, attachment := range attachments {
 		if attachment.IsMsgUnfurl {
 			for _, message_block := range attachment.MessageBlocks {
@@ -273,6 +278,61 @@ func (portal *Portal) SlackBlocksToMatrix(blocks slack.Blocks, attachments []sla
 				htmlText.WriteString(fmt.Sprintf("<blockquote><b>%s</b><br>%s<a href=\"%s\"><i>%s</i></a><br></blockquote>",
 					attachment.AuthorName, renderedAttachment, attachment.FromURL, attachment.Footer))
 			}
+		} else {
+			if len(attachment.Pretext) > 0 {
+				htmlText.WriteString(fmt.Sprintf("%s<br>", portal.mrkdwnToMatrixHtml(attachment.Pretext)))
+			}
+			var attachParts []string
+			if len(attachment.AuthorName) > 0 {
+				if len(attachment.AuthorLink) > 0 {
+					attachParts = append(attachParts, fmt.Sprintf("<b><a href=\"%s\">%s</a></b>",
+						attachment.AuthorLink, attachment.AuthorName))
+				} else {
+					attachParts = append(attachParts, fmt.Sprintf("<b>%s</b>", attachment.AuthorName))
+				}
+			}
+			if len(attachment.Title) > 0 {
+				if len(attachment.TitleLink) > 0 {
+					attachParts = append(attachParts, fmt.Sprintf("<strong><a href=\"%s\">%s</a></strong>",
+						attachment.TitleLink, portal.mrkdwnToMatrixHtml(attachment.Title)))
+				} else {
+					attachParts = append(attachParts, fmt.Sprintf("<strong>%s</strong>", portal.mrkdwnToMatrixHtml(attachment.Title)))
+				}
+			}
+			if len(attachment.Text) > 0 {
+				attachParts = append(attachParts, portal.mrkdwnToMatrixHtml(attachment.Text))
+			} else if len(attachment.Fallback) > 0 {
+				attachParts = append(attachParts, portal.mrkdwnToMatrixHtml(attachment.Fallback))
+			}
+			if len(attachment.Fields) > 0 {
+				var fieldBody string
+				var short = false
+				for _, field := range attachment.Fields {
+					if !short {
+						fieldBody += "<tr>"
+					}
+					fieldBody += fmt.Sprintf("<td><strong>%s</strong><br>%s</td>",
+						field.Title, portal.mrkdwnToMatrixHtml(field.Value))
+					short = !short && field.Short
+					if !short {
+						fieldBody += "</tr>"
+					}
+				}
+				attachParts = append(attachParts, fmt.Sprintf("<table>%s</table>", fieldBody))
+			}
+			var footerParts []string
+			if len(attachment.Footer) > 0 {
+				footerParts = append(footerParts, portal.mrkdwnToMatrixHtml(attachment.Footer))
+			}
+			if len(attachment.Ts) > 0 {
+				ts, _ := attachment.Ts.Int64()
+				t := time.Unix(ts, 0)
+				footerParts = append(footerParts, t.Local().Format("Jan 02, 2006 15:04:05 MST"))
+			}
+			if len(footerParts) > 0 {
+				attachParts = append(attachParts, fmt.Sprintf("<sup>%s</sup>", strings.Join(footerParts, " | ")))
+			}
+			htmlText.WriteString(fmt.Sprintf("<blockquote>%s</blockquote>", strings.Join(attachParts, "<br>")))
 		}
 	}
 
