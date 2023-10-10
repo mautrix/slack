@@ -175,12 +175,26 @@ func (portal *Portal) renderSlackBlock(block slack.Block, userTeam *database.Use
 	case *slack.DividerBlock:
 		return "<hr>", false
 	case *slack.SectionBlock:
+		var htmlParts []string
 		if b.Text != nil {
-			return portal.renderSlackTextBlock(*b.Text), false
-		} else {
-			portal.log.Debugln("Unsupported Slack block: section block without a text object")
-			return "<i>Slack message contains unsupported elements.</i>", true
+			htmlParts = append(htmlParts, portal.renderSlackTextBlock(*b.Text))
 		}
+		if len(b.Fields) > 0 {
+			var fieldTable strings.Builder
+			fieldTable.WriteString("<table>")
+			for i, field := range b.Fields {
+				if i%2 == 0 {
+					fieldTable.WriteString("<tr>")
+				}
+				fieldTable.WriteString(fmt.Sprintf("<td>%s</td>", portal.mrkdwnToMatrixHtml(field.Text)))
+				if i%2 != 0 || i == len(b.Fields)-1 {
+					fieldTable.WriteString("</tr>")
+				}
+			}
+			fieldTable.WriteString("</table>")
+			htmlParts = append(htmlParts, fieldTable.String())
+		}
+		return strings.Join(htmlParts, "<br>"), false
 	case *slack.RichTextBlock:
 		var htmlText strings.Builder
 		for _, element := range b.Elements {
