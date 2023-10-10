@@ -201,6 +201,19 @@ func (portal *Portal) renderSlackBlock(block slack.Block, userTeam *database.Use
 			htmlText.WriteString(portal.renderSlackRichTextElement(len(b.Elements), element, userTeam))
 		}
 		return format.UnwrapSingleParagraph(htmlText.String()), false
+	case *slack.ContextBlock:
+		var htmlText strings.Builder
+		var unsupported bool = false
+		for _, element := range b.ContextElements.Elements {
+			if mrkdwnElem, ok := element.(*slack.TextBlockObject); ok {
+				htmlText.WriteString(fmt.Sprintf("<sup>%s</sup>", portal.mrkdwnToMatrixHtml(mrkdwnElem.Text)))
+			} else {
+				portal.log.Debugfln("Unsupported Slack block element: %s", element.MixedElementType())
+				htmlText.WriteString("<i>Slack message contains unsupported elements.</i>")
+				unsupported = true
+			}
+		}
+		return htmlText.String(), unsupported
 	default:
 		portal.log.Debugfln("Unsupported Slack block: %s", b.BlockType())
 		return "<i>Slack message contains unsupported elements.</i>", true
