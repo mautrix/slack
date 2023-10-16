@@ -312,7 +312,7 @@ func (portal *Portal) SlackBlocksToMatrix(blocks slack.Blocks, attachments []sla
 			}
 		} else {
 			if len(attachment.Pretext) > 0 {
-				htmlText.WriteString(fmt.Sprintf("%s<br>", portal.mrkdwnToMatrixHtml(attachment.Pretext)))
+				htmlText.WriteString(fmt.Sprintf("<p>%s</p>", portal.mrkdwnToMatrixHtml(attachment.Pretext)))
 			}
 			var attachParts []string
 			if len(attachment.AuthorName) > 0 {
@@ -325,10 +325,10 @@ func (portal *Portal) SlackBlocksToMatrix(blocks slack.Blocks, attachments []sla
 			}
 			if len(attachment.Title) > 0 {
 				if len(attachment.TitleLink) > 0 {
-					attachParts = append(attachParts, fmt.Sprintf("<strong><a href=\"%s\">%s</a></strong>",
+					attachParts = append(attachParts, fmt.Sprintf("<b><a href=\"%s\">%s</a></b>",
 						attachment.TitleLink, portal.mrkdwnToMatrixHtml(attachment.Title)))
 				} else {
-					attachParts = append(attachParts, fmt.Sprintf("<strong>%s</strong>", portal.mrkdwnToMatrixHtml(attachment.Title)))
+					attachParts = append(attachParts, fmt.Sprintf("<b>%s</b>", portal.mrkdwnToMatrixHtml(attachment.Title)))
 				}
 			}
 			if len(attachment.Text) > 0 {
@@ -336,6 +336,7 @@ func (portal *Portal) SlackBlocksToMatrix(blocks slack.Blocks, attachments []sla
 			} else if len(attachment.Fallback) > 0 {
 				attachParts = append(attachParts, portal.mrkdwnToMatrixHtml(attachment.Fallback))
 			}
+			htmlText.WriteString(fmt.Sprintf("<blockquote>%s", strings.Join(attachParts, "<br>")))
 			if len(attachment.Fields) > 0 {
 				var fieldBody string
 				var short = false
@@ -350,7 +351,9 @@ func (portal *Portal) SlackBlocksToMatrix(blocks slack.Blocks, attachments []sla
 						fieldBody += "</tr>"
 					}
 				}
-				attachParts = append(attachParts, fmt.Sprintf("<table>%s</table>", fieldBody))
+				htmlText.WriteString(fmt.Sprintf("<table>%s</table>", fieldBody))
+			} else {
+				htmlText.WriteString("<br>")
 			}
 			var footerParts []string
 			if len(attachment.Footer) > 0 {
@@ -362,9 +365,9 @@ func (portal *Portal) SlackBlocksToMatrix(blocks slack.Blocks, attachments []sla
 				footerParts = append(footerParts, t.Local().Format("Jan 02, 2006 15:04:05 MST"))
 			}
 			if len(footerParts) > 0 {
-				attachParts = append(attachParts, fmt.Sprintf("<sup>%s</sup>", strings.Join(footerParts, " | ")))
+				htmlText.WriteString(fmt.Sprintf("<sup>%s</sup>", strings.Join(footerParts, " | ")))
 			}
-			htmlText.WriteString(fmt.Sprintf("<blockquote>%s</blockquote>", strings.Join(attachParts, "<br>")))
+			htmlText.WriteString("</blockquote>")
 		}
 	}
 
