@@ -305,6 +305,11 @@ func (portal *Portal) SlackBlocksToMatrix(blocks slack.Blocks, attachments []sla
 				htmlText.WriteString(fmt.Sprintf("<blockquote><b>%s</b><br>%s<a href=\"%s\"><i>%s</i></a><br></blockquote>",
 					attachment.AuthorName, renderedAttachment, attachment.FromURL, attachment.Footer))
 			}
+		} else if len(attachment.Blocks.BlockSet) > 0 {
+			for _, message_block := range attachment.Blocks.BlockSet {
+				renderedAttachment, _ := portal.renderSlackBlock(message_block, userTeam)
+				htmlText.WriteString(fmt.Sprintf("<blockquote>%s</blockquote>", renderedAttachment))
+			}
 		} else {
 			if len(attachment.Pretext) > 0 {
 				htmlText.WriteString(fmt.Sprintf("%s<br>", portal.mrkdwnToMatrixHtml(attachment.Pretext)))
