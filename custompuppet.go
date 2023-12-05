@@ -44,11 +44,11 @@ func (br *SlackBridge) newDoublePuppetClient(mxid id.UserID, accessToken string)
 		return nil, err
 	}
 
-	homeserverURL, found := br.Config.Bridge.DoublePuppetServerMap[homeserver]
+	homeserverURL, found := br.Config.Bridge.DoublePuppetConfig.ServerMap[homeserver]
 	if !found {
 		if homeserver == br.AS.HomeserverDomain {
 			homeserverURL = ""
-		} else if br.Config.Bridge.DoublePuppetAllowDiscovery {
+		} else if br.Config.Bridge.DoublePuppetConfig.AllowDiscovery {
 			resp, err := mautrix.DiscoverClientAPI(homeserver)
 			if err != nil {
 				return nil, fmt.Errorf("failed to find homeserver URL for %s: %v", homeserver, err)
@@ -173,7 +173,7 @@ func (puppet *Puppet) LoadRoom(_ id.RoomID) *mautrix.Room {
 // /////////////////////////////////////////////////////////////////////////////
 // additional puppet api
 // /////////////////////////////////////////////////////////////////////////////
-func (puppet *Puppet) clearCustomMXID() {
+func (puppet *Puppet) ClearCustomMXID() {
 	puppet.CustomMXID = ""
 	puppet.AccessToken = ""
 	puppet.customIntent = nil
@@ -204,14 +204,14 @@ func (puppet *Puppet) newCustomIntent() (*appservice.IntentAPI, error) {
 
 func (puppet *Puppet) StartCustomMXID(reloginOnFail bool) error {
 	if puppet.CustomMXID == "" {
-		puppet.clearCustomMXID()
+		puppet.ClearCustomMXID()
 
 		return nil
 	}
 
 	intent, err := puppet.newCustomIntent()
 	if err != nil {
-		puppet.clearCustomMXID()
+		puppet.ClearCustomMXID()
 
 		return err
 	}
@@ -219,14 +219,14 @@ func (puppet *Puppet) StartCustomMXID(reloginOnFail bool) error {
 	resp, err := intent.Whoami()
 	if err != nil {
 		if !reloginOnFail || (errors.Is(err, mautrix.MUnknownToken) && !puppet.tryRelogin(err, "initializing double puppeting")) {
-			puppet.clearCustomMXID()
+			puppet.ClearCustomMXID()
 
 			return err
 		}
 
 		intent.AccessToken = puppet.AccessToken
 	} else if resp.UserID != puppet.CustomMXID {
-		puppet.clearCustomMXID()
+		puppet.ClearCustomMXID()
 
 		return ErrMismatchingMXID
 	}
@@ -287,7 +287,7 @@ func (puppet *Puppet) loginWithSharedSecret(mxid id.UserID, teamID string) (stri
 
 	puppet.log.Debugfln("Logging into %s with shared secret", mxid)
 
-	loginSecret := puppet.bridge.Config.Bridge.LoginSharedSecretMap[homeserver]
+	loginSecret := puppet.bridge.Config.Bridge.DoublePuppetConfig.SharedSecretMap[homeserver]
 
 	client, err := puppet.bridge.newDoublePuppetClient(mxid, "")
 	if err != nil {

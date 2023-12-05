@@ -32,13 +32,13 @@ import (
 
 	"github.com/slack-go/slack"
 
+	"go.mau.fi/util/dbutil"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/bridge"
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
-	"maunium.net/go/mautrix/util/dbutil"
 
 	"go.mau.fi/mautrix-slack/config"
 	"go.mau.fi/mautrix-slack/database"

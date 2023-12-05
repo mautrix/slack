@@ -29,10 +29,10 @@ import (
 	"github.com/yuin/goldmark/text"
 	goldmarkUtil "github.com/yuin/goldmark/util"
 	"go.mau.fi/mautrix-slack/database"
+	"go.mau.fi/util/exmime"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/format"
 	"maunium.net/go/mautrix/id"
-	"maunium.net/go/mautrix/util"
 )
 
 var escapeFixer = regexp.MustCompile(`\\(__[^_]|\*\*[^*])`)
@@ -79,7 +79,7 @@ func (portal *Portal) renderSlackFile(file slack.File) event.MessageEventContent
 			content.Body = mimeClass
 		}
 
-		content.Body += util.ExtensionFromMimetype(file.Mimetype)
+		content.Body += exmime.ExtensionFromMimetype(file.Mimetype)
 	}
 
 	if strings.HasPrefix(file.Mimetype, "image") {
