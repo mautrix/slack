@@ -22,7 +22,7 @@ import (
 
 	log "maunium.net/go/maulogger/v2"
 
-	"maunium.net/go/mautrix/util/dbutil"
+	"go.mau.fi/util/dbutil"
 )
 
 type BackfillQuery struct {

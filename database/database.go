@@ -23,7 +23,7 @@ import (
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 
-	"maunium.net/go/mautrix/util/dbutil"
+	"go.mau.fi/util/dbutil"
 
 	"go.mau.fi/mautrix-slack/database/upgrades"
 	"maunium.net/go/maulogger/v2"

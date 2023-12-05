@@ -80,9 +80,7 @@ type BridgeConfig struct {
 	DefaultBridgeReceipts bool `yaml:"default_bridge_receipts"`
 	DefaultBridgePresence bool `yaml:"default_bridge_presence"`
 
-	DoublePuppetServerMap      map[string]string `yaml:"double_puppet_server_map"`
-	DoublePuppetAllowDiscovery bool              `yaml:"double_puppet_allow_discovery"`
-	LoginSharedSecretMap       map[string]string `yaml:"login_shared_secret_map"`
+	DoublePuppetConfig bridgeconfig.DoublePuppetConfig `yaml:",inline"`
 
 	MessageHandlingTimeout struct {
 		ErrorAfterStr string `yaml:"error_after"`
@@ -153,6 +151,10 @@ func (bc *BridgeConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 }
 
 var _ bridgeconfig.BridgeConfig = (*BridgeConfig)(nil)
+
+func (bc BridgeConfig) GetDoublePuppetConfig() bridgeconfig.DoublePuppetConfig {
+	return bc.DoublePuppetConfig
+}
 
 func (bc BridgeConfig) GetEncryptionConfig() bridgeconfig.EncryptionConfig {
 	return bc.Encryption

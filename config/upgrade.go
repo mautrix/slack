@@ -17,9 +17,9 @@
 package config
 
 import (
+	up "go.mau.fi/util/configupgrade"
+	"go.mau.fi/util/random"
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
-	"maunium.net/go/mautrix/util"
-	up "maunium.net/go/mautrix/util/configupgrade"
 )
 
 func DoUpgrade(helper *up.Helper) {
@@ -50,7 +50,13 @@ func DoUpgrade(helper *up.Helper) {
 	helper.Copy(up.Bool, "bridge", "default_bridge_presence")
 	helper.Copy(up.Map, "bridge", "double_puppet_server_map")
 	helper.Copy(up.Bool, "bridge", "double_puppet_allow_discovery")
-	helper.Copy(up.Map, "bridge", "login_shared_secret_map")
+	if legacySecret, ok := helper.Get(up.Str, "bridge", "login_shared_secret"); ok && len(legacySecret) > 0 {
+		baseNode := helper.GetBaseNode("bridge", "login_shared_secret_map")
+		baseNode.Map[helper.GetBase("homeserver", "domain")] = up.StringNode(legacySecret)
+		baseNode.UpdateContent()
+	} else {
+		helper.Copy(up.Map, "bridge", "login_shared_secret_map")
+	}
 	helper.Copy(up.Map, "bridge", "message_handling_timeout")
 	helper.Copy(up.Str, "bridge", "command_prefix")
 	helper.Copy(up.Str, "bridge", "management_room_text", "welcome")
@@ -85,7 +91,7 @@ func DoUpgrade(helper *up.Helper) {
 
 	helper.Copy(up.Str, "bridge", "provisioning", "prefix")
 	if secret, ok := helper.Get(up.Str, "bridge", "provisioning", "shared_secret"); !ok || secret == "generate" {
-		sharedSecret := util.RandomString(64)
+		sharedSecret := random.String(64)
 		helper.Set(up.Str, sharedSecret, "bridge", "provisioning", "shared_secret")
 	} else {
 		helper.Copy(up.Str, "bridge", "provisioning", "shared_secret")

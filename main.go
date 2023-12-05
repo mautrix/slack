@@ -20,11 +20,11 @@ import (
 	_ "embed"
 	"sync"
 
+	"go.mau.fi/util/configupgrade"
 	"maunium.net/go/mautrix/bridge"
 	"maunium.net/go/mautrix/bridge/commands"
 	"maunium.net/go/mautrix/format"
 	"maunium.net/go/mautrix/id"
-	"maunium.net/go/mautrix/util/configupgrade"
 
 	"go.mau.fi/mautrix-slack/config"
 	"go.mau.fi/mautrix-slack/database"
