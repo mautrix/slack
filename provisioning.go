@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	_ "net/http/pprof"
 	"net/url"
 	"strings"
 	"time"
@@ -63,6 +64,13 @@ func newProvisioningAPI(br *SlackBridge) *ProvisioningAPI {
 	r.HandleFunc("/v1/logout", p.logout).Methods(http.MethodPost)
 	p.bridge.AS.Router.HandleFunc("/_matrix/app/com.beeper.asmux/ping", p.BridgeStatePing).Methods(http.MethodPost)
 	p.bridge.AS.Router.HandleFunc("/_matrix/app/com.beeper.bridge_state", p.BridgeStatePing).Methods(http.MethodPost)
+
+	if p.bridge.Config.Bridge.Provisioning.DebugEndpoints {
+		p.log.Debugln("Enabling debug API at /debug")
+		r := p.bridge.AS.Router.PathPrefix("/debug").Subrouter()
+		r.Use(p.authMiddleware)
+		r.PathPrefix("/pprof").Handler(http.DefaultServeMux)
+	}
 
 	return p
 }
