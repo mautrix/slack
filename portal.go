@@ -1427,6 +1427,15 @@ func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam
 	switch msg.Msg.SubType {
 	case "", "me_message", "bot_message", "thread_broadcast": // Regular messages and /me
 		portal.HandleSlackNormalMessage(user, userTeam, &msg.Msg, nil)
+	case "huddle_thread":
+		content := &event.MessageEventContent{
+			MsgType: event.MsgNotice,
+			Body:    fmt.Sprintf("A huddle started. Go get it in https://app.slack.com/client/%s/%s", portal.Key.TeamID, portal.Key.ChannelID),
+		}
+		_, err := portal.sendMatrixMessage(portal.MainIntent(), event.EventMessage, content, nil, 0)
+		if err != nil {
+			portal.log.Warnfln("Failed to send message about the huddle:", err)
+		}
 	case "message_changed":
 		portal.HandleSlackNormalMessage(user, userTeam, msg.SubMessage, existing)
 	case "channel_topic", "channel_purpose", "channel_name", "group_topic", "group_purpose", "group_name":
