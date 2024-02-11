@@ -3,3 +3,4 @@ slack
 logs/
 *.db*
 registration.yaml
+/start
