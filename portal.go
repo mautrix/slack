@@ -777,7 +777,7 @@ func (portal *Portal) convertMatrixMessage(ctx context.Context, sender *User, us
 		}
 
 		var filename, caption string
-		if content.FileName == "" {
+		if content.FileName == "" || content.FileName == content.Body {
 			filename = content.Body
 		} else {
 			filename = content.FileName
