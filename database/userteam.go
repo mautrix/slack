@@ -126,8 +126,9 @@ type UserTeam struct {
 	SlackEmail string
 	TeamName   string
 
-	Token       string
-	CookieToken string
+	Token          string
+	CookieToken    string
+	SlackUserNames map[string]string
 
 	Client *slack.Client
 	RTM    *slack.RTM
@@ -192,4 +193,27 @@ func (ut *UserTeam) Upsert() {
 	if err != nil {
 		ut.log.Warnfln("Failed to upsert %s/%s/%s: %v", ut.Key.MXID, ut.Key.SlackID, ut.Key.TeamID, err)
 	}
+}
+
+func (ut *UserTeam) GetSlackUserNameBySlackID(slackID string) string {
+	if ut.SlackUserNames == nil {
+		ut.SlackUserNames = make(map[string]string)
+	}
+	slackUserName, ok := ut.SlackUserNames[slackID]
+	if !ok {
+		userInfo, err := ut.Client.GetUserInfo(slackID)
+		if err != nil {
+			ut.log.Warnfln("Failed to get slack user info for slackID: %s", slackID)
+		} else {
+			if userInfo.RealName != "" {
+				slackUserName = userInfo.RealName
+			} else {
+				slackUserName = userInfo.Name
+			}
+
+			ut.SlackUserNames[slackID] = slackUserName
+		}
+	}
+
+	return slackUserName
 }
