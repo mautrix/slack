@@ -8,6 +8,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/slack-go/slack v0.10.3
 	github.com/yuin/goldmark v1.5.4
+	golang.org/x/time v0.5.0
 	maunium.net/go/maulogger/v2 v2.4.1
 	maunium.net/go/mautrix v0.15.4
 )

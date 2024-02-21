@@ -598,6 +598,8 @@ func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 		user.log.Warnfln("Not fetching channels for userteam %s: xoxs token type can't fetch user's joined channels", userTeam.Key)
 	}
 
+	user.log.Debugfln("Discovered channels for user: %#v", channelInfo)
+
 	portals := user.bridge.DB.Portal.GetAllForUserTeam(userTeam.Key)
 	for _, dbPortal := range portals {
 		// First, go through all pre-existing portals and update their info
@@ -713,6 +715,7 @@ func (user *User) Connect() error {
 		} else if err != nil {
 			user.log.Errorln("Error connecting to Slack team", err)
 		}
+
 		// if err != nil {
 		// 	user.log.Errorfln("Error connecting to Slack userteam %s: %v", userTeam.Key, err)
 		// 	// TODO: more detailed error state
