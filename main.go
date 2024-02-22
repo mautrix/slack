@@ -65,6 +65,10 @@ type SlackBridge struct {
 	portalsByID   map[database.PortalKey]*Portal
 	portalsLock   sync.Mutex
 
+	teamsByMXID map[id.RoomID]*Team
+	teamsByID   map[string]*Team
+	teamsLock   sync.Mutex
+
 	puppets             map[string]*Puppet
 	puppetsByCustomMXID map[id.UserID]*Puppet
 	puppetsLock         sync.Mutex
@@ -155,6 +159,9 @@ func main() {
 
 		portalsByMXID: make(map[id.RoomID]*Portal),
 		portalsByID:   make(map[database.PortalKey]*Portal),
+
+		teamsByMXID: make(map[id.RoomID]*Team),
+		teamsByID:   make(map[string]*Team),
 
 		puppets:             make(map[string]*Puppet),
 		puppetsByCustomMXID: make(map[id.UserID]*Puppet),

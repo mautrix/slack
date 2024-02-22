@@ -70,6 +70,8 @@ type Portal struct {
 	FirstEventID id.EventID
 	NextBatchID  id.BatchID
 	FirstSlackID string
+
+	InSpace bool
 }
 
 func (p *Portal) Scan(row dbutil.Scannable) *Portal {
@@ -78,7 +80,7 @@ func (p *Portal) Scan(row dbutil.Scannable) *Portal {
 	err := row.Scan(&p.Key.TeamID, &p.Key.ChannelID, &mxid,
 		&p.Type, &dmUserID, &p.PlainName, &p.Name, &p.NameSet, &p.Topic,
 		&p.TopicSet, &p.Avatar, &avatarURL, &p.AvatarSet, &firstEventID,
-		&p.Encrypted, &nextBatchID, &firstSlackID)
+		&p.Encrypted, &nextBatchID, &firstSlackID, &p.InSpace)
 
 	if err != nil {
 		if err != sql.ErrNoRows {
@@ -110,13 +112,13 @@ func (p *Portal) Insert() {
 	query := "INSERT INTO portal" +
 		" (team_id, channel_id, mxid, type, dm_user_id, plain_name," +
 		" name, name_set, topic, topic_set, avatar, avatar_url, avatar_set," +
-		" first_event_id, encrypted, next_batch_id, first_slack_id)" +
-		" VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"
+		" first_event_id, encrypted, next_batch_id, first_slack_id, in_space)" +
+		" VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)"
 
 	_, err := p.db.Exec(query, p.Key.TeamID, p.Key.ChannelID,
 		p.mxidPtr(), p.Type, p.DMUserID, p.PlainName, p.Name, p.NameSet,
 		p.Topic, p.TopicSet, p.Avatar, p.AvatarURL.String(), p.AvatarSet,
-		p.FirstEventID.String(), p.Encrypted, p.NextBatchID.String(), p.FirstSlackID)
+		p.FirstEventID.String(), p.Encrypted, p.NextBatchID.String(), p.FirstSlackID, p.InSpace)
 
 	if err != nil {
 		p.log.Warnfln("Failed to insert %s: %v", p.Key, err)
@@ -127,13 +129,13 @@ func (p *Portal) Update(txn dbutil.Transaction) {
 	query := "UPDATE portal SET" +
 		" mxid=$1, type=$2, dm_user_id=$3, plain_name=$4, name=$5, name_set=$6," +
 		" topic=$7, topic_set=$8, avatar=$9, avatar_url=$10, avatar_set=$11," +
-		" first_event_id=$12, encrypted=$13, next_batch_id=$14, first_slack_id=$15" +
-		" WHERE team_id=$16 AND channel_id=$17"
+		" first_event_id=$12, encrypted=$13, next_batch_id=$14, first_slack_id=$15, in_space=$16" +
+		" WHERE team_id=$17 AND channel_id=$18"
 
 	args := []interface{}{p.mxidPtr(), p.Type, p.DMUserID, p.PlainName,
 		p.Name, p.NameSet, p.Topic, p.TopicSet, p.Avatar, p.AvatarURL.String(),
 		p.AvatarSet, p.FirstEventID.String(), p.Encrypted, p.NextBatchID.String(), p.FirstSlackID,
-		p.Key.TeamID, p.Key.ChannelID}
+		p.InSpace, p.Key.TeamID, p.Key.ChannelID}
 
 	var err error
 	if txn != nil {

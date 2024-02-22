@@ -1019,7 +1019,7 @@ func (portal *Portal) sendSlackRepeatTyping() {
 func (portal *Portal) HandleMatrixLeave(brSender bridge.User) {
 	portal.log.Debugln("User left private chat portal, cleaning up and deleting...")
 	portal.delete()
-	portal.cleanup(false)
+	portal.bridge.cleanupRoom(portal.MainIntent(), portal.MXID, false, portal.log)
 
 	// TODO: figure out how to close a dm from the API.
 
@@ -1059,39 +1059,23 @@ func (portal *Portal) cleanupIfEmpty() {
 
 	if len(users) == 0 {
 		portal.log.Infoln("Room seems to be empty, cleaning up...")
-		portal.cleanup(false)
 		portal.delete()
+		if portal.bridge.SpecVersions.UnstableFeatures["com.beeper.room_yeeting"] {
+			intent := portal.MainIntent()
+			err := intent.BeeperDeleteRoom(portal.MXID)
+			if err == nil || errors.Is(err, mautrix.MNotFound) {
+				return
+			}
+			portal.log.Warnfln("Failed to delete %s using hungryserv yeet endpoint, falling back to normal behavior: %v", portal.MXID, err)
+		}
+		portal.bridge.cleanupRoom(portal.MainIntent(), portal.MXID, false, portal.log)
 	}
 }
 
-func (portal *Portal) cleanup(puppetsOnly bool) {
-	if portal.MXID == "" {
-		return
-	}
-
-	if portal.bridge.SpecVersions.UnstableFeatures["com.beeper.room_yeeting"] {
-		intent := portal.MainIntent()
-		err := intent.BeeperDeleteRoom(portal.MXID)
-		if err == nil || errors.Is(err, mautrix.MNotFound) {
-			return
-		}
-		portal.log.Warnfln("Failed to delete %s using hungryserv yeet endpoint, falling back to normal behavior: %v", portal.MXID, err)
-	}
-
-	if portal.IsPrivateChat() {
-		_, err := portal.MainIntent().LeaveRoom(portal.MXID)
-		if err != nil {
-			portal.log.Warnln("Failed to leave private chat portal with main intent:", err)
-		}
-
-		return
-	}
-
-	intent := portal.MainIntent()
-	members, err := intent.JoinedMembers(portal.MXID)
+func (br *SlackBridge) cleanupRoom(intent *appservice.IntentAPI, mxid id.RoomID, puppetsOnly bool, log log.Logger) {
+	members, err := intent.JoinedMembers(mxid)
 	if err != nil {
-		portal.log.Errorln("Failed to get portal members for cleanup:", err)
-
+		log.Errorln("Failed to get portal members for cleanup:", err)
 		return
 	}
 
@@ -1100,23 +1084,23 @@ func (portal *Portal) cleanup(puppetsOnly bool) {
 			continue
 		}
 
-		puppet := portal.bridge.GetPuppetByMXID(member)
+		puppet := br.GetPuppetByMXID(member)
 		if puppet != nil {
-			_, err = puppet.DefaultIntent().LeaveRoom(portal.MXID)
+			_, err = puppet.DefaultIntent().LeaveRoom(mxid)
 			if err != nil {
-				portal.log.Errorln("Error leaving as puppet while cleaning up portal:", err)
+				log.Errorln("Error leaving as puppet while cleaning up portal:", err)
 			}
 		} else if !puppetsOnly {
-			_, err = intent.KickUser(portal.MXID, &mautrix.ReqKickUser{UserID: member, Reason: "Deleting portal"})
+			_, err = intent.KickUser(mxid, &mautrix.ReqKickUser{UserID: member, Reason: "Deleting portal"})
 			if err != nil {
-				portal.log.Errorln("Error kicking user while cleaning up portal:", err)
+				log.Errorln("Error kicking user while cleaning up portal:", err)
 			}
 		}
 	}
 
-	_, err = intent.LeaveRoom(portal.MXID)
+	_, err = intent.LeaveRoom(mxid)
 	if err != nil {
-		portal.log.Errorln("Error leaving with main intent while cleaning up portal:", err)
+		log.Errorln("Error leaving with main intent while cleaning up portal:", err)
 	}
 }
 

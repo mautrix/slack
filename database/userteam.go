@@ -40,7 +40,7 @@ func (utq *UserTeamQuery) New() *UserTeam {
 	}
 }
 
-const userTeamSelect = "SELECT ut.mxid, ut.slack_email, ut.slack_id, ut.team_name, ut.team_id, ut.token, ut.cookie_token FROM user_team ut "
+const userTeamSelect = "SELECT ut.mxid, ut.slack_email, ut.slack_id, ut.team_name, ut.team_id, ut.token, ut.cookie_token, ut.in_space FROM user_team ut "
 
 func (utq *UserTeamQuery) GetBySlackDomain(userID id.UserID, email, domain string) *UserTeam {
 	query := userTeamSelect + "WHERE ut.mxid=$1 AND ut.slack_email=$2 AND ut.team_id=(SELECT team_id FROM team_info WHERE team_domain=$3)"
@@ -129,6 +129,8 @@ type UserTeam struct {
 	Token       string
 	CookieToken string
 
+	InSpace bool
+
 	Client *slack.Client
 	RTM    *slack.RTM
 }
@@ -157,7 +159,7 @@ func (ut *UserTeam) Scan(row dbutil.Scannable) *UserTeam {
 	var token sql.NullString
 	var cookieToken sql.NullString
 
-	err := row.Scan(&ut.Key.MXID, &ut.SlackEmail, &ut.Key.SlackID, &ut.TeamName, &ut.Key.TeamID, &token, &cookieToken)
+	err := row.Scan(&ut.Key.MXID, &ut.SlackEmail, &ut.Key.SlackID, &ut.TeamName, &ut.Key.TeamID, &token, &cookieToken, &ut.InSpace)
 	if err != nil {
 		if err != sql.ErrNoRows {
 			ut.log.Errorln("Database scan failed:", err)
@@ -178,16 +180,16 @@ func (ut *UserTeam) Scan(row dbutil.Scannable) *UserTeam {
 
 func (ut *UserTeam) Upsert() {
 	query := `
-		INSERT INTO user_team (mxid, slack_email, slack_id, team_name, team_id, token, cookie_token)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO user_team (mxid, slack_email, slack_id, team_name, team_id, token, cookie_token, in_space)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (mxid, slack_id, team_id) DO UPDATE
-			SET slack_email=excluded.slack_email, team_name=excluded.team_name, token=excluded.token, cookie_token=excluded.cookie_token
+			SET slack_email=excluded.slack_email, team_name=excluded.team_name, token=excluded.token, cookie_token=excluded.cookie_token, in_space=excluded.in_space
 	`
 
 	token := sqlNullString(ut.Token)
 	cookieToken := sqlNullString(ut.CookieToken)
 
-	_, err := ut.db.Exec(query, ut.Key.MXID, ut.SlackEmail, ut.Key.SlackID, ut.TeamName, ut.Key.TeamID, token, cookieToken)
+	_, err := ut.db.Exec(query, ut.Key.MXID, ut.SlackEmail, ut.Key.SlackID, ut.TeamName, ut.Key.TeamID, token, cookieToken, ut.InSpace)
 
 	if err != nil {
 		ut.log.Warnfln("Failed to upsert %s/%s/%s: %v", ut.Key.MXID, ut.Key.SlackID, ut.Key.TeamID, err)
