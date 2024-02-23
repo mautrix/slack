@@ -480,6 +480,9 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		portal.log.Debugln("Enqueueing backfill")
 		backfillState.Upsert()
 		portal.bridge.BackfillQueue.ReCheck()
+	} else {
+		portal.log.Debugln("Performing traditional backfill")
+		portal.traditionalBackfill(userTeam)
 	}
 
 	return nil

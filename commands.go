@@ -18,6 +18,7 @@ package main
 
 import (
 	"fmt"
+	"go.mau.fi/mautrix-slack/database"
 	"net/url"
 	"strings"
 
@@ -40,6 +41,8 @@ func (br *SlackBridge) RegisterCommands() {
 		cmdLogout,
 		cmdSyncTeams,
 		cmdDeletePortal,
+		cmdBackfillPortal,
+		cmdBackfillAllPortals,
 	)
 }
 
@@ -196,4 +199,50 @@ func fnDeletePortal(ce *WrappedCommandEvent) {
 	ce.Portal.delete()
 	ce.Portal.cleanup(false)
 	ce.Log.Infofln("Deleted portal")
+}
+
+var cmdBackfillPortal = &commands.FullHandler{
+	Func:           wrapCommand(fnBackfillPortal),
+	Name:           "backfill-portal",
+	RequiresPortal: true,
+}
+
+func fnBackfillPortal(ce *WrappedCommandEvent) {
+	userTeam := ce.User.GetUserTeam(ce.Portal.Key.TeamID)
+	ce.User.establishTeamClient(userTeam)
+
+	backfillSinglePortal(ce.Portal, userTeam)
+	ce.Log.Infofln("Backfilled portal")
+}
+
+var cmdBackfillAllPortals = &commands.FullHandler{
+	Func:          wrapCommand(fnBackfillAllPortals),
+	Name:          "backfill-all-portals",
+	RequiresLogin: true,
+}
+
+func fnBackfillAllPortals(ce *WrappedCommandEvent) {
+	if len(ce.Args) != 2 {
+		ce.Reply("**Usage**: $cmdprefix backfill-all-portals <email> <domain>")
+		return
+	}
+
+	domain := strings.TrimSuffix(ce.Args[1], ".slack.com")
+	userTeam := ce.Bridge.DB.UserTeam.GetBySlackDomain(ce.User.MXID, ce.Args[0], domain)
+	ce.User.establishTeamClient(userTeam)
+
+	portals := ce.Bridge.DB.Portal.GetAllForUserTeam(userTeam.Key)
+	portalCount := len(portals)
+	for i, dbPortal := range portals {
+		portal := ce.Bridge.GetPortalByID(dbPortal.Key)
+		backfillSinglePortal(portal, userTeam)
+		ce.Log.Infofln("Completed backfill for %d of %d portals", i+1, portalCount)
+	}
+}
+
+func backfillSinglePortal(portal *Portal, userTeam *database.UserTeam) {
+	portal.slackMessageLock.Lock()
+	defer portal.slackMessageLock.Unlock()
+
+	portal.traditionalBackfill(userTeam)
 }

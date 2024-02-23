@@ -17,13 +17,14 @@
 package main
 
 import (
+	"container/heap"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"github.com/slack-go/slack"
+	"strconv"
 	"strings"
 	"time"
-
-	"github.com/slack-go/slack"
 
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/appservice"
@@ -37,6 +38,29 @@ import (
 
 // region history sync handling
 
+type ThreadMessage struct {
+	Message   slack.Message
+	TimeStamp time.Time
+}
+type ThreadCollection []ThreadMessage
+
+func (h ThreadCollection) Root() ThreadMessage { return h[0] }
+func (h ThreadCollection) Len() int            { return len(h) }
+func (h ThreadCollection) Less(i, j int) bool  { return h[i].TimeStamp.Before(h[j].TimeStamp) }
+func (h ThreadCollection) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
+func (h *ThreadCollection) Push(x any) {
+	// Push and Pop use pointer receivers because they modify the slice's length,
+	// not just its contents.
+	*h = append(*h, x.(ThreadMessage))
+}
+func (h *ThreadCollection) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
+}
+
 func (bridge *SlackBridge) handleHistorySyncsLoop() {
 	if !bridge.Config.Bridge.Backfill.Enable {
 		return
@@ -47,6 +71,303 @@ func (bridge *SlackBridge) handleHistorySyncsLoop() {
 
 	bridge.HandleBackfillRequestsLoop()
 
+}
+
+func (portal *Portal) traditionalBackfill(userTeam *database.UserTeam) (int, error) {
+	portal.log.Errorfln("Starting backfill for portal: %#v", portal.Key)
+	portal.backfillLock.Lock()
+	defer portal.backfillLock.Unlock()
+
+	// removing prior tracking records for this Team
+	txn, err := portal.bridge.DB.Begin()
+	if err == nil {
+		err = portal.bridge.DB.Message.ClearAllForPortal(portal.Key)
+	}
+	if err == nil {
+		err = txn.Commit()
+	}
+	if err != nil {
+		portal.log.Errorfln("Error while clearing existing messages for portal: %#v", err)
+		return 0, err
+	}
+
+	// collect only latest timestamp of each batch as ConversationBatch
+	batches, err := portal.collectBatchesForTraditionalBackfill(userTeam)
+	if err != nil {
+		return 0, err
+	}
+
+	// backfilling requires the bot to be present
+	if portal.IsPrivateChat() {
+		err := portal.bridge.Bot.EnsureJoined(portal.MXID, appservice.EnsureJoinedParams{BotOverride: portal.MainIntent().Client})
+		if err != nil {
+			portal.log.Errorln("Error while ensure join bot for backfilling IM")
+			return 0, err
+		}
+	}
+
+	threadCollection := &ThreadCollection{}
+	heap.Init(threadCollection)
+	idx := 0
+
+	// loop in reverse through each batch
+	for i := len(batches) - 1; i >= 0; i-- {
+		batch := batches[i]
+		portal.log.Debugfln("Processing backfill batch %#v", batch)
+		messageCount, err := portal.traditionalBackfillForBatch(userTeam, &batch, threadCollection)
+		if err != nil {
+			return idx, err
+		}
+		idx += messageCount
+	}
+
+	// process remaining threads in collection
+	messageCount, err := portal.processThreads(userTeam, threadCollection, time.Now())
+	return idx + messageCount, err
+}
+
+func (portal *Portal) processThreads(userTeam *database.UserTeam, threadCollection *ThreadCollection, upTo time.Time) (messageCount int, err error) {
+	idx := 0
+	for threadCollection.Len() > 0 && threadCollection.Root().TimeStamp.Before(upTo) {
+		thread := heap.Pop(threadCollection).(ThreadMessage)
+		err = portal.traditionalBackfillSingleMessage(userTeam, thread.Message)
+		if err != nil {
+			return idx, err
+		}
+		idx += 1
+	}
+	return idx, nil
+}
+
+func (portal *Portal) collectBatchesForTraditionalBackfill(userTeam *database.UserTeam) (batches []database.ConversationBatch, err error) {
+	now := time.Now()
+	initialTs := strconv.FormatInt(now.Unix(), 10)
+	// get messages earlier than the given timestamp
+
+	getReqParamsForTS := func(ts string) slack.GetConversationHistoryParameters {
+		return slack.GetConversationHistoryParameters{
+			ChannelID: portal.Key.ChannelID,
+			Inclusive: false,
+			Latest:    ts,
+		}
+	}
+
+	foundMessages := true
+	currentTs := initialTs
+	for foundMessages {
+		reqParams := getReqParamsForTS(currentTs)
+		resp, err := userTeam.Client.GetConversationHistory(&reqParams)
+		if err != nil {
+			portal.log.Errorfln("Retrieving batch conversation info for portal %s failed, messages before ts %s", portal.Key, currentTs)
+			return nil, err
+		}
+		messageCount := len(resp.Messages)
+		if messageCount == 0 {
+			portal.log.Infofln("Completed retrieving batch conversation info for portal %s", portal.Key)
+			foundMessages = false
+		} else {
+			portal.log.Infofln("Found batch conversation info for portal %s, %d messages", portal.Key, messageCount)
+			nextTs := resp.Messages[messageCount-1].Timestamp
+			batches = append(batches, database.NewConversationBatch(portal.Key.ChannelID, currentTs))
+			currentTs = nextTs
+		}
+	}
+
+	return batches, nil
+}
+
+func (portal *Portal) traditionalBackfillForBatch(userTeam *database.UserTeam, batch *database.ConversationBatch, threadCollection *ThreadCollection) (int, error) {
+	reqParams := slack.GetConversationHistoryParameters{
+		ChannelID: portal.Key.ChannelID,
+		Inclusive: false,
+		Latest:    batch.TimeStamp,
+	}
+	resp, err := userTeam.Client.GetConversationHistory(&reqParams)
+	if err != nil {
+		portal.log.Errorfln("Retrieving conversation history for portal %s failed, messages before ts %s", portal.Key, batch.TimeStamp)
+		return 0, err
+	}
+	portal.log.Infofln("Found %d messages in conversation history for portal %s, before ts %s", len(resp.Messages), portal.Key, batch.TimeStamp)
+	if len(resp.Messages) == 0 {
+		return 0, nil
+	}
+
+	idx := 0
+	for i := len(resp.Messages) - 1; i >= 0; i-- {
+		message := resp.Messages[i]
+
+		// Space Optimization: process thread messages in the collection that occurred prior to the current message
+		ts := parseSlackTimestamp(message.Msg.Timestamp)
+		messageCount, err := portal.processThreads(userTeam, threadCollection, ts)
+		if err != nil {
+			return idx, err
+		}
+		idx += messageCount
+
+		err = portal.traditionalBackfillSingleMessage(userTeam, message)
+		if err != nil {
+			portal.log.Errorfln("Portal backfill failed on message %#v: %#v", message, err)
+			return idx, err
+		}
+		idx += 1
+
+		err = portal.traditionalBackfillCollectThreads(userTeam, message, threadCollection)
+		if err != nil {
+			return idx, err
+		}
+	}
+	return idx, err
+}
+
+func (portal *Portal) traditionalBackfillCollectThreads(userTeam *database.UserTeam, message slack.Message, threadCollection *ThreadCollection) error {
+	if message.ReplyCount == 0 {
+		return nil
+	}
+
+	ts := message.Msg.Timestamp
+	hasMoreReplies := true
+	nextCursor := ""
+	var err error
+	var messages []slack.Message
+
+	for hasMoreReplies {
+		messages, hasMoreReplies, nextCursor, err = userTeam.Client.GetConversationReplies(&slack.GetConversationRepliesParameters{
+			ChannelID: portal.Key.ChannelID,
+			Timestamp: ts,
+			Cursor:    nextCursor,
+		})
+		if err != nil {
+			return err
+		}
+
+		for _, message := range messages {
+			if message.Msg.Timestamp != ts {
+				tm := ThreadMessage{
+					Message:   message,
+					TimeStamp: parseSlackTimestamp(message.Msg.Timestamp),
+				}
+				heap.Push(threadCollection, tm)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (portal *Portal) traditionalBackfillSingleMessage(userTeam *database.UserTeam, message slack.Message) error {
+	if !(message.Type == "message" && (message.SubType == "" || message.SubType == "me_message" || message.SubType == "bot_message")) {
+		portal.log.Infofln("Unsupported message for backfill: %#v", message)
+		return nil
+	}
+	converted := portal.ConvertSlackMessage(userTeam, &message.Msg)
+	convertedContent := converted.Event
+	if convertedContent != nil && converted.SlackTimestamp != converted.SlackThreadTs {
+		portal.addThreadMetadata(convertedContent, converted.SlackThreadTs)
+	}
+	ts := parseSlackTimestamp(converted.SlackTimestamp)
+
+	converted.SlackReactions = message.Reactions
+	if converted.Event == nil && len(converted.FileAttachments) == 0 {
+		return nil
+	}
+
+	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, converted.SlackAuthor)
+	puppet.UpdateInfo(userTeam, true, nil)
+	if puppet == nil {
+		portal.log.Warnfln("No puppet found for %s while batch filling!", converted.SlackAuthor)
+		return nil
+	}
+	intent := puppet.IntentFor(portal)
+
+	var fileEventIDs []id.EventID
+	for _, file := range converted.FileAttachments {
+		resp, err := portal.sendMatrixMessage(intent, event.EventMessage, file.Event, nil, ts.UnixMilli())
+		if err != nil {
+			portal.log.Errorfln("Error while backfilling attached file: %#v", file)
+			portal.log.Errorfln("Error details: %#v", err)
+			return err
+		}
+		fileEventIDs = append(fileEventIDs, resp.EventID)
+	}
+	var eventId id.EventID
+	if converted.Event != nil {
+		resp, err := portal.sendMatrixMessage(intent, event.EventMessage, converted.Event, nil, ts.UnixMilli())
+		if err != nil {
+			portal.log.Errorfln("Error while backfilling message: %#v", converted)
+			portal.log.Errorfln("Error details: %#v", err)
+			return err
+		}
+		eventId = resp.EventID
+	}
+
+	//for _, reaction := range converted.SlackReactions {
+	//	slackReaction := strings.Trim(reaction.Name, ":")
+	//	emoji := portal.bridge.GetEmoji(slackReaction, userTeam)
+	//
+	//	for _, user := range reaction.Users {
+	//		var content event.ReactionEventContent
+	//		content.RelatesTo = event.RelatesTo{
+	//			Type:    event.RelAnnotation,
+	//			EventID: eventId,
+	//			Key:     emoji,
+	//		}
+	//		extraContent := map[string]any{}
+	//		if strings.HasPrefix(emoji, "mxc://") {
+	//			extraContent["fi.mau.slack.reaction"] = map[string]any{
+	//				"name": slackReaction,
+	//				"mxc":  emoji,
+	//			}
+	//			if !portal.bridge.Config.Bridge.CustomEmojiReactions {
+	//				content.RelatesTo.Key = slackReaction
+	//			}
+	//		}
+	//		reactionPuppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, user)
+	//		if reactionPuppet == nil {
+	//			portal.log.Errorfln("Not backfilling reaction: can't find puppet for Slack user %s", user)
+	//			continue
+	//		}
+	//		reactionPuppet.UpdateInfo(userTeam, true, nil)
+	//		eventContent := event.Content{
+	//			Raw:    map[string]interface{}{},
+	//			Parsed: content,
+	//		}
+	//		if reactionPuppet.CustomMXID != "" {
+	//			eventContent.Raw[doublePuppetKey] = doublePuppetValue
+	//		}
+	//		intent := reactionPuppet.IntentFor(portal)
+	//		intent.SendMassagedMessageEvent(portal.MXID, event.EventReaction, eventContent, ts.UnixMilli())
+	//	}
+	//}
+
+	txn, err := portal.bridge.DB.Begin()
+	if err != nil {
+		return err
+	}
+
+	effectiveThreadTimeStamp := ""
+	if converted.SlackTimestamp != converted.SlackThreadTs {
+		effectiveThreadTimeStamp = converted.SlackThreadTs
+	}
+
+	for ix, file := range converted.FileAttachments {
+		attachment := portal.bridge.DB.Attachment.New()
+		attachment.Channel = portal.Key
+		attachment.SlackFileID = file.SlackFileID
+		attachment.SlackMessageID = converted.SlackTimestamp
+		attachment.MatrixEventID = fileEventIDs[ix]
+		attachment.SlackThreadID = effectiveThreadTimeStamp
+		attachment.Insert(txn)
+	}
+	if converted.Event != nil {
+		portal.log.Debugfln("Committing convertedMessage: %#v", converted)
+		portal.markMessageHandled(txn, converted.SlackTimestamp, effectiveThreadTimeStamp, eventId, converted.SlackAuthor)
+	}
+
+	portal.Update(txn)
+
+	err = txn.Commit()
+
+	return err
 }
 
 func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillState, portal *Portal) {
