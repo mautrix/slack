@@ -117,3 +117,16 @@ func (mq *MessageQuery) GetLast(key PortalKey) *Message {
 
 	return mq.New().Scan(row)
 }
+
+func (mq *MessageQuery) ClearAllForPortal(key PortalKey) error {
+	query := "DELETE FROM message WHERE team_id=$1 AND channel_id=$2"
+
+	resp, err := mq.db.Exec(query, key.TeamID, key.ChannelID)
+	if err != nil {
+		mq.log.Errorfln("failed to clear all message rows for portal: %#v", key)
+		return err
+	}
+	rowCount, _ := resp.RowsAffected()
+	mq.log.Debugfln("cleared %d message rows for portal: %#v", rowCount, key)
+	return nil
+}

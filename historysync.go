@@ -74,10 +74,36 @@ func (bridge *SlackBridge) handleHistorySyncsLoop() {
 }
 
 func (portal *Portal) traditionalBackfill(userTeam *database.UserTeam) (int, error) {
+	portal.log.Errorfln("Starting backfill for portal: %#v", portal.Key)
+	portal.backfillLock.Lock()
+	defer portal.backfillLock.Unlock()
+
+	// removing prior tracking records for this Team
+	txn, err := portal.bridge.DB.Begin()
+	if err == nil {
+		err = portal.bridge.DB.Message.ClearAllForPortal(portal.Key)
+	}
+	if err == nil {
+		err = txn.Commit()
+	}
+	if err != nil {
+		portal.log.Errorfln("Error while clearing existing messages for portal: %#v", err)
+		return 0, err
+	}
+
 	// collect only latest timestamp of each batch as ConversationBatch
 	batches, err := portal.collectBatchesForTraditionalBackfill(userTeam)
 	if err != nil {
 		return 0, err
+	}
+
+	// backfilling requires the bot to be present
+	if portal.IsPrivateChat() {
+		err := portal.bridge.Bot.EnsureJoined(portal.MXID, appservice.EnsureJoinedParams{BotOverride: portal.MainIntent().Client})
+		if err != nil {
+			portal.log.Errorln("Error while ensure join bot for backfilling IM")
+			return 0, err
+		}
 	}
 
 	threadCollection := &ThreadCollection{}
@@ -234,6 +260,10 @@ func (portal *Portal) traditionalBackfillSingleMessage(userTeam *database.UserTe
 		return nil
 	}
 	converted := portal.ConvertSlackMessage(userTeam, &message.Msg)
+	convertedContent := converted.Event
+	if convertedContent != nil && converted.SlackTimestamp != converted.SlackThreadTs {
+		portal.addThreadMetadata(convertedContent, converted.SlackThreadTs)
+	}
 	ts := parseSlackTimestamp(converted.SlackTimestamp)
 
 	converted.SlackReactions = message.Reactions
@@ -248,11 +278,13 @@ func (portal *Portal) traditionalBackfillSingleMessage(userTeam *database.UserTe
 		return nil
 	}
 	intent := puppet.IntentFor(portal)
+
 	var fileEventIDs []id.EventID
 	for _, file := range converted.FileAttachments {
 		resp, err := portal.sendMatrixMessage(intent, event.EventMessage, file.Event, nil, ts.UnixMilli())
 		if err != nil {
 			portal.log.Errorfln("Error while backfilling attached file: %#v", file)
+			portal.log.Errorfln("Error details: %#v", err)
 			return err
 		}
 		fileEventIDs = append(fileEventIDs, resp.EventID)
@@ -262,14 +294,59 @@ func (portal *Portal) traditionalBackfillSingleMessage(userTeam *database.UserTe
 		resp, err := portal.sendMatrixMessage(intent, event.EventMessage, converted.Event, nil, ts.UnixMilli())
 		if err != nil {
 			portal.log.Errorfln("Error while backfilling message: %#v", converted)
+			portal.log.Errorfln("Error details: %#v", err)
 			return err
 		}
 		eventId = resp.EventID
 	}
 
+	//for _, reaction := range converted.SlackReactions {
+	//	slackReaction := strings.Trim(reaction.Name, ":")
+	//	emoji := portal.bridge.GetEmoji(slackReaction, userTeam)
+	//
+	//	for _, user := range reaction.Users {
+	//		var content event.ReactionEventContent
+	//		content.RelatesTo = event.RelatesTo{
+	//			Type:    event.RelAnnotation,
+	//			EventID: eventId,
+	//			Key:     emoji,
+	//		}
+	//		extraContent := map[string]any{}
+	//		if strings.HasPrefix(emoji, "mxc://") {
+	//			extraContent["fi.mau.slack.reaction"] = map[string]any{
+	//				"name": slackReaction,
+	//				"mxc":  emoji,
+	//			}
+	//			if !portal.bridge.Config.Bridge.CustomEmojiReactions {
+	//				content.RelatesTo.Key = slackReaction
+	//			}
+	//		}
+	//		reactionPuppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, user)
+	//		if reactionPuppet == nil {
+	//			portal.log.Errorfln("Not backfilling reaction: can't find puppet for Slack user %s", user)
+	//			continue
+	//		}
+	//		reactionPuppet.UpdateInfo(userTeam, true, nil)
+	//		eventContent := event.Content{
+	//			Raw:    map[string]interface{}{},
+	//			Parsed: content,
+	//		}
+	//		if reactionPuppet.CustomMXID != "" {
+	//			eventContent.Raw[doublePuppetKey] = doublePuppetValue
+	//		}
+	//		intent := reactionPuppet.IntentFor(portal)
+	//		intent.SendMassagedMessageEvent(portal.MXID, event.EventReaction, eventContent, ts.UnixMilli())
+	//	}
+	//}
+
 	txn, err := portal.bridge.DB.Begin()
 	if err != nil {
 		return err
+	}
+
+	effectiveThreadTimeStamp := ""
+	if converted.SlackTimestamp != converted.SlackThreadTs {
+		effectiveThreadTimeStamp = converted.SlackThreadTs
 	}
 
 	for ix, file := range converted.FileAttachments {
@@ -278,12 +355,12 @@ func (portal *Portal) traditionalBackfillSingleMessage(userTeam *database.UserTe
 		attachment.SlackFileID = file.SlackFileID
 		attachment.SlackMessageID = converted.SlackTimestamp
 		attachment.MatrixEventID = fileEventIDs[ix]
-		attachment.SlackThreadID = converted.SlackThreadTs
+		attachment.SlackThreadID = effectiveThreadTimeStamp
 		attachment.Insert(txn)
 	}
 	if converted.Event != nil {
 		portal.log.Debugfln("Committing convertedMessage: %#v", converted)
-		portal.markMessageHandled(txn, converted.SlackTimestamp, converted.SlackThreadTs, eventId, converted.SlackAuthor)
+		portal.markMessageHandled(txn, converted.SlackTimestamp, effectiveThreadTimeStamp, eventId, converted.SlackAuthor)
 	}
 
 	portal.Update(txn)
@@ -653,7 +730,7 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 			Content:   event.Content{Parsed: &content},
 		})
 	}
-	
+
 	if len(req.Events) == 0 {
 		return nil, nil
 	}

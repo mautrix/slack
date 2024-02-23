@@ -518,8 +518,7 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 	user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: "Disconnected for unknown reason"})
 }
 
-func (user *User) connectTeam(userTeam *database.UserTeam) error {
-	user.log.Infofln("Connecting %s to Slack userteam %s (%s)", user.MXID, userTeam.Key, userTeam.TeamName)
+func (user *User) establishTeamClient(userTeam *database.UserTeam) {
 	slackOptions := []slack.Option{
 		slack.OptionLog(SlackgoLogger{user.log.Sub(fmt.Sprintf("SlackGo/%s", userTeam.Key))}),
 		//slack.OptionDebug(user.bridge.Config.Logging.PrintLevel <= 0),
@@ -528,6 +527,11 @@ func (user *User) connectTeam(userTeam *database.UserTeam) error {
 		slackOptions = append(slackOptions, slack.OptionCookie("d", userTeam.CookieToken))
 	}
 	userTeam.Client = slack.New(userTeam.Token, slackOptions...)
+}
+
+func (user *User) connectTeam(userTeam *database.UserTeam) error {
+	user.log.Infofln("Connecting %s to Slack userteam %s (%s)", user.MXID, userTeam.Key, userTeam.TeamName)
+	user.establishTeamClient(userTeam)
 
 	// test Slack connection before trying to go further
 	_, err := userTeam.Client.GetUserProfile(&slack.GetUserProfileParameters{})
@@ -631,6 +635,13 @@ func (user *User) SyncPortals(userTeam *database.UserTeam, force bool) error {
 			portal.CreateMatrixRoom(user, userTeam, &channel, true)
 		}
 	}
+
+	//for _, dbPortal := range portals {
+	//	portal := user.bridge.GetPortalByID(dbPortal.Key)
+	//	if portal.IsPrivateChat() {
+	//		portal.traditionalBackfill(userTeam)
+	//	}
+	//}
 
 	return nil
 }
