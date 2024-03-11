@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"maunium.net/go/mautrix/bridge/commands"
+	"maunium.net/go/mautrix/id"
 )
 
 type WrappedCommandEvent struct {
@@ -189,11 +190,21 @@ func fnSyncTeams(ce *WrappedCommandEvent) {
 var cmdDeletePortal = &commands.FullHandler{
 	Func:           wrapCommand(fnDeletePortal),
 	Name:           "delete-portal",
-	RequiresPortal: true,
 }
 
 func fnDeletePortal(ce *WrappedCommandEvent) {
-	ce.Portal.delete()
-	ce.Portal.cleanup(false)
+	if len(ce.Args) != 1 && ce.Portal == nil {
+		ce.Reply("**Usage**: $cmdprefix delete-portal <mxid>")
+		return
+	}
+	var portal *Portal
+	if len(ce.Args) == 1 {
+		portal = ce.Bridge.GetPortalByMXID(id.RoomID(ce.Args[0]))
+	} else {
+		portal = ce.Portal
+	}
+
+	portal.delete()
+	portal.cleanup(false)
 	ce.Log.Infofln("Deleted portal")
 }
