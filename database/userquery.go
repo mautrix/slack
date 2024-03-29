@@ -35,7 +35,7 @@ func (uq *UserQuery) New() *User {
 }
 
 func (uq *UserQuery) GetByMXID(userID id.UserID) *User {
-	query := `SELECT mxid, management_room FROM "user" WHERE mxid=$1`
+	query := `SELECT mxid, management_room, space_room FROM "user" WHERE mxid=$1`
 	row := uq.db.QueryRow(query, userID)
 	if row == nil {
 		return nil
@@ -45,7 +45,7 @@ func (uq *UserQuery) GetByMXID(userID id.UserID) *User {
 }
 
 func (uq *UserQuery) GetBySlackID(teamID, userID string) *User {
-	query := `SELECT u.mxid, u.management_room FROM "user" u` +
+	query := `SELECT u.mxid, u.management_room, u.space_room FROM "user" u` +
 		` INNER JOIN user_team ut ON u.mxid = ut.mxid` +
 		` WHERE ut.team_id=$1 AND ut.slack_id=$2`
 	row := uq.db.QueryRow(query, teamID, userID)
@@ -57,7 +57,7 @@ func (uq *UserQuery) GetBySlackID(teamID, userID string) *User {
 }
 
 func (uq *UserQuery) GetAll() []*User {
-	rows, err := uq.db.Query(`SELECT mxid, management_room FROM "user"`)
+	rows, err := uq.db.Query(`SELECT mxid, management_room, space_room FROM "user"`)
 	if err != nil || rows == nil {
 		return nil
 	}

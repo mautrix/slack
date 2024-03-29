@@ -32,6 +32,7 @@ type User struct {
 
 	MXID           id.UserID
 	ManagementRoom id.RoomID
+	SpaceRoom      id.RoomID
 
 	TeamsLock sync.Mutex
 	Teams     map[string]*UserTeam
@@ -47,7 +48,9 @@ func (user *User) loadTeams() {
 }
 
 func (u *User) Scan(row dbutil.Scannable) *User {
-	err := row.Scan(&u.MXID, &u.ManagementRoom)
+	var spaceRoom sql.NullString
+
+	err := row.Scan(&u.MXID, &u.ManagementRoom, &spaceRoom)
 	if err != nil {
 		if err != sql.ErrNoRows {
 			u.log.Errorln("Database scan failed:", err)
@@ -55,6 +58,8 @@ func (u *User) Scan(row dbutil.Scannable) *User {
 
 		return nil
 	}
+
+	u.SpaceRoom = id.RoomID(spaceRoom.String)
 
 	u.loadTeams()
 
@@ -79,9 +84,9 @@ func (u *User) SyncTeams() {
 }
 
 func (u *User) Insert() {
-	query := "INSERT INTO \"user\" (mxid, management_room) VALUES ($1, $2);"
+	query := "INSERT INTO \"user\" (mxid, management_room, space_room) VALUES ($1, $2, $3);"
 
-	_, err := u.db.Exec(query, u.MXID, u.ManagementRoom)
+	_, err := u.db.Exec(query, u.MXID, u.ManagementRoom, u.SpaceRoom)
 
 	if err != nil {
 		u.log.Warnfln("Failed to insert %s: %v", u.MXID, err)
@@ -91,9 +96,9 @@ func (u *User) Insert() {
 }
 
 func (u *User) Update() {
-	query := "UPDATE \"user\" SET management_room=$1 WHERE mxid=$2;"
+	query := "UPDATE \"user\" SET management_room=$1 AND space_room=$2 WHERE mxid=$3;"
 
-	_, err := u.db.Exec(query, u.ManagementRoom, u.MXID)
+	_, err := u.db.Exec(query, u.ManagementRoom, u.SpaceRoom, u.MXID)
 
 	if err != nil {
 		u.log.Warnfln("Failed to update %q: %v", u.MXID, err)

@@ -194,6 +194,7 @@ var cmdDeletePortal = &commands.FullHandler{
 
 func fnDeletePortal(ce *WrappedCommandEvent) {
 	ce.Portal.delete()
-	ce.Portal.cleanup(false)
+
+	ce.Bridge.cleanupRoom(ce.Portal.MainIntent(), ce.Portal.MXID, false, ce.Log)
 	ce.Log.Infofln("Deleted portal")
 }
