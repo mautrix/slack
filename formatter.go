@@ -1,5 +1,3 @@
-package main
-
 // mautrix-slack - A Matrix-Slack puppeting bridge.
 // Copyright (C) 2022 Tulir Asokan
 //
@@ -16,6 +14,8 @@ package main
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+package main
+
 import (
 	"fmt"
 	"regexp"
@@ -30,11 +30,12 @@ import (
 	"github.com/yuin/goldmark/renderer"
 	"github.com/yuin/goldmark/text"
 	goldmarkUtil "github.com/yuin/goldmark/util"
-	"go.mau.fi/mautrix-slack/database"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/format"
 	"maunium.net/go/mautrix/id"
 	"maunium.net/go/mautrix/util"
+
+	"go.mau.fi/mautrix-slack/database"
 )
 
 var escapeFixer = regexp.MustCompile(`\\(__[^_]|\*\*[^*])`)
