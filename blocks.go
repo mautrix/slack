@@ -8,6 +8,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/slack-go/slack"
 	"github.com/yuin/goldmark"
@@ -174,18 +175,45 @@ func (portal *Portal) renderSlackBlock(block slack.Block, userTeam *database.Use
 	case *slack.DividerBlock:
 		return "<hr>", false
 	case *slack.SectionBlock:
+		var htmlParts []string
 		if b.Text != nil {
-			return portal.renderSlackTextBlock(*b.Text), false
-		} else {
-			portal.log.Debugln("Unsupported Slack block: section block without a text object")
-			return "<i>Slack message contains unsupported elements.</i>", true
+			htmlParts = append(htmlParts, portal.renderSlackTextBlock(*b.Text))
 		}
+		if len(b.Fields) > 0 {
+			var fieldTable strings.Builder
+			fieldTable.WriteString("<table>")
+			for i, field := range b.Fields {
+				if i%2 == 0 {
+					fieldTable.WriteString("<tr>")
+				}
+				fieldTable.WriteString(fmt.Sprintf("<td>%s</td>", portal.mrkdwnToMatrixHtml(field.Text)))
+				if i%2 != 0 || i == len(b.Fields)-1 {
+					fieldTable.WriteString("</tr>")
+				}
+			}
+			fieldTable.WriteString("</table>")
+			htmlParts = append(htmlParts, fieldTable.String())
+		}
+		return strings.Join(htmlParts, "<br>"), false
 	case *slack.RichTextBlock:
 		var htmlText strings.Builder
 		for _, element := range b.Elements {
 			htmlText.WriteString(portal.renderSlackRichTextElement(len(b.Elements), element, userTeam))
 		}
 		return format.UnwrapSingleParagraph(htmlText.String()), false
+	case *slack.ContextBlock:
+		var htmlText strings.Builder
+		var unsupported bool = false
+		for _, element := range b.ContextElements.Elements {
+			if mrkdwnElem, ok := element.(*slack.TextBlockObject); ok {
+				htmlText.WriteString(fmt.Sprintf("<sup>%s</sup>", portal.mrkdwnToMatrixHtml(mrkdwnElem.Text)))
+			} else {
+				portal.log.Debugfln("Unsupported Slack block element: %s", element.MixedElementType())
+				htmlText.WriteString("<i>Slack message contains unsupported elements.</i>")
+				unsupported = true
+			}
+		}
+		return htmlText.String(), unsupported
 	default:
 		portal.log.Debugfln("Unsupported Slack block: %s", b.BlockType())
 		return "<i>Slack message contains unsupported elements.</i>", true
@@ -266,6 +294,10 @@ func (portal *Portal) SlackBlocksToMatrix(blocks slack.Blocks, attachments []sla
 
 	htmlText.WriteString(portal.blocksToHtml(blocks, false, userTeam))
 
+	if len(attachments) > 0 && htmlText.String() != "" {
+		htmlText.WriteString("<br>")
+	}
+
 	for _, attachment := range attachments {
 		if attachment.IsMsgUnfurl {
 			for _, message_block := range attachment.MessageBlocks {
@@ -273,6 +305,69 @@ func (portal *Portal) SlackBlocksToMatrix(blocks slack.Blocks, attachments []sla
 				htmlText.WriteString(fmt.Sprintf("<blockquote><b>%s</b><br>%s<a href=\"%s\"><i>%s</i></a><br></blockquote>",
 					attachment.AuthorName, renderedAttachment, attachment.FromURL, attachment.Footer))
 			}
+		} else if len(attachment.Blocks.BlockSet) > 0 {
+			for _, message_block := range attachment.Blocks.BlockSet {
+				renderedAttachment, _ := portal.renderSlackBlock(message_block, userTeam)
+				htmlText.WriteString(fmt.Sprintf("<blockquote>%s</blockquote>", renderedAttachment))
+			}
+		} else {
+			if len(attachment.Pretext) > 0 {
+				htmlText.WriteString(fmt.Sprintf("<p>%s</p>", portal.mrkdwnToMatrixHtml(attachment.Pretext)))
+			}
+			var attachParts []string
+			if len(attachment.AuthorName) > 0 {
+				if len(attachment.AuthorLink) > 0 {
+					attachParts = append(attachParts, fmt.Sprintf("<b><a href=\"%s\">%s</a></b>",
+						attachment.AuthorLink, attachment.AuthorName))
+				} else {
+					attachParts = append(attachParts, fmt.Sprintf("<b>%s</b>", attachment.AuthorName))
+				}
+			}
+			if len(attachment.Title) > 0 {
+				if len(attachment.TitleLink) > 0 {
+					attachParts = append(attachParts, fmt.Sprintf("<b><a href=\"%s\">%s</a></b>",
+						attachment.TitleLink, portal.mrkdwnToMatrixHtml(attachment.Title)))
+				} else {
+					attachParts = append(attachParts, fmt.Sprintf("<b>%s</b>", portal.mrkdwnToMatrixHtml(attachment.Title)))
+				}
+			}
+			if len(attachment.Text) > 0 {
+				attachParts = append(attachParts, portal.mrkdwnToMatrixHtml(attachment.Text))
+			} else if len(attachment.Fallback) > 0 {
+				attachParts = append(attachParts, portal.mrkdwnToMatrixHtml(attachment.Fallback))
+			}
+			htmlText.WriteString(fmt.Sprintf("<blockquote>%s", strings.Join(attachParts, "<br>")))
+			if len(attachment.Fields) > 0 {
+				var fieldBody string
+				var short = false
+				for _, field := range attachment.Fields {
+					if !short {
+						fieldBody += "<tr>"
+					}
+					fieldBody += fmt.Sprintf("<td><strong>%s</strong><br>%s</td>",
+						field.Title, portal.mrkdwnToMatrixHtml(field.Value))
+					short = !short && field.Short
+					if !short {
+						fieldBody += "</tr>"
+					}
+				}
+				htmlText.WriteString(fmt.Sprintf("<table>%s</table>", fieldBody))
+			} else {
+				htmlText.WriteString("<br>")
+			}
+			var footerParts []string
+			if len(attachment.Footer) > 0 {
+				footerParts = append(footerParts, portal.mrkdwnToMatrixHtml(attachment.Footer))
+			}
+			if len(attachment.Ts) > 0 {
+				ts, _ := attachment.Ts.Int64()
+				t := time.Unix(ts, 0)
+				footerParts = append(footerParts, t.Local().Format("Jan 02, 2006 15:04:05 MST"))
+			}
+			if len(footerParts) > 0 {
+				htmlText.WriteString(fmt.Sprintf("<sup>%s</sup>", strings.Join(footerParts, " | ")))
+			}
+			htmlText.WriteString("</blockquote>")
 		}
 	}
 
