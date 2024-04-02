@@ -775,12 +775,23 @@ func (portal *Portal) convertMatrixMessage(ctx context.Context, sender *User, us
 			portal.log.Errorfln("Failed to download matrix attachment: %v", err)
 			return nil, nil, "", errMediaDownloadFailed
 		}
+
+		var filename, caption string
+		if content.FileName == "" || content.FileName == content.Body {
+			filename = content.Body
+		} else {
+			filename = content.FileName
+			caption = content.Body
+		}
 		fileUpload = &slack.FileUploadParameters{
-			Filename:        content.Body,
+			Filename:        filename,
 			Filetype:        content.Info.MimeType,
 			Reader:          bytes.NewReader(data),
 			Channels:        []string{portal.Key.ChannelID},
 			ThreadTimestamp: threadTs,
+		}
+		if caption != "" {
+			fileUpload.InitialComment = caption
 		}
 		return nil, fileUpload, threadTs, nil
 	default:
