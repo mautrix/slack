@@ -435,6 +435,7 @@ func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
 		case *slack.LatencyReport:
 			user.log.Debugln("latency report:", event.Value)
 		case *slack.MessageEvent:
+			user.bridge.ZLog.Trace().Any("event_content", event).Msg("Raw slack message event")
 			key := database.NewPortalKey(userTeam.Key.TeamID, event.Channel)
 			portal := user.bridge.GetPortalByID(key)
 			if portal != nil {

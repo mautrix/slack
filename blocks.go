@@ -18,7 +18,6 @@ package main
 
 import (
 	"fmt"
-	"html"
 	"io/ioutil"
 	"net/http"
 	"path"
@@ -87,7 +86,7 @@ func (portal *Portal) mrkdwnToMatrixHtml(mrkdwn string) string {
 
 func (portal *Portal) renderSlackTextBlock(block slack.TextBlockObject) string {
 	if block.Type == slack.PlainTextType {
-		return html.EscapeString(html.UnescapeString(block.Text))
+		return event.TextToHTML(block.Text)
 	} else if block.Type == slack.MarkdownType {
 		return portal.mrkdwnToMatrixHtml(block.Text)
 	} else {
@@ -114,7 +113,7 @@ func (portal *Portal) renderRichTextSectionElements(elements []slack.RichTextSec
 					htmlText.WriteString("<code>")
 				}
 			}
-			htmlText.WriteString(html.EscapeString(html.UnescapeString(e.Text)))
+			htmlText.WriteString(event.TextToHTML(e.Text))
 			if e.Style != nil {
 				if e.Style.Code {
 					htmlText.WriteString("</code>")
@@ -153,7 +152,7 @@ func (portal *Portal) renderRichTextSectionElements(elements []slack.RichTextSec
 			} else {
 				linkText = e.URL
 			}
-			htmlText.WriteString(fmt.Sprintf(`<a href="%s">%s</a>`, e.URL, html.EscapeString(html.UnescapeString(linkText))))
+			htmlText.WriteString(fmt.Sprintf(`<a href="%s">%s</a>`, e.URL, event.TextToHTML(linkText)))
 		case *slack.RichTextSectionBroadcastElement:
 			htmlText.WriteString("@room")
 		case *slack.RichTextSectionEmojiElement:
