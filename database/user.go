@@ -96,7 +96,7 @@ func (u *User) Insert() {
 }
 
 func (u *User) Update() {
-	query := "UPDATE \"user\" SET management_room=$1 AND space_room=$2 WHERE mxid=$3;"
+	query := "UPDATE \"user\" SET management_room=$1, space_room=$2 WHERE mxid=$3;"
 
 	_, err := u.db.Exec(query, u.ManagementRoom, u.SpaceRoom, u.MXID)
 
