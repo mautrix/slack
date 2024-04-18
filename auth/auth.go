@@ -151,7 +151,7 @@ func signin(log log.Logger, userID, teamID, password string) (string, error) {
 	return data.Token, nil
 }
 
-func LoginPassword(l log.Logger, email, team, password string) (*Info, error) {
+func LoginPassword(email, team, password string) (*Info, error) {
 	log := log.Sub("auth")
 
 	teamID, err := findTeam(log, team)

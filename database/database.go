@@ -1,5 +1,5 @@
 // mautrix-slack - A Matrix-Slack puppeting bridge.
-// Copyright (C) 2022 Tulir Asokan
+// Copyright (C) 2024 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -17,16 +17,11 @@
 package database
 
 import (
-	"database/sql"
-	_ "embed"
-
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
-
-	"maunium.net/go/mautrix/util/dbutil"
+	"go.mau.fi/util/dbutil"
 
 	"go.mau.fi/mautrix-slack/database/upgrades"
-	"maunium.net/go/maulogger/v2"
 )
 
 type Database struct {
@@ -38,73 +33,24 @@ type Database struct {
 	Puppet     *PuppetQuery
 	Message    *MessageQuery
 	Reaction   *ReactionQuery
-	Attachment *AttachmentQuery
-	TeamInfo   *TeamInfoQuery
+	TeamPortal *TeamPortalQuery
 	Backfill   *BackfillQuery
 	Emoji      *EmojiQuery
 }
 
-func New(baseDB *dbutil.Database, log maulogger.Logger) *Database {
-	db := &Database{Database: baseDB}
-
+func New(db *dbutil.Database) *Database {
 	db.UpgradeTable = upgrades.Table
-	db.User = &UserQuery{
-		db:  db,
-		log: log.Sub("User"),
-	}
-	db.UserTeam = &UserTeamQuery{
-		db:  db,
-		log: log.Sub("UserTeam"),
-	}
-	db.Portal = &PortalQuery{
-		db:  db,
-		log: log.Sub("Portal"),
-	}
-	db.Puppet = &PuppetQuery{
-		db:  db,
-		log: log.Sub("Puppet"),
-	}
-	db.Message = &MessageQuery{
-		db:  db,
-		log: log.Sub("Message"),
-	}
-	db.Reaction = &ReactionQuery{
-		db:  db,
-		log: log.Sub("Reaction"),
-	}
-	db.Attachment = &AttachmentQuery{
-		db:  db,
-		log: log.Sub("Attachment"),
-	}
-	db.TeamInfo = &TeamInfoQuery{
-		db:  db,
-		log: log.Sub("TeamInfo"),
-	}
-	db.Backfill = &BackfillQuery{
-		db:  db,
-		log: log.Sub("Backfill"),
-	}
-	db.Emoji = &EmojiQuery{
-		db:  db,
-		log: log.Sub("Emoji"),
-	}
+	return &Database{
+		Database: db,
 
-	return db
-}
-
-func strPtr(val string) *string {
-	if val == "" {
-		return nil
-	}
-	return &val
-}
-
-func sqlNullString(val string) (ret sql.NullString) {
-	if val == "" {
-		return ret
-	} else {
-		ret.String = val
-		ret.Valid = true
-		return ret
+		User:       &UserQuery{dbutil.MakeQueryHelper(db, newUser)},
+		UserTeam:   &UserTeamQuery{dbutil.MakeQueryHelper(db, newUserTeam)},
+		Portal:     &PortalQuery{dbutil.MakeQueryHelper(db, newPortal)},
+		Puppet:     &PuppetQuery{dbutil.MakeQueryHelper(db, newPuppet)},
+		Message:    &MessageQuery{dbutil.MakeQueryHelper(db, newMessage)},
+		Reaction:   &ReactionQuery{dbutil.MakeQueryHelper(db, newReaction)},
+		TeamPortal: &TeamPortalQuery{dbutil.MakeQueryHelper(db, newTeamPortal)},
+		Backfill:   &BackfillQuery{dbutil.MakeQueryHelper(db, newBackfill)},
+		Emoji:      &EmojiQuery{dbutil.MakeQueryHelper(db, newEmoji)},
 	}
 }

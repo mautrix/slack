@@ -1,5 +1,5 @@
 // mautrix-slack - A Matrix-Slack puppeting bridge.
-// Copyright (C) 2022 Tulir Asokan
+// Copyright (C) 2024 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -17,103 +17,59 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"net"
 	"net/http"
-	"net/url"
 	"strings"
-	"time"
 
-	"github.com/gorilla/websocket"
-	log "maunium.net/go/maulogger/v2"
-
+	"github.com/beeper/libserv/pkg/requestlog"
+	"github.com/gorilla/mux"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/hlog"
+	"maunium.net/go/mautrix"
+	"maunium.net/go/mautrix/bridge/bridgeconfig"
 	"maunium.net/go/mautrix/bridge/status"
 	"maunium.net/go/mautrix/id"
 )
 
-const (
-	SecWebSocketProtocol = "com.gitlab.beeper.slack"
-)
-
 type ProvisioningAPI struct {
 	bridge *SlackBridge
-	log    log.Logger
+	log    zerolog.Logger
 }
 
 func newProvisioningAPI(br *SlackBridge) *ProvisioningAPI {
-	p := &ProvisioningAPI{
+	prov := &ProvisioningAPI{
 		bridge: br,
-		log:    br.Log.Sub("Provisioning"),
+		log:    br.ZLog.With().Str("component", "provisioning").Logger(),
 	}
 
-	prefix := br.Config.Bridge.Provisioning.Prefix
+	prov.log.Debug().Str("base_path", prov.bridge.Config.Bridge.Provisioning.Prefix).Msg("Enabling provisioning API")
+	r := br.AS.Router.PathPrefix(br.Config.Bridge.Provisioning.Prefix).Subrouter()
 
-	p.log.Debugln("Enabling provisioning API at", prefix)
+	r.Use(hlog.NewHandler(prov.log))
+	r.Use(requestlog.AccessLogger(true))
+	r.Use(prov.authMiddleware)
 
-	r := br.AS.Router.PathPrefix(prefix).Subrouter()
+	r.HandleFunc("/v1/ping", prov.legacyPing).Methods(http.MethodGet)
+	r.HandleFunc("/v1/login", prov.legacyLogin).Methods(http.MethodPost)
+	r.HandleFunc("/v1/logout", prov.legacyLogout).Methods(http.MethodPost)
 
-	r.Use(p.authMiddleware)
+	r.HandleFunc("/v2/ping", prov.ping).Methods(http.MethodGet)
+	r.HandleFunc("/v2/login", prov.login).Methods(http.MethodPost)
+	r.HandleFunc("/v2/logout/{teamID}", prov.logout).Methods(http.MethodPost)
 
-	r.HandleFunc("/v1/ping", p.ping).Methods(http.MethodGet)
-	r.HandleFunc("/v1/login", p.login).Methods(http.MethodPost)
-	r.HandleFunc("/v1/logout", p.logout).Methods(http.MethodPost)
-	p.bridge.AS.Router.HandleFunc("/_matrix/app/com.beeper.asmux/ping", p.BridgeStatePing).Methods(http.MethodPost)
-	p.bridge.AS.Router.HandleFunc("/_matrix/app/com.beeper.bridge_state", p.BridgeStatePing).Methods(http.MethodPost)
-
-	return p
+	return prov
 }
 
-func jsonResponse(w http.ResponseWriter, status int, response interface{}) {
+func jsonResponse(w http.ResponseWriter, status int, response any) {
 	w.Header().Add("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(response)
 }
 
-// Response structs
-type Response struct {
-	Success bool   `json:"success"`
-	Status  string `json:"status"`
-}
-
-type Error struct {
-	Success bool   `json:"success"`
-	Error   string `json:"error"`
-	ErrCode string `json:"errcode"`
-}
-
-// Wrapped http.ResponseWriter to capture the status code
-type responseWrap struct {
-	http.ResponseWriter
-	statusCode int
-}
-
-var _ http.Hijacker = (*responseWrap)(nil)
-
-func (rw *responseWrap) WriteHeader(statusCode int) {
-	rw.ResponseWriter.WriteHeader(statusCode)
-	rw.statusCode = statusCode
-}
-
-func (rw *responseWrap) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	hijacker, ok := rw.ResponseWriter.(http.Hijacker)
-	if !ok {
-		return nil, nil, errors.New("response does not implement http.Hijacker")
-	}
-	return hijacker.Hijack()
-}
-
-// Middleware
 func (p *ProvisioningAPI) authMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-
-		// Special case the login endpoint
-		auth = strings.TrimPrefix(auth, "Bearer ")
-
+		auth := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if auth != p.bridge.Config.Bridge.Provisioning.SharedSecret {
 			jsonResponse(w, http.StatusForbidden, map[string]interface{}{
 				"error":   "Invalid auth token",
@@ -125,172 +81,146 @@ func (p *ProvisioningAPI) authMiddleware(h http.Handler) http.Handler {
 
 		userID := r.URL.Query().Get("user_id")
 		user := p.bridge.GetUserByMXID(id.UserID(userID))
+		if user != nil {
+			hlog.FromRequest(r).UpdateContext(func(c zerolog.Context) zerolog.Context {
+				return c.Stringer("user_id", user.MXID)
+			})
+		}
 
-		start := time.Now()
-		wWrap := &responseWrap{w, 200}
-		h.ServeHTTP(wWrap, r.WithContext(context.WithValue(r.Context(), "user", user)))
-		duration := time.Since(start).Seconds()
-
-		p.log.Infofln("%s %s from %s took %.2f seconds and returned status %d", r.Method, r.URL.Path, user.MXID, duration, wWrap.statusCode)
+		h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), "user", user)))
 	})
 }
 
-// websocket upgrader
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
-	Subprotocols: []string{SecWebSocketProtocol},
+type RespPingSlackTeam struct {
+	ID        string        `json:"id"`
+	Name      string        `json:"name"`
+	Subdomain string        `json:"subdomain"`
+	SpaceMXID id.RoomID     `json:"space_mxid"`
+	AvatarURL id.ContentURI `json:"avatar_url"`
 }
 
-// Handlers
+type RespPingSlackUser struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+}
+
+type RespPingSlackEntry struct {
+	Team RespPingSlackTeam `json:"team"`
+	User RespPingSlackUser `json:"user"`
+
+	Connected bool `json:"connected"`
+	LoggedIn  bool `json:"logged_in"`
+}
+
+type RespPing struct {
+	MXID           id.UserID            `json:"mxid"`
+	ManagementRoom id.RoomID            `json:"management_room"`
+	SpaceRoom      id.RoomID            `json:"space_room"`
+	Admin          bool                 `json:"admin"`
+	Whitelisted    bool                 `json:"whitelisted"`
+	SlackTeams     []RespPingSlackEntry `json:"slack_teams"`
+}
+
 func (p *ProvisioningAPI) ping(w http.ResponseWriter, r *http.Request) {
 	user := r.Context().Value("user").(*User)
 
-	puppets := []interface{}{}
-	for _, team := range user.GetLoggedInTeams() {
-		puppets = append(puppets, map[string]interface{}{
-			"puppetId":   team.Key.String(),
-			"puppetMxid": user.MXID,
-			"userId":     team.Key.SlackID,
-			"data": map[string]interface{}{
-				"team": map[string]string{
-					"id":   team.Key.TeamID,
-					"name": team.TeamName,
-				},
-				"self": map[string]string{
-					"id":   team.Key.String(),
-					"name": team.SlackEmail,
-				},
+	p.bridge.userAndTeamLock.Lock()
+	teams := make([]RespPingSlackEntry, 0, len(user.teams))
+	for _, ut := range user.teams {
+		if ut.Token == "" {
+			return
+		}
+		teams = append(teams, RespPingSlackEntry{
+			Team: RespPingSlackTeam{
+				ID:        ut.Team.ID,
+				Name:      ut.Team.Name,
+				Subdomain: ut.Team.Domain,
+				SpaceMXID: ut.Team.MXID,
+				AvatarURL: ut.Team.AvatarMXC,
 			},
+			User: RespPingSlackUser{
+				ID:    ut.UserID,
+				Email: ut.Email,
+			},
+			Connected: ut.RTM != nil,
+			LoggedIn:  ut.Token != "",
 		})
 	}
+	p.bridge.userAndTeamLock.Unlock()
 
-	user.Lock()
+	jsonResponse(w, http.StatusOK, &RespPing{
+		MXID:           user.MXID,
+		ManagementRoom: user.ManagementRoom,
+		SpaceRoom:      user.SpaceRoom,
+		Admin:          user.PermissionLevel >= bridgeconfig.PermissionLevelAdmin,
+		Whitelisted:    user.PermissionLevel >= bridgeconfig.PermissionLevelUser,
+		SlackTeams:     teams,
+	})
+}
 
-	resp := map[string]interface{}{
-		"puppets":         puppets,
-		"management_room": user.ManagementRoom,
-		"mxid":            user.MXID,
+type ReqLogin struct {
+	Token       string `json:"token"`
+	CookieToken string `json:"cookie_token"`
+}
+
+type RespLogin struct {
+	TeamID    string `json:"team_id"`
+	TeamName  string `json:"team_name"`
+	UserID    string `json:"user_id"`
+	UserEmail string `json:"user_email"`
+}
+
+func (p *ProvisioningAPI) login(w http.ResponseWriter, r *http.Request) {
+	user := r.Context().Value("user").(*User)
+
+	var req ReqLogin
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		jsonResponse(w, http.StatusBadRequest, mautrix.RespError{
+			Err:     "Invalid request body",
+			ErrCode: "M_NOT_JSON",
+		})
+		return
+	} else if req.Token == "" {
+		jsonResponse(w, http.StatusBadRequest, mautrix.RespError{
+			Err:     "Missing `token` field in request body",
+			ErrCode: "M_BAD_JSON",
+		})
+		return
 	}
 
-	user.Unlock()
-
+	authInfo, err := user.TokenLogin(r.Context(), req.Token, req.CookieToken)
+	if err != nil {
+		hlog.FromRequest(r).Err(err).Msg("Failed to do token login")
+		// TODO proper error messages for known types
+		jsonResponse(w, http.StatusInternalServerError, &mautrix.RespError{
+			Err:     "Failed to log in",
+			ErrCode: "M_UNKNOWN",
+		})
+		return
+	}
+	resp := &RespLogin{
+		TeamID:    authInfo.TeamID,
+		TeamName:  authInfo.TeamName,
+		UserID:    authInfo.UserID,
+		UserEmail: authInfo.UserEmail,
+	}
+	hlog.FromRequest(r).Info().Any("auth_info", resp).Msg("Token login successful")
 	jsonResponse(w, http.StatusOK, resp)
 }
 
 func (p *ProvisioningAPI) logout(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("user_id")
-	user := p.bridge.GetUserByMXID(id.UserID(userID))
+	user := r.Context().Value("user").(*User)
 
-	slackTeamID := strings.Split(r.URL.Query().Get("slack_team_id"), "-")[0] // in case some client sends userTeam instead of team ID
-
-	userTeam := user.GetUserTeam(slackTeamID)
-	if userTeam == nil || !userTeam.IsLoggedIn() {
-		jsonResponse(w, http.StatusNotFound, Error{
-			Error:   "Not logged in",
-			ErrCode: "Not logged in",
-		})
-
-		return
-	}
-
-	err := user.LogoutUserTeam(userTeam)
-
-	if err != nil {
-		user.log.Warnln("Error while logging out:", err)
-
-		jsonResponse(w, http.StatusInternalServerError, Error{
-			Error:   fmt.Sprintf("Unknown error while logging out: %v", err),
-			ErrCode: err.Error(),
-		})
-
-		return
-	}
-
-	jsonResponse(w, http.StatusOK, Response{true, "Logged out successfully."})
-}
-
-func (p *ProvisioningAPI) login(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("user_id")
-	user := p.bridge.GetUserByMXID(id.UserID(userID))
-
-	var data struct {
-		Token       string
-		Cookietoken string
-	}
-
-	err := json.NewDecoder(r.Body).Decode(&data)
-	if err != nil {
-		jsonResponse(w, http.StatusBadRequest, Error{
-			Error:   "Invalid JSON",
-			ErrCode: "Invalid JSON",
+	userTeam := user.GetTeam(strings.ToUpper(mux.Vars(r)["team_id"]))
+	if userTeam == nil || userTeam.Token == "" {
+		jsonResponse(w, http.StatusNotFound, &mautrix.RespError{
+			Err:     "Not logged into that team",
+			ErrCode: "M_NOT_FOUND",
 		})
 		return
 	}
 
-	if data.Token == "" {
-		jsonResponse(w, http.StatusBadRequest, Error{
-			Error:   "Missing field token",
-			ErrCode: "Missing field token",
-		})
-		return
-	}
-
-	if data.Cookietoken == "" {
-		jsonResponse(w, http.StatusBadRequest, Error{
-			Error:   "Missing field cookietoken",
-			ErrCode: "Missing field cookietoken",
-		})
-		return
-	}
-
-	cookieToken, _ := url.PathUnescape(data.Cookietoken)
-	info, err := user.TokenLogin(data.Token, cookieToken)
-	if err != nil {
-		jsonResponse(w, http.StatusNotAcceptable, Error{
-			Error:   fmt.Sprintf("Slack login error: %s", err),
-			ErrCode: err.Error(),
-		})
-
-		return
-	}
-
-	jsonResponse(w, http.StatusCreated,
-		map[string]interface{}{
-			"success": true,
-			"teamid":  info.TeamID,
-			"userid":  info.UserID,
-		})
-}
-
-func (p *ProvisioningAPI) BridgeStatePing(w http.ResponseWriter, r *http.Request) {
-	if !p.bridge.AS.CheckServerToken(w, r) {
-		return
-	}
-	userID := r.URL.Query().Get("user_id")
-	user := p.bridge.GetUserByMXID(id.UserID(userID))
-	var global status.BridgeState
-	global.StateEvent = status.StateRunning
-	global = global.Fill(nil)
-
-	resp := status.GlobalBridgeState{
-		BridgeState:  global,
-		RemoteStates: map[string]status.BridgeState{},
-	}
-
-	userTeams := user.GetLoggedInTeams()
-	for _, userTeam := range userTeams {
-		var remote status.BridgeState
-		if userTeam.IsLoggedIn() {
-			remote.StateEvent = status.StateConnected
-		} else {
-			remote.StateEvent = status.StateLoggedOut
-		}
-		remote = remote.Fill(userTeam)
-		resp.RemoteStates[remote.RemoteID] = remote
-	}
-
-	user.log.Debugfln("Responding bridge state in bridge status endpoint: %+v", resp)
-	jsonResponse(w, http.StatusOK, &resp)
+	userTeam.Logout(r.Context(), status.BridgeState{StateEvent: status.StateLoggedOut})
+	jsonResponse(w, http.StatusOK, struct{}{})
 }

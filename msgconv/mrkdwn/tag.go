@@ -1,5 +1,5 @@
 // mautrix-slack - A Matrix-Slack puppeting bridge.
-// Copyright (C) 2022 Tulir Asokan
+// Copyright (C) 2024 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -14,116 +14,26 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package main
+package mrkdwn
 
 import (
+	"context"
 	"fmt"
+	"html"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/slack-go/slack"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer"
 	"github.com/yuin/goldmark/text"
 	goldmarkUtil "github.com/yuin/goldmark/util"
-	"maunium.net/go/mautrix/event"
-	"maunium.net/go/mautrix/format"
 	"maunium.net/go/mautrix/id"
-	"maunium.net/go/mautrix/util"
-
-	"go.mau.fi/mautrix-slack/database"
 )
-
-var escapeFixer = regexp.MustCompile(`\\(__[^_]|\*\*[^*])`)
-
-const mentionedUsersContextKey = "fi.mau.slack.mentioned_users"
-
-func (portal *Portal) renderSlackMarkdown(text string) *event.MessageEventContent {
-	text = replaceShortcodesWithEmojis(text)
-
-	text = escapeFixer.ReplaceAllStringFunc(text, func(s string) string {
-		return s[:2] + `\` + s[2:]
-	})
-
-	mdRenderer := goldmark.New(
-		format.Extensions, format.HTMLOptions,
-		goldmark.WithExtensions(&SlackTag{portal}),
-	)
-
-	content := format.RenderMarkdownCustom(text, mdRenderer)
-	return &content
-}
-
-func (portal *Portal) renderSlackFile(file slack.File) event.MessageEventContent {
-	content := event.MessageEventContent{
-		Info: &event.FileInfo{
-			MimeType: file.Mimetype,
-			Size:     int(file.Size),
-		},
-	}
-	if file.OriginalW != 0 {
-		content.Info.Width = file.OriginalW
-	}
-	if file.OriginalH != 0 {
-		content.Info.Height = file.OriginalH
-	}
-	if file.Name != "" {
-		content.Body = file.Name
-	} else {
-		mimeClass := strings.Split(file.Mimetype, "/")[0]
-		switch mimeClass {
-		case "application":
-			content.Body = "file"
-		default:
-			content.Body = mimeClass
-		}
-
-		content.Body += util.ExtensionFromMimetype(file.Mimetype)
-	}
-
-	if strings.HasPrefix(file.Mimetype, "image") {
-		content.MsgType = event.MsgImage
-	} else if strings.HasPrefix(file.Mimetype, "video") {
-		content.MsgType = event.MsgVideo
-	} else if strings.HasPrefix(file.Mimetype, "audio") {
-		content.MsgType = event.MsgAudio
-	} else {
-		content.MsgType = event.MsgFile
-	}
-
-	return content
-}
-
-func (bridge *SlackBridge) ParseMatrix(html string) string {
-	ctx := format.NewContext()
-	return bridge.MatrixHTMLParser.Parse(html, ctx)
-}
-
-func NewParser(bridge *SlackBridge) *format.HTMLParser {
-	return &format.HTMLParser{
-		TabsToSpaces: 4,
-		Newline:      "\n",
-
-		PillConverter: func(displayname, mxid, eventID string, _ format.Context) string {
-			if mxid[0] == '@' {
-				_, user, success := bridge.ParsePuppetMXID(id.UserID(mxid))
-				if success {
-					return fmt.Sprintf("<@%s>", strings.ToUpper(user))
-				}
-			}
-			return fmt.Sprintf("@%s", displayname)
-		},
-		BoldConverter:           func(text string, _ format.Context) string { return fmt.Sprintf("*%s*", text) },
-		ItalicConverter:         func(text string, _ format.Context) string { return fmt.Sprintf("_%s_", text) },
-		StrikethroughConverter:  func(text string, _ format.Context) string { return fmt.Sprintf("~%s~", text) },
-		MonospaceConverter:      func(text string, _ format.Context) string { return fmt.Sprintf("`%s`", text) },
-		MonospaceBlockConverter: func(text, language string, _ format.Context) string { return fmt.Sprintf("```%s```", text) },
-	}
-}
 
 type astSlackTag struct {
 	ast.BaseInline
@@ -146,6 +56,8 @@ type astSlackUserMention struct {
 	astSlackTag
 
 	userID string
+	mxid   id.UserID
+	name   string
 }
 
 func (n *astSlackUserMention) String() string {
@@ -159,7 +71,11 @@ func (n *astSlackUserMention) String() string {
 type astSlackChannelMention struct {
 	astSlackTag
 
-	channelID string
+	serverName string
+	channelID  string
+	mxid       id.RoomID
+	alias      id.RoomAlias
+	name       string
 }
 
 func (n *astSlackChannelMention) String() string {
@@ -190,8 +106,6 @@ type astSlackSpecialMention struct {
 	content string
 }
 
-var slackSpecialMentionRegex = regexp.MustCompile(`<(#|@|!|)([^|>]+)(\|([^|>]*))?>`)
-
 func (n *astSlackSpecialMention) String() string {
 	if n.label != "" {
 		return fmt.Sprintf("<!%s|%s>", n.content, n.label)
@@ -200,15 +114,24 @@ func (n *astSlackSpecialMention) String() string {
 	}
 }
 
-type slackTagParser struct{}
+type Params struct {
+	ServerName     string
+	GetUserInfo    func(ctx context.Context, userID string) (mxid id.UserID, name string)
+	GetChannelInfo func(ctx context.Context, channelID string) (mxid id.RoomID, alias id.RoomAlias, name string)
+}
+
+type slackTagParser struct {
+	*Params
+}
 
 // Regex matching Slack docs at https://api.slack.com/reference/surfaces/formatting#retrieving-messages
 var slackTagRegex = regexp.MustCompile(`<(#|@|!|)([^|>]+)(\|([^|>]*))?>`)
-var defaultSlackTagParser = &slackTagParser{}
 
 func (s *slackTagParser) Trigger() []byte {
 	return []byte{'<'}
 }
+
+var ContextKeyContext = parser.NewContextKey()
 
 func (s *slackTagParser) Parse(parent ast.Node, block text.Reader, pc parser.Context) ast.Node {
 	//before := block.PrecendingCharacter()
@@ -224,12 +147,16 @@ func (s *slackTagParser) Parse(parent ast.Node, block text.Reader, pc parser.Con
 	content := string(match[2])
 	text := string(match[4])
 
+	ctx := pc.Get(ContextKeyContext).(context.Context)
+
 	tag := astSlackTag{label: text}
 	switch sigil {
 	case "@":
-		return &astSlackUserMention{astSlackTag: tag, userID: content}
+		mxid, name := s.GetUserInfo(ctx, content)
+		return &astSlackUserMention{astSlackTag: tag, userID: content, mxid: mxid, name: name}
 	case "#":
-		return &astSlackChannelMention{astSlackTag: tag, channelID: content}
+		mxid, alias, name := s.GetChannelInfo(ctx, content)
+		return &astSlackChannelMention{astSlackTag: tag, channelID: content, serverName: s.ServerName, mxid: mxid, alias: alias, name: name}
 	case "!":
 		return &astSlackSpecialMention{astSlackTag: tag, content: content}
 	case "":
@@ -243,12 +170,32 @@ func (s *slackTagParser) CloseBlock(parent ast.Node, pc parser.Context) {
 	// nothing to do
 }
 
-type slackTagHTMLRenderer struct {
-	portal *Portal
-}
+type slackTagHTMLRenderer struct{}
+
+var defaultSlackTagHTMLRenderer = &slackTagHTMLRenderer{}
 
 func (r *slackTagHTMLRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(astKindSlackTag, r.renderSlackTag)
+}
+
+func UserMentionToHTML(out io.Writer, userID string, mxid id.UserID, name string) {
+	if mxid != "" {
+		_, _ = fmt.Fprintf(out, `<a href="%s">%s</a>`, mxid.URI().MatrixToURL(), html.EscapeString(name))
+	} else {
+		_, _ = fmt.Fprintf(out, "&lt;@%s&gt;", userID)
+	}
+}
+
+func RoomMentionToHTML(out io.Writer, channelID string, mxid id.RoomID, alias id.RoomAlias, name, serverName string) {
+	if alias != "" {
+		_, _ = fmt.Fprintf(out, `<a href="%s">%s</a>`, alias.URI().MatrixToURL(), html.EscapeString(name))
+	} else if mxid != "" {
+		_, _ = fmt.Fprintf(out, `<a href="%s">%s</a>`, mxid.URI(serverName).MatrixToURL(), html.EscapeString(name))
+	} else if name != "" {
+		_, _ = fmt.Fprintf(out, "%s", name)
+	} else {
+		_, _ = fmt.Fprintf(out, "&lt;#%s&gt;", channelID)
+	}
 }
 
 func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source []byte, n ast.Node, entering bool) (status ast.WalkStatus, err error) {
@@ -258,31 +205,10 @@ func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source [
 	}
 	switch node := n.(type) {
 	case *astSlackUserMention:
-		puppet := r.portal.bridge.GetPuppetByID(r.portal.Key.TeamID, node.userID)
-		if puppet != nil && puppet.GetCustomOrGhostMXID() != "" {
-			_, _ = fmt.Fprintf(w, `<a href="https://matrix.to/#/%s">%s</a>`, puppet.GetCustomOrGhostMXID(), puppet.Name)
-		} else { // TODO: get puppet info if not exist
-			if node.label != "" {
-				_, _ = fmt.Fprintf(w, `@%s`, node.label)
-			} else {
-				_, _ = fmt.Fprintf(w, `@%s`, node.userID)
-			}
-		}
+		UserMentionToHTML(w, node.userID, node.mxid, node.name)
 		return
 	case *astSlackChannelMention:
-		portal := r.portal.bridge.DB.Portal.GetByID(database.PortalKey{
-			TeamID:    r.portal.Key.TeamID,
-			ChannelID: node.channelID,
-		})
-		if portal != nil && portal.MXID != "" {
-			_, _ = fmt.Fprintf(w, `<a href="https://matrix.to/#/%s?via=%s">%s</a>`, portal.MXID, r.portal.bridge.AS.HomeserverDomain, portal.Name)
-		} else { // TODO: get portal info if not exist
-			if node.label != "" {
-				_, _ = fmt.Fprintf(w, `#%s`, node.label)
-			} else {
-				_, _ = fmt.Fprintf(w, `#%s`, node.channelID)
-			}
-		}
+		RoomMentionToHTML(w, node.channelID, node.mxid, node.alias, node.name, node.serverName)
 		return
 	case *astSlackSpecialMention:
 		parts := strings.Split(node.content, "^")
@@ -311,9 +237,9 @@ func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source [
 			}
 
 			if len(parts) > 3 {
-				_, _ = fmt.Fprintf(w, `<a href="%s">%s</a>`, parts[3], parts[2])
+				_, _ = fmt.Fprintf(w, `<a href="%s">%s</a>`, html.EscapeString(parts[3]), html.EscapeString(parts[2]))
 			} else {
-				_, _ = w.WriteString(parts[2])
+				_, _ = w.WriteString(html.EscapeString(parts[2]))
 			}
 			return
 		case "channel", "everyone", "here":
@@ -330,7 +256,7 @@ func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source [
 		if label == "" {
 			label = node.url
 		}
-		_, _ = fmt.Fprintf(w, `<a href="%s">%s</a>`, node.url, label)
+		_, _ = fmt.Fprintf(w, `<a href="%s">%s</a>`, html.EscapeString(node.url), html.EscapeString(label))
 		return
 	}
 	stringifiable, ok := n.(fmt.Stringer)
@@ -342,15 +268,15 @@ func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source [
 	return
 }
 
-type SlackTag struct {
-	Portal *Portal
+type slackTag struct {
+	*Params
 }
 
-func (e *SlackTag) Extend(m goldmark.Markdown) {
+func (e *slackTag) Extend(m goldmark.Markdown) {
 	m.Parser().AddOptions(parser.WithInlineParsers(
-		goldmarkUtil.Prioritized(defaultSlackTagParser, 150),
+		goldmarkUtil.Prioritized(&slackTagParser{Params: e.Params}, 150),
 	))
 	m.Renderer().AddOptions(renderer.WithNodeRenderers(
-		goldmarkUtil.Prioritized(&slackTagHTMLRenderer{e.Portal}, 150),
+		goldmarkUtil.Prioritized(defaultSlackTagHTMLRenderer, 150),
 	))
 }

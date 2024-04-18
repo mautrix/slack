@@ -1,5 +1,6 @@
 // mautrix-slack - A Matrix-Slack puppeting bridge.
 // Copyright (C) 2022 Max Sandholm
+// Copyright (C) 2024 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -17,13 +18,14 @@
 package main
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"sync"
+	"time"
+
+	"github.com/rs/zerolog"
 
 	"github.com/slack-go/slack"
-
-	log "maunium.net/go/maulogger/v2"
 
 	"go.mau.fi/mautrix-slack/database"
 
@@ -33,89 +35,96 @@ import (
 )
 
 type Team struct {
-	*database.TeamInfo
+	*database.TeamPortal
 
 	bridge *SlackBridge
-	log    log.Logger
+	log    zerolog.Logger
 
-	roomCreateLock sync.Mutex
+	roomCreateLock  sync.Mutex
+	emojiLock       sync.Mutex
+	lastEmojiResync time.Time
 }
 
-func (br *SlackBridge) loadTeam(dbTeam *database.TeamInfo, id string, createIfNotExist bool) *Team {
+func (br *SlackBridge) loadTeam(ctx context.Context, dbTeam *database.TeamPortal, teamID *string) *Team {
 	if dbTeam == nil {
-		if id == "" || !createIfNotExist {
+		if teamID == nil {
 			return nil
 		}
 
-		dbTeam = br.DB.TeamInfo.New()
-		dbTeam.TeamID = id
-		dbTeam.Upsert()
+		dbTeam = br.DB.TeamPortal.New()
+		dbTeam.ID = *teamID
+		err := dbTeam.Insert(ctx)
+		if err != nil {
+			br.ZLog.Err(err).Str("team_id", *teamID).Msg("Failed to insert new team")
+			return nil
+		}
 	}
 
-	team := br.NewTeam(dbTeam)
+	team := br.newTeam(dbTeam)
 
-	br.teamsByID[team.TeamID] = team
-	if team.SpaceRoom != "" {
-		br.teamsByMXID[team.SpaceRoom] = team
+	br.teamsByID[team.ID] = team
+	if team.MXID != "" {
+		br.teamsByMXID[team.MXID] = team
 	}
 
 	return team
 }
 
+func (br *SlackBridge) newTeam(dbTeam *database.TeamPortal) *Team {
+	team := &Team{
+		TeamPortal: dbTeam,
+		bridge:     br,
+	}
+	team.updateLogger()
+	return team
+}
+
+func (team *Team) updateLogger() {
+	withLog := team.bridge.ZLog.With().Str("team_id", team.ID)
+	if team.MXID != "" {
+		withLog = withLog.Stringer("space_room_id", team.MXID)
+	}
+	team.log = withLog.Logger()
+}
+
 func (br *SlackBridge) GetTeamByMXID(mxid id.RoomID) *Team {
-	br.teamsLock.Lock()
-	defer br.teamsLock.Unlock()
+	br.userAndTeamLock.Lock()
+	defer br.userAndTeamLock.Unlock()
 
 	portal, ok := br.teamsByMXID[mxid]
 	if !ok {
-		return br.loadTeam(br.DB.TeamInfo.GetByMXID(mxid), "", false)
+		ctx := context.TODO()
+		dbTeam, err := br.DB.TeamPortal.GetByMXID(ctx, mxid)
+		if err != nil {
+			br.ZLog.Err(err).Str("mxid", mxid.String()).Msg("Failed to get team by mxid")
+			return nil
+		}
+		return br.loadTeam(ctx, dbTeam, nil)
 	}
 
 	return portal
 }
 
-func (br *SlackBridge) GetTeamByID(id string, createIfNotExist bool) *Team {
-	br.teamsLock.Lock()
-	defer br.teamsLock.Unlock()
-
-	team, ok := br.teamsByID[id]
-	if !ok {
-		return br.loadTeam(br.DB.TeamInfo.GetBySlackTeam(id), id, createIfNotExist)
-	}
-
-	return team
+func (br *SlackBridge) GetTeamByID(id string) *Team {
+	br.userAndTeamLock.Lock()
+	defer br.userAndTeamLock.Unlock()
+	return br.unlockedGetTeamByID(id, false)
 }
 
-// func (br *SlackBridge) GetAllTeams() []*Team {
-// 	return br.dbTeamsToTeams(br.DB.TeamInfo.GetAll())
-// }
-
-// func (br *SlackBridge) dbTeamsToTeams(dbTeams []*database.TeamInfo) []*Team {
-// 	br.teamsLock.Lock()
-// 	defer br.teamsLock.Unlock()
-
-// 	output := make([]*Team, len(dbTeams))
-// 	for index, dbTeam := range dbTeams {
-// 		if dbTeam == nil {
-// 			continue
-// 		}
-
-// 		team, ok := br.teamsByID[dbTeam.TeamID]
-// 		if !ok {
-// 			team = br.loadTeam(dbTeam, "", false)
-// 		}
-
-// 		output[index] = team
-// 	}
-
-// 	return output
-// }
-
-func (br *SlackBridge) NewTeam(dbTeam *database.TeamInfo) *Team {
-	team := &Team{
-		TeamInfo: dbTeam,
-		bridge:   br,
-		log:      br.Log.Sub(fmt.Sprintf("Team/%s", dbTeam.TeamID)),
+func (br *SlackBridge) unlockedGetTeamByID(id string, onlyIfExists bool) *Team {
+	team, ok := br.teamsByID[id]
+	if !ok {
+		ctx := context.TODO()
+		dbTeam, err := br.DB.TeamPortal.GetBySlackID(ctx, id)
+		if err != nil {
+			br.ZLog.Err(err).Str("team_id", id).Msg("Failed to get team by ID")
+			return nil
+		}
+		idPtr := &id
+		if onlyIfExists {
+			idPtr = nil
+		}
+		return br.loadTeam(ctx, dbTeam, idPtr)
 	}
 
 	return team
@@ -132,41 +141,71 @@ func (team *Team) getBridgeInfo() (string, event.BridgeEventContent) {
 			ExternalURL: "https://slack.com/",
 		},
 		Channel: event.BridgeInfoSection{
-			ID:          team.TeamID,
-			DisplayName: team.TeamName,
-			AvatarURL:   team.AvatarUrl.CUString(),
+			ID:          team.ID,
+			DisplayName: team.Name,
+			AvatarURL:   team.AvatarMXC.CUString(),
 		},
 	}
-	bridgeInfoStateKey := fmt.Sprintf("fi.mau.slack://slackgo/%s", team.TeamID)
+	bridgeInfoStateKey := fmt.Sprintf("fi.mau.slack://slackgo/%s", team.ID)
 	return bridgeInfoStateKey, bridgeInfo
 }
 
-func (team *Team) UpdateBridgeInfo() {
-	if len(team.SpaceRoom) == 0 {
-		team.log.Debugln("Not updating bridge info: no Matrix room created")
+func (team *Team) UpdateBridgeInfo(ctx context.Context) {
+	if len(team.MXID) == 0 {
+		team.log.Debug().Msg("Not updating bridge info: no Matrix room created")
 		return
 	}
-	team.log.Debugln("Updating bridge info...")
+	team.log.Debug().Msg("Updating bridge info")
 	stateKey, content := team.getBridgeInfo()
-	_, err := team.bridge.Bot.SendStateEvent(team.SpaceRoom, event.StateBridge, stateKey, content)
+	_, err := team.bridge.Bot.SendStateEvent(ctx, team.MXID, event.StateBridge, stateKey, content)
 	if err != nil {
-		team.log.Warnln("Failed to update m.bridge:", err)
+		team.log.Err(err).Msg("Failed to update m.bridge event")
 	}
 	// TODO remove this once https://github.com/matrix-org/matrix-doc/pull/2346 is in spec
-	_, err = team.bridge.Bot.SendStateEvent(team.SpaceRoom, event.StateHalfShotBridge, stateKey, content)
+	_, err = team.bridge.Bot.SendStateEvent(ctx, team.MXID, event.StateHalfShotBridge, stateKey, content)
 	if err != nil {
-		team.log.Warnln("Failed to update uk.half-shot.bridge:", err)
+		team.log.Err(err).Msg("Failed to update uk.half-shot.bridge event")
 	}
 }
 
-func (team *Team) CreateMatrixRoom(user *User, meta *slack.TeamInfo) error {
-	team.roomCreateLock.Lock()
-	defer team.roomCreateLock.Unlock()
-	if team.SpaceRoom != "" {
+func (team *Team) GetCachedUserByID(userID string) *UserTeam {
+	return team.bridge.GetCachedUserTeamByID(database.UserTeamKey{
+		TeamID: team.ID,
+		UserID: userID,
+	})
+}
+
+func (team *Team) GetCachedUserByMXID(userID id.UserID) *UserTeam {
+	team.bridge.userAndTeamLock.Lock()
+	defer team.bridge.userAndTeamLock.Unlock()
+	user, ok := team.bridge.usersByMXID[userID]
+	if !ok {
 		return nil
 	}
-	team.log.Infoln("Creating Matrix room for team")
-	team.UpdateInfo(user, meta)
+	return user.teams[team.ID]
+}
+
+func (team *Team) GetPuppetByID(userID string) *Puppet {
+	return team.bridge.GetPuppetByID(database.UserTeamKey{
+		TeamID: team.ID,
+		UserID: userID,
+	})
+}
+
+func (team *Team) GetPortalByID(channelID string) *Portal {
+	return team.bridge.GetPortalByID(database.PortalKey{
+		TeamID:    team.ID,
+		ChannelID: channelID,
+	})
+}
+
+func (team *Team) CreateMatrixRoom(ctx context.Context) error {
+	team.roomCreateLock.Lock()
+	defer team.roomCreateLock.Unlock()
+	if team.MXID != "" {
+		return nil
+	}
+	team.log.Info().Msg("Creating Matrix space for team")
 
 	bridgeInfoStateKey, bridgeInfo := team.getBridgeInfo()
 
@@ -181,102 +220,112 @@ func (team *Team) CreateMatrixRoom(user *User, meta *slack.TeamInfo) error {
 		StateKey: &bridgeInfoStateKey,
 	}}
 
-	if !team.AvatarUrl.IsEmpty() {
+	if !team.AvatarMXC.IsEmpty() {
 		initialState = append(initialState, &event.Event{
 			Type: event.StateRoomAvatar,
 			Content: event.Content{Parsed: &event.RoomAvatarEventContent{
-				URL: team.AvatarUrl,
+				URL: team.AvatarMXC,
 			}},
 		})
 	}
 
-	creationContent := map[string]interface{}{
+	creationContent := map[string]any{
 		"type": event.RoomTypeSpace,
 	}
 	if !team.bridge.Config.Bridge.FederateRooms {
 		creationContent["m.federate"] = false
 	}
 
-	resp, err := team.bridge.Bot.CreateRoom(&mautrix.ReqCreateRoom{
+	resp, err := team.bridge.Bot.CreateRoom(ctx, &mautrix.ReqCreateRoom{
 		Visibility:      "private",
-		Name:            team.TeamName,
+		Name:            team.Name,
 		Preset:          "private_chat",
 		InitialState:    initialState,
 		CreationContent: creationContent,
 	})
 	if err != nil {
-		team.log.Warnln("Failed to create room:", err)
+		team.log.Err(err).Msg("Failed to create Matrix space")
 		return err
 	}
 
-	team.SpaceRoom = resp.RoomID
+	team.bridge.userAndTeamLock.Lock()
+	team.MXID = resp.RoomID
 	team.NameSet = true
-	team.AvatarSet = !team.AvatarUrl.IsEmpty()
-	team.Upsert()
-	team.bridge.teamsLock.Lock()
-	team.bridge.teamsByMXID[team.SpaceRoom] = team
-	team.bridge.teamsLock.Unlock()
-	team.log.Infoln("Matrix room created:", team.SpaceRoom)
+	team.AvatarSet = !team.AvatarMXC.IsEmpty()
+	team.bridge.teamsByMXID[team.MXID] = team
+	team.bridge.userAndTeamLock.Unlock()
+	team.updateLogger()
+	team.log.Info().Msg("Matrix space created")
 
-	user.ensureInvited(nil, team.SpaceRoom, false)
+	err = team.Update(ctx)
+	if err != nil {
+		team.log.Err(err).Msg("Failed to save team after creating Matrix space")
+	}
 
 	return nil
 }
 
-func (team *Team) UpdateInfo(source *User, meta *slack.TeamInfo) (changed bool) {
-	changed = team.UpdateName(meta) || changed
-	changed = team.UpdateAvatar(meta) || changed
-	if team.TeamDomain != meta.Domain {
-		team.TeamDomain = meta.Domain
+func (team *Team) UpdateInfo(ctx context.Context, meta *slack.TeamInfo) (changed bool) {
+	changed = team.UpdateName(ctx, meta) || changed
+	changed = team.UpdateAvatar(ctx, meta) || changed
+	if team.Domain != meta.Domain {
+		team.Domain = meta.Domain
 		changed = true
 	}
-	if team.TeamUrl != meta.URL {
-		team.TeamUrl = meta.URL
+	if team.URL != meta.URL {
+		team.URL = meta.URL
 		changed = true
 	}
 	if changed {
-		team.UpdateBridgeInfo()
-		team.Upsert()
+		team.UpdateBridgeInfo(ctx)
+		err := team.Update(ctx)
+		if err != nil {
+			zerolog.Ctx(ctx).Err(err).Msg("Failed to save team after updating info")
+		}
 	}
 	return
 }
 
-func (team *Team) UpdateName(meta *slack.TeamInfo) (changed bool) {
-	if team.TeamName != meta.Name {
-		team.log.Debugfln("Updating name %q -> %q", team.TeamName, meta.Name)
-		team.TeamName = meta.Name
-		changed = true
+func (team *Team) UpdateName(ctx context.Context, meta *slack.TeamInfo) bool {
+	newName := team.bridge.Config.Bridge.FormatTeamName(meta)
+	if team.Name == newName && team.NameSet {
+		return false
 	}
-	if team.SpaceRoom != "" {
-		_, err := team.bridge.Bot.SetRoomName(team.SpaceRoom, team.TeamName)
+	team.log.Debug().Str("old_name", team.Name).Str("new_name", newName).Msg("Updating name")
+	team.Name = newName
+	team.NameSet = false
+	if team.MXID != "" {
+		_, err := team.bridge.Bot.SetRoomName(ctx, team.MXID, team.Name)
 		if err != nil {
-			team.log.Warnln("Failed to update room name: %s", err)
+			team.log.Err(err).Msg("Failed to update room name")
 		} else {
 			team.NameSet = true
 		}
 	}
-	return
+	return true
 }
 
-func (team *Team) UpdateAvatar(meta *slack.TeamInfo) (changed bool) {
+func (team *Team) UpdateAvatar(ctx context.Context, meta *slack.TeamInfo) (changed bool) {
 	if meta.Icon["image_default"] != nil && meta.Icon["image_default"] == true && team.Avatar != "" {
+		team.AvatarSet = false
 		team.Avatar = ""
-		team.AvatarUrl = id.MustParseContentURI("")
+		team.AvatarMXC = id.MustParseContentURI("")
 		changed = true
 	} else if meta.Icon["image_default"] != nil && meta.Icon["image_default"] == false && meta.Icon["image_230"] != nil && team.Avatar != meta.Icon["image_230"] {
-		avatar, err := uploadPlainFile(team.bridge.AS.BotIntent(), meta.Icon["image_230"].(string))
+		avatar, err := uploadPlainFile(ctx, team.bridge.AS.BotIntent(), meta.Icon["image_230"].(string))
 		if err != nil {
-			team.log.Warnfln("Error uploading new team avatar for team %s: %v", team.TeamID, err)
+			team.log.Err(err).Msg("Failed to reupload team avatar")
 		} else {
 			team.Avatar = meta.Icon["image_230"].(string)
-			team.AvatarUrl = avatar
+			team.AvatarMXC = avatar
+			team.AvatarSet = false
 			changed = true
 		}
 	}
-	if team.SpaceRoom != "" {
-		_, err := team.bridge.Bot.SetRoomAvatar(team.SpaceRoom, team.AvatarUrl)
+	if team.MXID != "" && (changed || !team.AvatarSet) {
+		_, err := team.bridge.Bot.SetRoomAvatar(ctx, team.MXID, team.AvatarMXC)
 		if err != nil {
-			team.log.Warnln("Failed to update room avatar:", err)
+			team.log.Err(err).Msg("Failed to update room avatar")
 		} else {
 			team.AvatarSet = true
 		}
@@ -284,61 +333,61 @@ func (team *Team) UpdateAvatar(meta *slack.TeamInfo) (changed bool) {
 	return
 }
 
-func (team *Team) cleanup() {
-	if team.SpaceRoom == "" {
+func (team *Team) Cleanup(ctx context.Context) {
+	if team.MXID == "" {
 		return
 	}
 	intent := team.bridge.Bot
-	if team.bridge.SpecVersions.UnstableFeatures["com.beeper.room_yeeting"] {
-		err := intent.BeeperDeleteRoom(team.SpaceRoom)
-		if err == nil || errors.Is(err, mautrix.MNotFound) {
-			return
-		}
-		team.log.Warnfln("Failed to delete %s using hungryserv yeet endpoint, falling back to normal behavior: %v", team.SpaceRoom, err)
-	}
-	team.bridge.cleanupRoom(intent, team.SpaceRoom, false, team.log)
+	team.bridge.cleanupRoom(ctx, intent, team.MXID, false)
 }
 
-func (team *Team) RemoveMXID() {
-	team.bridge.teamsLock.Lock()
-	defer team.bridge.teamsLock.Unlock()
-	if team.SpaceRoom == "" {
+func (team *Team) RemoveMXID(ctx context.Context) {
+	team.bridge.userAndTeamLock.Lock()
+	defer team.bridge.userAndTeamLock.Unlock()
+	if team.MXID == "" {
 		return
 	}
-	delete(team.bridge.teamsByMXID, team.SpaceRoom)
-	team.SpaceRoom = ""
+	delete(team.bridge.teamsByMXID, team.MXID)
+	team.MXID = ""
 	team.AvatarSet = false
 	team.NameSet = false
-	team.Upsert()
+	err := team.Update(ctx)
+	if err != nil {
+		team.log.Err(err).Msg("Failed to save team after removing mxid")
+	}
 }
 
 // func (team *Team) Delete() {
-// 	team.TeamInfo.Delete()
+// 	team.TeamPortal.Delete()
 // 	team.bridge.teamsLock.Lock()
-// 	delete(team.bridge.teamsByID, team.TeamID)
-// 	if team.SpaceRoom != "" {
-// 		delete(team.bridge.teamsByMXID, team.SpaceRoom)
+// 	delete(team.bridge.teamsByID, team.ID)
+// 	if team.MXID != "" {
+// 		delete(team.bridge.teamsByMXID, team.MXID)
 // 	}
 // 	team.bridge.teamsLock.Unlock()
 
 // }
 
-func (team *Team) addPortalToTeam(portal *database.Portal, isInSpace bool) bool {
-	if len(team.SpaceRoom) == 0 {
-		team.log.Errorln("Tried to add portal to space that has no matrix ID")
+func (team *Team) AddPortal(ctx context.Context, portal *Portal) bool {
+	if len(team.MXID) == 0 {
+		team.log.Error().Msg("Tried to add portal to team that has no matrix ID")
+		if portal.InSpace {
+			portal.InSpace = false
+			return true
+		}
+		return false
+	} else if portal.InSpace {
 		return false
 	}
 
-	if len(portal.MXID) > 0 && !isInSpace {
-		_, err := team.bridge.Bot.SendStateEvent(team.SpaceRoom, event.StateSpaceChild, portal.MXID.String(), &event.SpaceChildEventContent{
-			Via: []string{team.bridge.AS.HomeserverDomain},
-		})
-		if err != nil {
-			team.log.Errorfln("Failed to add portal %s to team space", portal.MXID)
-		} else {
-			isInSpace = true
-		}
+	_, err := team.bridge.Bot.SendStateEvent(ctx, team.MXID, event.StateSpaceChild, portal.MXID.String(), &event.SpaceChildEventContent{
+		Via: []string{team.bridge.AS.HomeserverDomain},
+	})
+	if err != nil {
+		team.log.Err(err).Stringer("room_mxid", portal.MXID).Msg("Failed to add portal to team space")
+		portal.InSpace = false
+	} else {
+		portal.InSpace = true
 	}
-
-	return isInSpace
+	return true
 }

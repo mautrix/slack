@@ -1,5 +1,5 @@
 // mautrix-slack - A Matrix-Slack puppeting bridge.
-// Copyright (C) 2022 Tulir Asokan
+// Copyright (C) 2024 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -17,127 +17,89 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 
-	log "maunium.net/go/maulogger/v2"
-
+	"go.mau.fi/util/dbutil"
 	"maunium.net/go/mautrix/id"
-	"maunium.net/go/mautrix/util/dbutil"
 )
 
-type TeamInfoQuery struct {
-	db  *Database
-	log log.Logger
+type TeamPortalQuery struct {
+	*dbutil.QueryHelper[*TeamPortal]
 }
 
-func (tiq *TeamInfoQuery) New() *TeamInfo {
-	return &TeamInfo{
-		db:  tiq.db,
-		log: tiq.log,
-	}
+func newTeamPortal(qh *dbutil.QueryHelper[*TeamPortal]) *TeamPortal {
+	return &TeamPortal{qh: qh}
 }
 
-func (tiq *TeamInfoQuery) GetBySlackTeam(team string) *TeamInfo {
-	query := `SELECT team_id, team_domain, team_url, team_name, avatar, avatar_url, space_room, name_set, avatar_set FROM team_info WHERE team_id=$1`
-
-	row := tiq.db.QueryRow(query, team)
-	if row == nil {
-		return nil
-	}
-
-	return tiq.New().Scan(row)
-}
-
-func (tiq *TeamInfoQuery) GetByMXID(mxid id.RoomID) *TeamInfo {
-	query := `SELECT team_id, team_domain, team_url, team_name, avatar, avatar_url, space_room, name_set, avatar_set FROM team_info WHERE space_room=$1`
-
-	row := tiq.db.QueryRow(query, mxid)
-	if row == nil {
-		return nil
-	}
-
-	return tiq.New().Scan(row)
-}
-
-type TeamInfo struct {
-	db  *Database
-	log log.Logger
-
-	TeamID     string
-	TeamDomain string
-	TeamUrl    string
-	TeamName   string
-	Avatar     string
-	AvatarUrl  id.ContentURI
-	SpaceRoom  id.RoomID
-	NameSet    bool
-	AvatarSet  bool
-}
-
-func (ti *TeamInfo) Scan(row dbutil.Scannable) *TeamInfo {
-	var teamDomain sql.NullString
-	var teamUrl sql.NullString
-	var teamName sql.NullString
-	var avatar sql.NullString
-	var avatarUrl sql.NullString
-	var spaceRoom sql.NullString
-
-	err := row.Scan(&ti.TeamID, &teamDomain, &teamUrl, &teamName, &avatar, &avatarUrl, &spaceRoom, &ti.NameSet, &ti.AvatarSet)
-	if err != nil {
-		if err != sql.ErrNoRows {
-			ti.log.Errorln("Database scan failed:", err)
-		}
-
-		return nil
-	}
-
-	if teamDomain.Valid {
-		ti.TeamDomain = teamDomain.String
-	}
-	if teamUrl.Valid {
-		ti.TeamUrl = teamUrl.String
-	}
-	if teamName.Valid {
-		ti.TeamName = teamName.String
-	}
-	if avatar.Valid {
-		ti.Avatar = avatar.String
-	}
-	if avatarUrl.Valid {
-		ti.AvatarUrl, _ = id.ParseContentURI(avatarUrl.String)
-	}
-	if spaceRoom.Valid {
-		ti.SpaceRoom = id.RoomID(spaceRoom.String)
-	}
-
-	return ti
-}
-
-func (ti *TeamInfo) Upsert() {
-	query := `
-		INSERT INTO team_info (team_id, team_domain, team_url, team_name, avatar, avatar_url, space_room, name_set, avatar_set)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		ON CONFLICT (team_id) DO UPDATE
-			SET team_domain=excluded.team_domain,
-			team_url=excluded.team_url,
-			team_name=excluded.team_name,
-			avatar=excluded.avatar,
-			avatar_url=excluded.avatar_url,
-			space_room=excluded.space_room,
-			name_set=excluded.name_set,
-			avatar_set=excluded.avatar_set
+const (
+	getTeamPortalBaseQuery = `
+		SELECT id, mxid, domain, url, name, avatar, avatar_mxc, name_set, avatar_set FROM team_portal
 	`
+	getTeamPortalByIDQuery   = getTeamPortalBaseQuery + " WHERE id=$1"
+	getTeamPortalByMXIDQuery = getTeamPortalBaseQuery + " WHERE mxid=$1"
+	insertTeamPortalQuery    = `
+		INSERT INTO team_portal (id, mxid, domain, url, name, avatar, avatar_mxc, name_set, avatar_set)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`
+	updateTeamPortalQuery = `
+		UPDATE team_portal
+		SET mxid=$2, domain=$3, url=$4, name=$5, avatar=$6, avatar_mxc=$7, name_set=$8, avatar_set=$9
+		WHERE id=$1
+	`
+)
 
-	teamDomain := sqlNullString(ti.TeamDomain)
-	teamUrl := sqlNullString(ti.TeamUrl)
-	teamName := sqlNullString(ti.TeamName)
-	avatar := sqlNullString(ti.Avatar)
-	avatarUrl := sqlNullString(ti.AvatarUrl.String())
-	spaceRoom := sqlNullString(ti.SpaceRoom.String())
+func (tpq *TeamPortalQuery) GetBySlackID(ctx context.Context, teamID string) (*TeamPortal, error) {
+	return tpq.QueryOne(ctx, getTeamPortalByIDQuery, teamID)
+}
 
-	_, err := ti.db.Exec(query, ti.TeamID, teamDomain, teamUrl, teamName, avatar, avatarUrl, spaceRoom, ti.NameSet, ti.AvatarSet)
+func (tpq *TeamPortalQuery) GetByMXID(ctx context.Context, mxid id.RoomID) (*TeamPortal, error) {
+	return tpq.QueryOne(ctx, getTeamPortalByMXIDQuery, mxid)
+}
 
+type TeamPortal struct {
+	qh *dbutil.QueryHelper[*TeamPortal]
+
+	ID        string
+	MXID      id.RoomID
+	Domain    string
+	URL       string
+	Name      string
+	Avatar    string
+	AvatarMXC id.ContentURI
+	NameSet   bool
+	AvatarSet bool
+}
+
+func (tp *TeamPortal) Scan(row dbutil.Scannable) (*TeamPortal, error) {
+	var mxid, avatarMXC sql.NullString
+	err := row.Scan(&tp.ID, &mxid, &tp.Domain, &tp.URL, &tp.NameSet, &tp.AvatarSet, &avatarMXC, &tp.NameSet, &tp.AvatarSet)
 	if err != nil {
-		ti.log.Warnfln("Failed to upsert team %s: %v", ti.TeamID, err)
+		return nil, err
 	}
+	tp.MXID = id.RoomID(mxid.String)
+	tp.AvatarMXC, _ = id.ParseContentURI(avatarMXC.String)
+	return tp, nil
+}
+
+func (tp *TeamPortal) sqlVariables() []any {
+	return []any{
+		tp.ID,
+		dbutil.StrPtr(tp.MXID),
+		tp.Domain,
+		tp.URL,
+		tp.Name,
+		tp.Avatar,
+		dbutil.StrPtr(tp.AvatarMXC.String()),
+		tp.NameSet,
+		tp.AvatarSet,
+	}
+}
+
+func (tp *TeamPortal) Insert(ctx context.Context) error {
+	return tp.qh.Exec(ctx, insertTeamPortalQuery, tp.sqlVariables()...)
+}
+
+func (tp *TeamPortal) Update(ctx context.Context) error {
+	return tp.qh.Exec(ctx, updateTeamPortalQuery, tp.sqlVariables()...)
 }

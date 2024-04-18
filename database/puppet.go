@@ -1,5 +1,5 @@
 // mautrix-slack - A Matrix-Slack puppeting bridge.
-// Copyright (C) 2022 Tulir Asokan
+// Copyright (C) 2024 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -17,106 +17,98 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 
-	log "maunium.net/go/maulogger/v2"
-
+	"go.mau.fi/util/dbutil"
 	"maunium.net/go/mautrix/id"
-	"maunium.net/go/mautrix/util/dbutil"
 )
+
+type PuppetQuery struct {
+	*dbutil.QueryHelper[*Puppet]
+}
+
+func newPuppet(qh *dbutil.QueryHelper[*Puppet]) *Puppet {
+	return &Puppet{qh: qh}
+}
 
 const (
-	puppetSelect = "SELECT team_id, user_id, name, name_set, avatar," +
-		" avatar_url, avatar_set, enable_presence, custom_mxid, access_token," +
-		" next_batch, is_bot, enable_receipts, contact_info_set" +
-		" FROM puppet "
+	insertPuppetQuery = `
+		INSERT INTO puppet (
+			team_id, user_id,
+			name, avatar, avatar_mxc, is_bot,
+			name_set, avatar_set, contact_info_set
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`
+	updatePuppetQuery = `
+		UPDATE puppet
+		SET name=$3, avatar=$4, avatar_mxc=$5, is_bot=$6,
+			name_set=$7, avatar_set=$8, contact_info_set=$9
+		WHERE team_id=$1 AND user_id=$2
+	`
+	getAllPuppetsQuery = `
+		SELECT team_id, user_id, name, avatar, avatar_mxc, is_bot,
+		       name_set, avatar_set, contact_info_set
+		FROM puppet
+	`
+	getAllPuppetsForTeamQuery = getAllPuppetsQuery + `WHERE team_id=$1`
+	getPuppetByIDQuery        = getAllPuppetsForTeamQuery + ` AND user_id=$2`
 )
 
+func (pq *PuppetQuery) Get(ctx context.Context, key UserTeamKey) (*Puppet, error) {
+	return pq.QueryOne(ctx, getPuppetByIDQuery, key.TeamID, key.UserID)
+}
+
+func (pq *PuppetQuery) GetAll(ctx context.Context) ([]*Puppet, error) {
+	return pq.QueryMany(ctx, getAllPuppetsQuery)
+}
+
+func (pq *PuppetQuery) GetAllForTeam(ctx context.Context, teamID string) ([]*Puppet, error) {
+	return pq.QueryMany(ctx, getAllPuppetsForTeamQuery, teamID)
+}
+
 type Puppet struct {
-	db  *Database
-	log log.Logger
+	qh *dbutil.QueryHelper[*Puppet]
 
-	TeamID string
-	UserID string
+	UserTeamKey
 
-	Name    string
-	NameSet bool
-
-	Avatar    string
-	AvatarURL id.ContentURI
-	AvatarSet bool
-
-	EnablePresence bool
-
-	CustomMXID  id.UserID
-	AccessToken string
-
-	NextBatch string
-
-	IsBot bool
-
-	EnableReceipts bool
-
+	Name           string
+	Avatar         string
+	AvatarMXC      id.ContentURI
+	IsBot          bool
+	NameSet        bool
+	AvatarSet      bool
 	ContactInfoSet bool
 }
 
-func (p *Puppet) Scan(row dbutil.Scannable) *Puppet {
-	var teamID, userID, avatar, avatarURL sql.NullString
-	var enablePresence sql.NullBool
-	var customMXID, accessToken, nextBatch sql.NullString
-
-	err := row.Scan(&teamID, &userID, &p.Name, &p.NameSet, &avatar, &avatarURL,
-		&p.AvatarSet, &enablePresence, &customMXID, &accessToken, &nextBatch,
-		&p.IsBot, &p.EnableReceipts, &p.ContactInfoSet)
-
+func (p *Puppet) Scan(row dbutil.Scannable) (*Puppet, error) {
+	var avatarURL sql.NullString
+	err := row.Scan(
+		&p.TeamID, &p.UserID,
+		&p.Name, &p.NameSet, &p.Avatar, &avatarURL, &p.IsBot,
+		&p.NameSet, &p.AvatarSet, &p.ContactInfoSet,
+	)
 	if err != nil {
-		if err != sql.ErrNoRows {
-			p.log.Errorln("Database scan failed:", err)
-		}
-
-		return nil
+		return nil, err
 	}
 
-	p.TeamID = teamID.String
-	p.UserID = userID.String
-	p.Avatar = avatar.String
-	p.AvatarURL, _ = id.ParseContentURI(avatarURL.String)
-	p.EnablePresence = enablePresence.Bool
-	p.CustomMXID = id.UserID(customMXID.String)
-	p.AccessToken = accessToken.String
-	p.NextBatch = nextBatch.String
-
-	return p
+	p.AvatarMXC, _ = id.ParseContentURI(avatarURL.String)
+	return p, nil
 }
 
-func (p *Puppet) Insert() {
-	query := "INSERT INTO puppet" +
-		" (team_id, user_id, name, name_set, avatar, avatar_url, avatar_set," +
-		" enable_presence, custom_mxid, access_token, next_batch," +
-		" is_bot, enable_receipts, contact_info_set)" +
-		" VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"
-
-	_, err := p.db.Exec(query, p.TeamID, p.UserID, p.Name, p.NameSet, p.Avatar,
-		p.AvatarURL.String(), p.AvatarSet, p.EnablePresence, p.CustomMXID,
-		p.AccessToken, p.NextBatch, p.IsBot, p.EnableReceipts, p.ContactInfoSet)
-
-	if err != nil {
-		p.log.Warnfln("Failed to insert %s-%s: %v", p.TeamID, p.UserID, err)
+func (p *Puppet) sqlVariables() []any {
+	return []any{
+		p.TeamID, p.UserID,
+		p.Name, p.Avatar, dbutil.StrPtr(p.AvatarMXC.String()), p.IsBot,
+		p.NameSet, p.AvatarSet, p.ContactInfoSet,
 	}
 }
 
-func (p *Puppet) Update() {
-	query := "UPDATE puppet" +
-		" SET name=$1, name_set=$2, avatar=$3, avatar_url=$4, avatar_set=$5," +
-		"     enable_presence=$6, custom_mxid=$7, access_token=$8," +
-		"     next_batch=$9, is_bot=$10, enable_receipts=$11, contact_info_set=$12" +
-		" WHERE team_id=$13 AND user_id=$14"
+func (p *Puppet) Insert(ctx context.Context) error {
+	return p.qh.Exec(ctx, insertPuppetQuery, p.sqlVariables()...)
+}
 
-	_, err := p.db.Exec(query, p.Name, p.NameSet, p.Avatar,
-		p.AvatarURL.String(), p.AvatarSet, p.EnablePresence, p.CustomMXID,
-		p.AccessToken, p.NextBatch, p.IsBot, p.EnableReceipts, p.ContactInfoSet, p.TeamID, p.UserID)
-
-	if err != nil {
-		p.log.Warnfln("Failed to update %s-%s: %v", p.TeamID, p.UserID, err)
-	}
+func (p *Puppet) Update(ctx context.Context) error {
+	return p.qh.Exec(ctx, updatePuppetQuery, p.sqlVariables()...)
 }

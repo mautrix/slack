@@ -25,43 +25,43 @@ import (
 
 	"github.com/slack-go/slack"
 
+	"go.mau.fi/util/dbutil"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
-	"maunium.net/go/mautrix/util/dbutil"
 
 	"go.mau.fi/mautrix-slack/database"
 )
 
 // region history sync handling
 
-func (bridge *SlackBridge) handleHistorySyncsLoop() {
-	if !bridge.Config.Bridge.Backfill.Enable {
+func (br *SlackBridge) handleHistorySyncsLoop() {
+	if !br.Config.Bridge.Backfill.Enable {
 		return
 	}
 
 	// Backfills shouldn't be marked as dispatched during startup, this gives them a chance to retry
-	bridge.DB.Backfill.UndispatchAll()
+	br.DB.Backfill.UndispatchAll()
 
-	bridge.HandleBackfillRequestsLoop()
+	br.HandleBackfillRequestsLoop()
 
 }
 
-func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillState, portal *Portal) {
+func (br *SlackBridge) backfillInChunks(backfillState *database.BackfillState, portal *Portal) {
 	portal.backfillLock.Lock()
 	defer portal.backfillLock.Unlock()
 
 	backfillState.SetDispatched(true)
 	defer backfillState.SetDispatched(false)
 
-	maxMessages := bridge.Config.Bridge.Backfill.Incremental.MaxMessages.GetMaxMessagesFor(portal.Type)
+	maxMessages := br.Config.Bridge.Backfill.Incremental.MaxMessages.GetMaxMessagesFor(portal.Type)
 
 	if maxMessages > 0 && backfillState.MessageCount >= maxMessages {
 		backfillState.BackfillComplete = true
 		backfillState.Upsert()
-		bridge.Log.Infofln("Backfilling complete for portal %s, not filling any more", portal.Key)
+		br.Log.Infofln("Backfilling complete for portal %s, not filling any more", portal.Key)
 		return
 	}
 
@@ -87,9 +87,9 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 		defer portal.latestEventBackfillLock.Unlock()
 	}
 
-	userTeam := bridge.DB.UserTeam.GetFirstUserTeamForPortal(&portal.Key)
+	userTeam := br.DB.UserTeam.GetFirstUserTeamForPortal(&portal.Key)
 	if userTeam == nil {
-		bridge.Log.Errorfln("Couldn't find logged in user with access to %s for backfilling!", portal.Key)
+		br.Log.Errorfln("Couldn't find logged in user with access to %s for backfilling!", portal.Key)
 		backfillState.BackfillComplete = true
 		backfillState.Upsert()
 		return
@@ -103,7 +103,7 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 	// Fetch actual messages from Slack.
 	resp, err := userTeam.Client.GetConversationHistory(&slackReqParams)
 	if err != nil {
-		bridge.Log.Errorfln("Error fetching Slack messages for backfilling %s: %v", portal.Key, err)
+		br.Log.Errorfln("Error fetching Slack messages for backfilling %s: %v", portal.Key, err)
 		backfillState.BackfillComplete = true
 		backfillState.Upsert()
 		return
@@ -111,7 +111,7 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 	allMsgs := resp.Messages
 
 	if len(allMsgs) == 0 {
-		bridge.Log.Debugfln("Not backfilling %s: no bridgeable messages found", portal.Key)
+		br.Log.Debugfln("Not backfilling %s: no bridgeable messages found", portal.Key)
 		backfillState.BackfillComplete = true
 		backfillState.Upsert()
 		return
@@ -124,10 +124,10 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 	if !backfillState.ImmediateComplete {
 		maxBatchEvents = -1
 	} else {
-		maxBatchEvents = bridge.Config.Bridge.Backfill.Incremental.MessagesPerBatch
+		maxBatchEvents = br.Config.Bridge.Backfill.Incremental.MessagesPerBatch
 	}
 
-	bridge.Log.Infofln("Backfilling %d messages in %s, %d messages at a time", len(allMsgs), portal.Key, maxBatchEvents)
+	br.Log.Infofln("Backfilling %d messages in %s, %d messages at a time", len(allMsgs), portal.Key, maxBatchEvents)
 	toBackfill := allMsgs[0:]
 	for len(toBackfill) > 0 {
 		var msgs []slack.Message
@@ -140,8 +140,8 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 		}
 
 		if len(msgs) > 0 {
-			time.Sleep(time.Duration(bridge.Config.Bridge.Backfill.Incremental.PostBatchDelay) * time.Second)
-			bridge.Log.Debugfln("Backfilling %d messages in %s", len(msgs), portal.Key)
+			time.Sleep(time.Duration(br.Config.Bridge.Backfill.Incremental.PostBatchDelay) * time.Second)
+			br.Log.Debugfln("Backfilling %d messages in %s", len(msgs), portal.Key)
 			resp, err := portal.backfill(userTeam, msgs, !backfillState.ImmediateComplete)
 			if resp != nil && (resp.BaseInsertionEventID != "" || !isLatestEvents) {
 				backfillState.MessageCount += len(msgs)
@@ -158,7 +158,7 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 			}
 		}
 	}
-	bridge.Log.Debugfln("Finished backfilling %d messages in %s", len(allMsgs), portal.Key)
+	br.Log.Debugfln("Finished backfilling %d messages in %s", len(allMsgs), portal.Key)
 
 	backfillState.MessageCount += len(allMsgs)
 
@@ -175,7 +175,7 @@ func (bridge *SlackBridge) backfillInChunks(backfillState *database.BackfillStat
 	backfillState.Upsert()
 
 	// TODO: add these config options
-	// if bridge.Config.Bridge.HistorySync.UnreadHoursThreshold > 0 && conv.LastMessageTimestamp.Before(time.Now().Add(time.Duration(-bridge.Config.Bridge.HistorySync.UnreadHoursThreshold)*time.Hour)) {
+	// if br.Config.Bridge.HistorySync.UnreadHoursThreshold > 0 && conv.LastMessageTimestamp.Before(time.Now().Add(time.Duration(-br.Config.Bridge.HistorySync.UnreadHoursThreshold)*time.Hour)) {
 	// 	user.markSelfReadFull(portal)
 	// }
 }
@@ -391,7 +391,7 @@ func (portal *Portal) backfill(userTeam *database.UserTeam, messages []slack.Mes
 		content := event.MemberEventContent{
 			Membership:  event.MembershipJoin,
 			Displayname: puppet.Name,
-			AvatarURL:   puppet.AvatarURL.CUString(),
+			AvatarURL:   puppet.AvatarMXC.CUString(),
 		}
 		inviteContent := content
 		inviteContent.Membership = event.MembershipInvite

@@ -1,5 +1,5 @@
 // mautrix-slack - A Matrix-Slack puppeting bridge.
-// Copyright (C) 2022 Tulir Asokan
+// Copyright (C) 2024 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -17,181 +17,142 @@
 package database
 
 import (
+	"context"
 	"database/sql"
-	"fmt"
 
-	log "maunium.net/go/maulogger/v2"
-
+	"github.com/rs/zerolog"
+	"go.mau.fi/util/dbutil"
 	"maunium.net/go/mautrix/id"
-	"maunium.net/go/mautrix/util/dbutil"
-
-	"github.com/slack-go/slack"
 )
 
 type UserTeamQuery struct {
-	db  *Database
-	log log.Logger
+	*dbutil.QueryHelper[*UserTeam]
 }
 
-func (utq *UserTeamQuery) New() *UserTeam {
-	return &UserTeam{
-		db:  utq.db,
-		log: utq.log,
-	}
+func newUserTeam(qh *dbutil.QueryHelper[*UserTeam]) *UserTeam {
+	return &UserTeam{qh: qh}
 }
 
-const userTeamSelect = "SELECT ut.mxid, ut.slack_email, ut.slack_id, ut.team_name, ut.team_id, ut.token, ut.cookie_token, ut.in_space FROM user_team ut "
+const (
+	getAllUserTeamsForUserQuery = `
+		SELECT team_id, user_id, user_mxid, email, token, cookie_token, in_space FROM user_team WHERE user_mxid = $1
+	`
+	getAllUserTeamsByTeamIDQuery = `
+		SELECT team_id, user_id, user_mxid, email, token, cookie_token, in_space FROM user_team WHERE team_id=$1
+	`
+	getUserTeamByIDQuery = `
+		SELECT team_id, user_id, user_mxid, email, token, cookie_token, in_space FROM user_team WHERE team_id=$1 AND user_id = $2
+	`
+	getAllUserTeamsWithTokenQuery = `
+		SELECT team_id, user_id, user_mxid, email, token, cookie_token, in_space FROM user_team WHERE token<>''
+	`
+	getFirstUserTeamForPortalQuery = `
+		SELECT ut.team_id, ut.user_id, ut.user_mxid, ut.email, ut.token, ut.cookie_token, ut.in_space FROM user_team ut
+		JOIN user_team_portal utp ON utp.team_id = ut.team_id AND utp.user_id = ut.user_id
+		WHERE utp.team_id = $1
+			AND utp.channel_id = $2
+			AND ut.token<>''
+		LIMIT 1
+	`
+	insertUserTeamQuery = `
+		INSERT INTO user_team (team_id, user_id, user_mxid, email, token, cookie_token, in_space)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (team_id, user_id) DO UPDATE
+			SET user_mxid=excluded.user_mxid,
+			    email=excluded.email,
+			    token=excluded.token,
+			    cookie_token=excluded.cookie_token,
+			    in_space=excluded.in_space
+	`
+	updateUserTeamQuery = `
+		UPDATE user_team
+		SET email=$4,
+			token=$5,
+			cookie_token=$6,
+			in_space=$7
+		WHERE team_id=$1 AND user_id=$2
+	`
+	deleteUserTeamQuery = `
+		DELETE FROM user_team WHERE team_id=$1 AND user_id=$2
+	`
+)
 
-func (utq *UserTeamQuery) GetBySlackDomain(userID id.UserID, email, domain string) *UserTeam {
-	query := userTeamSelect + "WHERE ut.mxid=$1 AND ut.slack_email=$2 AND ut.team_id=(SELECT team_id FROM team_info WHERE team_domain=$3)"
-
-	row := utq.db.QueryRow(query, userID, email, domain)
-	if row == nil {
-		return nil
-	}
-
-	return utq.New().Scan(row)
+func (utq *UserTeamQuery) GetByID(ctx context.Context, key UserTeamKey) (*UserTeam, error) {
+	return utq.QueryOne(ctx, getUserTeamByIDQuery, key.TeamID, key.UserID)
 }
 
-func (utq *UserTeamQuery) GetAllByMXIDWithToken(userID id.UserID) []*UserTeam {
-	query := userTeamSelect + "WHERE ut.mxid=$1 AND ut.token IS NOT NULL"
-
-	rows, err := utq.db.Query(query, userID)
-	if err != nil || rows == nil {
-		return nil
-	}
-
-	defer rows.Close()
-
-	tokens := []*UserTeam{}
-	for rows.Next() {
-		tokens = append(tokens, utq.New().Scan(rows))
-	}
-
-	return tokens
+func (utq *UserTeamQuery) GetAllForUser(ctx context.Context, userID id.UserID) ([]*UserTeam, error) {
+	return utq.QueryMany(ctx, getAllUserTeamsForUserQuery, userID)
 }
 
-func (utq *UserTeamQuery) GetAllBySlackTeamID(teamID string) []*UserTeam {
-	query := userTeamSelect + "WHERE ut.team_id=$1"
-
-	rows, err := utq.db.Query(query, teamID)
-	if err != nil || rows == nil {
-		return nil
-	}
-
-	defer rows.Close()
-
-	tokens := []*UserTeam{}
-	for rows.Next() {
-		tokens = append(tokens, utq.New().Scan(rows))
-	}
-
-	return tokens
+func (utq *UserTeamQuery) GetAllWithToken(ctx context.Context) ([]*UserTeam, error) {
+	return utq.QueryMany(ctx, getAllUserTeamsWithTokenQuery)
 }
 
-func (utq *UserTeamQuery) GetFirstUserTeamForPortal(portal *PortalKey) *UserTeam {
-	query := userTeamSelect + `
-		JOIN user_team_portal utp ON utp.matrix_user_id = ut.mxid
-			AND utp.slack_team_id = ut.team_id
-			AND utp.slack_user_id = ut.slack_id
-		WHERE utp.slack_team_id = $1
-			AND utp.portal_channel_id = $2
-			AND ut.token IS NOT NULL
-		LIMIT 1`
+func (utq *UserTeamQuery) GetAllInTeam(ctx context.Context, teamID string) ([]*UserTeam, error) {
+	return utq.QueryMany(ctx, getAllUserTeamsByTeamIDQuery, teamID)
+}
 
-	row := utq.db.QueryRow(query, portal.TeamID, portal.ChannelID)
-	if row == nil {
-		return nil
-	}
-
-	return utq.New().Scan(row)
+func (utq *UserTeamQuery) GetFirstUserTeamForPortal(ctx context.Context, portal *PortalKey) (*UserTeam, error) {
+	return utq.QueryOne(ctx, getFirstUserTeamForPortalQuery, portal.TeamID, portal.ChannelID)
 }
 
 type UserTeamKey struct {
-	MXID    id.UserID
-	SlackID string
-	TeamID  string
+	TeamID string
+	UserID string
 }
 
-func (utk UserTeamKey) String() string {
-	return fmt.Sprintf("%s-%s", utk.TeamID, utk.SlackID)
+func (utk UserTeamKey) MarshalZerologObject(e *zerolog.Event) {
+	e.Str("team_id", utk.TeamID).Str("user_id", utk.UserID)
+}
+
+type UserTeamMXIDKey struct {
+	UserTeamKey
+	UserMXID id.UserID
+}
+
+func (utk UserTeamMXIDKey) MarshalZerologObject(e *zerolog.Event) {
+	e.Str("team_id", utk.TeamID).Str("user_id", utk.UserID).Stringer("user_mxid", utk.UserMXID)
 }
 
 type UserTeam struct {
-	db  *Database
-	log log.Logger
+	qh *dbutil.QueryHelper[*UserTeam]
 
-	Key UserTeamKey
-
-	SlackEmail string
-	TeamName   string
-
+	UserTeamMXIDKey
+	Email       string
 	Token       string
 	CookieToken string
-
-	InSpace bool
-
-	Client *slack.Client
-	RTM    *slack.RTM
+	InSpace     bool
 }
 
-func (ut *UserTeam) GetMXID() id.UserID {
-	return ut.Key.MXID
-}
-
-func (ut *UserTeam) GetRemoteID() string {
-	return ut.Key.TeamID
-}
-
-func (ut *UserTeam) GetRemoteName() string {
-	return ut.TeamName
-}
-
-func (ut *UserTeam) IsLoggedIn() bool {
-	return ut.Token != ""
-}
-
-func (ut *UserTeam) IsConnected() bool {
-	return ut.Client != nil && ut.RTM != nil
-}
-
-func (ut *UserTeam) Scan(row dbutil.Scannable) *UserTeam {
+func (ut *UserTeam) Scan(row dbutil.Scannable) (*UserTeam, error) {
 	var token sql.NullString
 	var cookieToken sql.NullString
 
-	err := row.Scan(&ut.Key.MXID, &ut.SlackEmail, &ut.Key.SlackID, &ut.TeamName, &ut.Key.TeamID, &token, &cookieToken, &ut.InSpace)
+	err := row.Scan(&ut.TeamID, &ut.UserID, &ut.UserMXID, &ut.Email, &token, &cookieToken, &ut.InSpace)
 	if err != nil {
-		if err != sql.ErrNoRows {
-			ut.log.Errorln("Database scan failed:", err)
-		}
-
-		return nil
+		return nil, err
 	}
 
-	if token.Valid {
-		ut.Token = token.String
-	}
-	if cookieToken.Valid {
-		ut.CookieToken = cookieToken.String
-	}
-
-	return ut
+	ut.Token = token.String
+	ut.CookieToken = cookieToken.String
+	return ut, nil
 }
 
-func (ut *UserTeam) Upsert() {
-	query := `
-		INSERT INTO user_team (mxid, slack_email, slack_id, team_name, team_id, token, cookie_token, in_space)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT (mxid, slack_id, team_id) DO UPDATE
-			SET slack_email=excluded.slack_email, team_name=excluded.team_name, token=excluded.token, cookie_token=excluded.cookie_token, in_space=excluded.in_space
-	`
-
-	token := sqlNullString(ut.Token)
-	cookieToken := sqlNullString(ut.CookieToken)
-
-	_, err := ut.db.Exec(query, ut.Key.MXID, ut.SlackEmail, ut.Key.SlackID, ut.TeamName, ut.Key.TeamID, token, cookieToken, ut.InSpace)
-
-	if err != nil {
-		ut.log.Warnfln("Failed to upsert %s/%s/%s: %v", ut.Key.MXID, ut.Key.SlackID, ut.Key.TeamID, err)
+func (ut *UserTeam) sqlVariables() []any {
+	return []any{
+		ut.TeamID, ut.UserID, ut.UserMXID, ut.Email, ut.Token, ut.CookieToken, ut.InSpace,
 	}
+}
+
+func (ut *UserTeam) Insert(ctx context.Context) error {
+	return ut.qh.Exec(ctx, insertUserTeamQuery, ut.sqlVariables()...)
+}
+
+func (ut *UserTeam) Update(ctx context.Context) error {
+	return ut.qh.Exec(ctx, updateUserTeamQuery, ut.sqlVariables()...)
+}
+
+func (ut *UserTeam) Delete(ctx context.Context) error {
+	return ut.qh.Exec(ctx, deleteUserTeamQuery, ut.TeamID, ut.UserID)
 }

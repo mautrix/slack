@@ -17,10 +17,11 @@
 package upgrades
 
 import (
+	"context"
 	"embed"
 	"errors"
 
-	"maunium.net/go/mautrix/util/dbutil"
+	"go.mau.fi/util/dbutil"
 )
 
 var Table dbutil.UpgradeTable
@@ -29,7 +30,7 @@ var Table dbutil.UpgradeTable
 var rawUpgrades embed.FS
 
 func init() {
-	Table.Register(-1, 7, 0, "Unsupported version", false, func(tx dbutil.Execable, database *dbutil.Database) error {
+	Table.Register(-1, 7, 0, "Unsupported version", false, func(ctx context.Context, database *dbutil.Database) error {
 		return errors.New("data from old dev version of mautrix-slack not supported, please delete the bridge database and set up bridge again")
 	})
 	Table.RegisterFS(rawUpgrades)

@@ -1,5 +1,5 @@
 // mautrix-slack - A Matrix-Slack puppeting bridge.
-// Copyright (C) 2022 Tulir Asokan
+// Copyright (C) 2024 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -17,15 +17,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 
-	log "maunium.net/go/maulogger/v2"
-
-	"github.com/slack-go/slack"
+	"github.com/rs/zerolog"
+	"maunium.net/go/mautrix/bridge/commands"
 
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/appservice"
@@ -40,24 +39,18 @@ import (
 	"go.mau.fi/mautrix-slack/database"
 )
 
-var (
-	ErrNotConnected = errors.New("not connected")
-	ErrNotLoggedIn  = errors.New("not logged in")
-)
-
 type User struct {
 	*database.User
 
-	sync.Mutex
-
 	bridge *SlackBridge
-	log    log.Logger
+	zlog   zerolog.Logger
 
-	BridgeStates map[string]*bridge.BridgeStateQueue
+	teams map[string]*UserTeam
 
-	PermissionLevel bridgeconfig.PermissionLevel
-
-	spaceCreateLock sync.Mutex
+	spaceCreateLock    sync.Mutex
+	PermissionLevel    bridgeconfig.PermissionLevel
+	DoublePuppetIntent *appservice.IntentAPI
+	CommandState       *commands.CommandState
 }
 
 func (user *User) GetPermissionLevel() bridgeconfig.PermissionLevel {
@@ -72,35 +65,28 @@ func (user *User) GetMXID() id.UserID {
 	return user.MXID
 }
 
-func (user *User) GetCommandState() map[string]interface{} {
-	return nil
-}
-
 func (user *User) GetIDoublePuppet() bridge.DoublePuppet {
-	p := user.bridge.GetPuppetByCustomMXID(user.MXID)
-	if p == nil || p.CustomIntent() == nil {
-		return nil
-	}
-	return p
+	return user
 }
 
 func (user *User) GetIGhost() bridge.Ghost {
-	// if user.ID == "" {
-	// 	return nil
-	// }
-	// p := user.bridge.GetPuppetByID(user.ID)
-	// if p == nil {
-	// 	return nil
-	// }
-	// return p
 	return nil
 }
 
-var _ bridge.User = (*User)(nil)
+func (user *User) GetCommandState() *commands.CommandState {
+	return user.CommandState
+}
 
-func (br *SlackBridge) loadUser(dbUser *database.User, mxid *id.UserID) *User {
-	// If we weren't passed in a user we attempt to create one if we were given
-	// a matrix id.
+func (user *User) SetCommandState(state *commands.CommandState) {
+	user.CommandState = state
+}
+
+var (
+	_ bridge.User             = (*User)(nil)
+	_ commands.CommandingUser = (*User)(nil)
+)
+
+func (br *SlackBridge) loadUser(ctx context.Context, dbUser *database.User, mxid *id.UserID) *User {
 	if dbUser == nil {
 		if mxid == nil {
 			return nil
@@ -108,859 +94,295 @@ func (br *SlackBridge) loadUser(dbUser *database.User, mxid *id.UserID) *User {
 
 		dbUser = br.DB.User.New()
 		dbUser.MXID = *mxid
-		dbUser.Insert()
+		err := dbUser.Insert(ctx)
+		if err != nil {
+			br.ZLog.Err(err).Stringer("user_id", dbUser.MXID).Msg("Failed to insert new user to database")
+			return nil
+		}
 	}
 
-	user := br.NewUser(dbUser)
+	user := br.newUser(dbUser)
 
-	// We assume the usersLock was acquired by our caller.
 	br.usersByMXID[user.MXID] = user
-
 	if user.ManagementRoom != "" {
-		// Lock the management rooms for our update
-		br.managementRoomsLock.Lock()
 		br.managementRooms[user.ManagementRoom] = user
-		br.managementRoomsLock.Unlock()
 	}
+	user.bridge.unlockedGetAllUserTeamsForUser(user.MXID)
 
+	return user
+}
+
+func (br *SlackBridge) newUser(dbUser *database.User) *User {
+	user := &User{
+		User:   dbUser,
+		bridge: br,
+		zlog:   br.ZLog.With().Stringer("user_id", dbUser.MXID).Logger(),
+		teams:  make(map[string]*UserTeam),
+	}
+	user.PermissionLevel = br.Config.Bridge.Permissions.Get(user.MXID)
 	return user
 }
 
 func (br *SlackBridge) GetUserByMXID(userID id.UserID) *User {
-	_, _, isPuppet := br.ParsePuppetMXID(userID)
+	return br.getUserByMXID(userID, false)
+}
+
+func (br *SlackBridge) GetCachedUserByMXID(userID id.UserID) *User {
+	br.userAndTeamLock.Lock()
+	defer br.userAndTeamLock.Unlock()
+	return br.usersByMXID[userID]
+}
+
+func (br *SlackBridge) getUserByMXID(userID id.UserID, onlyIfExists bool) *User {
+	_, isPuppet := br.ParsePuppetMXID(userID)
 	if isPuppet || userID == br.Bot.UserID {
 		return nil
 	}
+	br.userAndTeamLock.Lock()
+	defer br.userAndTeamLock.Unlock()
+	return br.unlockedGetUserByMXID(userID, onlyIfExists)
+}
 
-	br.usersLock.Lock()
-	defer br.usersLock.Unlock()
-
+func (br *SlackBridge) unlockedGetUserByMXID(userID id.UserID, onlyIfExists bool) *User {
 	user, ok := br.usersByMXID[userID]
 	if !ok {
-		br.Log.Debugfln("User %s not present in usersByMXID map!", userID)
-		return br.loadUser(br.DB.User.GetByMXID(userID), &userID)
+		ctx := context.TODO()
+		dbUser, err := br.DB.User.GetByMXID(ctx, userID)
+		if err != nil {
+			br.ZLog.Err(err).Stringer("user_id", userID).Msg("Failed to get user by MXID from database")
+			return nil
+		}
+		mxidPtr := &userID
+		if onlyIfExists {
+			mxidPtr = nil
+		}
+		return br.loadUser(ctx, dbUser, mxidPtr)
 	}
 
 	return user
 }
 
-func (br *SlackBridge) GetUserByID(teamID, userID string) *User {
-	br.usersLock.Lock()
-	defer br.usersLock.Unlock()
+func (br *SlackBridge) GetAllUsersWithAccessToken() []*User {
+	br.userAndTeamLock.Lock()
+	defer br.userAndTeamLock.Unlock()
 
-	user, ok := br.usersByID[teamID+"-"+userID]
-	if !ok {
-		return br.loadUser(br.DB.User.GetBySlackID(teamID, userID), nil)
+	dbUsers, err := br.DB.User.GetAllWithAccessToken(context.TODO())
+	if err != nil {
+		br.ZLog.Err(err).Msg("Failed to get all users from database")
+		return nil
 	}
-
-	return user
-}
-
-func (br *SlackBridge) NewUser(dbUser *database.User) *User {
-	user := &User{
-		User:   dbUser,
-		bridge: br,
-		log:    br.Log.Sub("User").Sub(string(dbUser.MXID)),
-	}
-
-	user.PermissionLevel = br.Config.Bridge.Permissions.Get(user.MXID)
-	user.BridgeStates = make(map[string]*bridge.BridgeStateQueue)
-
-	return user
-}
-
-func (br *SlackBridge) getAllUsers() []*User {
-	br.usersLock.Lock()
-	defer br.usersLock.Unlock()
-
-	dbUsers := br.DB.User.GetAll()
 	users := make([]*User, len(dbUsers))
 
-	for idx, dbUser := range dbUsers {
+	for i, dbUser := range dbUsers {
 		user, ok := br.usersByMXID[dbUser.MXID]
 		if !ok {
-			user = br.loadUser(dbUser, nil)
+			users[i] = br.loadUser(context.TODO(), dbUser, nil)
+		} else {
+			users[i] = user
 		}
-		users[idx] = user
 	}
 
 	return users
 }
 
 func (br *SlackBridge) startUsers() {
-	br.Log.Debugln("Starting users")
+	//if !br.historySyncLoopStarted {
+	//	br.ZLog.Debug().Msg("Starting backfill loop")
+	//	go br.handleHistorySyncsLoop()
+	//}
 
-	if !br.historySyncLoopStarted {
-		br.Log.Debugln("Starting backfill loop")
-		go br.handleHistorySyncsLoop()
+	br.ZLog.Debug().Msg("Starting user teams")
+	userTeams := br.GetAllUserTeamsWithToken()
+	for _, ut := range userTeams {
+		go ut.Connect()
 	}
-
-	users := br.getAllUsers()
-
-	for _, user := range users {
-		go user.Connect()
-	}
-	if sort.Search(len(users), func(i int) bool { return len(users[i].Teams) > 0 }) == len(users) { // if there are no users with any configured userTeams
-		br.Log.Debugln("No users with userTeams found, sending UNCONFIGURED")
+	if len(userTeams) == 0 {
+		br.ZLog.Debug().Msg("No users to start, sending unconfigured state")
 		br.SendGlobalBridgeState(status.BridgeState{StateEvent: status.StateUnconfigured}.Fill(nil))
 	}
 
-	br.Log.Debugln("Starting custom puppets")
-	for _, customPuppet := range br.GetAllPuppetsWithCustomMXID() {
-		go func(puppet *Puppet) {
-			br.Log.Debugln("Starting custom puppet", puppet.CustomMXID)
-
-			if err := puppet.StartCustomMXID(true); err != nil {
-				puppet.log.Errorln("Failed to start custom puppet:", err)
+	br.ZLog.Debug().Msg("Starting custom puppets")
+	for _, user := range br.GetAllUsersWithAccessToken() {
+		go func(user *User) {
+			user.zlog.Debug().Msg("Starting double puppet")
+			if err := user.StartCustomMXID(true); err != nil {
+				user.zlog.Err(err).Msg("Failed to start double puppet")
 			}
-		}(customPuppet)
+		}(user)
 	}
 }
 
 func (user *User) SetManagementRoom(roomID id.RoomID) {
-	user.bridge.managementRoomsLock.Lock()
-	defer user.bridge.managementRoomsLock.Unlock()
+	user.bridge.userAndTeamLock.Lock()
+	defer user.bridge.userAndTeamLock.Unlock()
+	ctx := context.TODO()
 
 	existing, ok := user.bridge.managementRooms[roomID]
 	if ok {
-		// If there's a user already assigned to this management room, clear it
-		// out.
-		// I think this is due a name change or something? I dunno, leaving it
-		// for now.
 		existing.ManagementRoom = ""
-		existing.Update()
+		err := existing.Update(ctx)
+		if err != nil {
+			user.zlog.Err(err).Stringer("previous_user_mxid", existing.MXID).
+				Msg("Failed to update previous user's management room")
+		}
 	}
 
 	user.ManagementRoom = roomID
 	user.bridge.managementRooms[user.ManagementRoom] = user
-	user.Update()
-}
-
-func (user *User) tryAutomaticDoublePuppeting(userTeam *database.UserTeam) {
-	user.Lock()
-	defer user.Unlock()
-
-	if !user.bridge.Config.CanAutoDoublePuppet(user.MXID) {
-		return
-	}
-
-	user.log.Debugln("Checking if double puppeting needs to be enabled")
-
-	puppet := user.bridge.GetPuppetByID(userTeam.Key.TeamID, userTeam.Key.SlackID)
-	if puppet.CustomMXID != "" {
-		user.log.Debugln("User already has double-puppeting enabled")
-
-		return
-	}
-
-	accessToken, err := puppet.loginWithSharedSecret(user.MXID, userTeam.Key.TeamID)
+	err := user.Update(ctx)
 	if err != nil {
-		user.log.Warnln("Failed to login with shared secret:", err)
-
-		return
+		user.zlog.Err(err).Stringer("management_room_mxid", roomID).
+			Msg("Failed to save user after updating management room")
 	}
-
-	err = puppet.SwitchCustomMXID(accessToken, user.MXID)
-	if err != nil {
-		puppet.log.Warnln("Failed to switch to auto-logined custom puppet:", err)
-
-		return
-	}
-
-	user.log.Infoln("Successfully automatically enabled custom puppet")
 }
 
-func (user *User) syncChatDoublePuppetDetails(portal *Portal, justCreated bool) {
-	doublePuppet := portal.bridge.GetPuppetByCustomMXID(user.MXID)
-	if doublePuppet == nil {
-		return
+func (user *User) login(ctx context.Context, info *auth.Info) error {
+	user.bridge.userAndTeamLock.Lock()
+	existingTeam, ok := user.teams[info.TeamID]
+	user.bridge.userAndTeamLock.Unlock()
+	if ok && existingTeam.UserID != info.UserID {
+		if existingTeam.Token == "" {
+			existingTeam.Delete(ctx)
+		} else {
+			return fmt.Errorf("already logged into that team as %s/%s", existingTeam.Email, existingTeam.UserID)
+		}
 	}
 
-	if doublePuppet == nil || doublePuppet.CustomIntent() == nil || portal.MXID == "" {
-		return
+	userTeam := user.bridge.GetUserTeamByID(database.UserTeamKey{
+		TeamID: info.TeamID,
+		UserID: info.UserID,
+	}, user.MXID)
+	if userTeam == nil {
+		return fmt.Errorf("failed to get user team from database")
+	} else if userTeam.UserMXID != user.MXID {
+		return fmt.Errorf("%s is already logged into that account", userTeam.UserMXID)
 	}
-
-	// TODO sync mute status
-}
-
-func (user *User) login(info *auth.Info, force bool) {
-	userTeam := user.bridge.DB.UserTeam.New()
-
-	userTeam.Key.MXID = user.MXID
-	userTeam.Key.SlackID = info.UserID
-	userTeam.Key.TeamID = info.TeamID
-	userTeam.SlackEmail = info.UserEmail
-	userTeam.TeamName = info.TeamName
+	userTeam.Email = info.UserEmail
 	userTeam.Token = info.Token
 	userTeam.CookieToken = info.CookieToken
-
-	// We minimize the time we hold the lock because SyncTeams also needs the
-	// lock.
-	user.TeamsLock.Lock()
-	user.Teams[userTeam.Key.TeamID] = userTeam
-	user.TeamsLock.Unlock()
-
-	user.User.SyncTeams()
-
-	user.log.Debugfln("logged into %s successfully", info.TeamName)
-
-	user.BridgeStates[info.TeamID] = user.bridge.NewBridgeStateQueue(userTeam)
-	user.bridge.usersByID[fmt.Sprintf("%s-%s", userTeam.Key.TeamID, userTeam.Key.SlackID)] = user
-	user.connectTeam(userTeam)
+	err := userTeam.Update(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to save token: %w", err)
+	}
+	user.zlog.Info().
+		Str("team_name", info.TeamName).
+		Str("team_id", info.TeamID).
+		Str("user_id", info.UserID).
+		Str("user_email", info.UserEmail).
+		Msg("Successfully logged in")
+	go userTeam.Connect()
+	return nil
 }
 
-func (user *User) LoginTeam(email, team, password string) error {
-	info, err := auth.LoginPassword(user.log, email, team, password)
+func (user *User) LoginTeam(ctx context.Context, email, team, password string) error {
+	info, err := auth.LoginPassword(email, team, password)
 	if err != nil {
 		return err
 	}
 
-	go user.login(info, false)
-	return nil
+	return user.login(ctx, info)
 }
 
-func (user *User) TokenLogin(token string, cookieToken string) (*auth.Info, error) {
+func (user *User) TokenLogin(ctx context.Context, token string, cookieToken string) (*auth.Info, error) {
 	info, err := auth.LoginToken(token, cookieToken)
 	if err != nil {
 		return nil, err
 	}
 
-	go user.login(info, true)
-	return info, nil
+	return info, user.login(ctx, info)
 }
 
 func (user *User) IsLoggedIn() bool {
-	return len(user.GetLoggedInTeams()) > 0
-}
-
-func (user *User) IsLoggedInTeam(email, team string) bool {
-	if user.TeamLoggedIn(email, team) {
-		user.log.Errorf("%s is already logged into team %s with %s", user.MXID, team, email)
-
-		return true
+	user.bridge.userAndTeamLock.Lock()
+	defer user.bridge.userAndTeamLock.Unlock()
+	for _, ut := range user.teams {
+		if ut.Client != nil {
+			return true
+		}
 	}
-
 	return false
 }
 
-func (user *User) LogoutUserTeam(userTeam *database.UserTeam) error {
-	if userTeam == nil || !userTeam.IsLoggedIn() {
-		return ErrNotLoggedIn
-	}
-
-	user.leavePortals(userTeam)
-
-	puppet := user.bridge.GetPuppetByID(userTeam.Key.TeamID, userTeam.Key.SlackID)
-	if puppet.CustomMXID != "" {
-		err := puppet.SwitchCustomMXID("", "")
-		if err != nil {
-			user.log.Warnln("Failed to logout-matrix while logging out of Slack:", err)
-		}
-	}
-
-	if userTeam.RTM != nil {
-		if err := userTeam.RTM.Disconnect(); err != nil && !errors.Is(err, slack.ErrAlreadyDisconnected) {
-			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: err.Error()})
-			return err
-		}
-	}
-
-	if _, err := userTeam.Client.SendAuthSignout(); err != nil {
-		user.log.Errorfln("Failed to send auth.signout request to Slack! %v", err)
-	}
-
-	userTeam.Client = nil
-
-	user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateLoggedOut})
-
-	user.TeamsLock.Lock()
-	delete(user.Teams, userTeam.Key.TeamID)
-	user.TeamsLock.Unlock()
-
-	userTeam.Token = ""
-	userTeam.CookieToken = ""
-	userTeam.Upsert()
-
-	user.Update()
-
-	return nil
+func (user *User) GetTeam(teamID string) *UserTeam {
+	user.bridge.userAndTeamLock.Lock()
+	defer user.bridge.userAndTeamLock.Unlock()
+	return user.teams[teamID]
 }
 
-func (user *User) leavePortals(userTeam *database.UserTeam) {
-	for _, portal := range user.bridge.GetAllPortalsForUserTeam(userTeam.Key) {
-		portal.leave(userTeam)
+func (user *User) ensureInvited(ctx context.Context, intent *appservice.IntentAPI, roomID id.RoomID, isDirect bool) (ok bool) {
+	extraContent := make(map[string]interface{})
+	if isDirect {
+		extraContent["is_direct"] = true
 	}
-}
-
-func (user *User) slackMessageHandler(userTeam *database.UserTeam) {
-	user.log.Debugfln("Start receiving Slack events for %s", userTeam.Key)
-	for msg := range userTeam.RTM.IncomingEvents {
-		switch event := msg.Data.(type) {
-		case *slack.ConnectingEvent:
-			user.log.Debugfln("connecting: attempt %d", event.Attempt)
-			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateConnecting})
-		case *slack.ConnectedEvent:
-			// Update all of our values according to what the server has for us.
-			userTeam.Key.SlackID = event.Info.User.ID
-			userTeam.Key.TeamID = event.Info.Team.ID
-			userTeam.TeamName = event.Info.Team.Name
-
-			userTeam.Upsert()
-
-			user.tryAutomaticDoublePuppeting(userTeam)
-			user.log.Infofln("connected to team %s as %s", userTeam.TeamName, userTeam.SlackEmail)
-
-			if user.bridge.Config.Bridge.Backfill.Enable {
-				user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateBackfilling})
-
-				portals := user.bridge.dbPortalsToPortals(user.bridge.DB.Portal.GetAllForUserTeam(userTeam.Key))
-				for _, portal := range portals {
-					err := portal.ForwardBackfill()
-					if err != nil {
-						user.log.Warnfln("Forward backfill for portal %s failed: %v", portal.Key, err)
-					}
-				}
-			}
-			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateConnected})
-		case *slack.HelloEvent:
-			// Ignored for now
-		case *slack.InvalidAuthEvent:
-			user.log.Errorln("invalid authentication token")
-
-			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateBadCredentials})
-
-			// TODO: Should drop a message in the management room
-
-			return
-		case *slack.LatencyReport:
-			user.log.Debugln("latency report:", event.Value)
-		case *slack.MessageEvent:
-			user.bridge.ZLog.Trace().Any("event_content", event).Msg("Raw slack message event")
-			key := database.NewPortalKey(userTeam.Key.TeamID, event.Channel)
-			portal := user.bridge.GetPortalByID(key)
-			if portal != nil {
-				if portal.MXID == "" {
-					channel, err := userTeam.Client.GetConversationInfo(&slack.GetConversationInfoInput{
-						ChannelID:         event.Channel,
-						IncludeLocale:     true,
-						IncludeNumMembers: true,
-					})
-					if err != nil {
-						portal.log.Errorln("failed to lookup channel info:", err)
-						continue
-					}
-
-					portal.log.Debugln("Creating Matrix room from incoming message")
-					if err := portal.CreateMatrixRoom(user, userTeam, channel, false); err != nil {
-						portal.log.Errorln("Failed to create portal room:", err)
-						continue
-					}
-				}
-				portal.HandleSlackMessage(user, userTeam, event)
-			}
-		case *slack.ReactionAddedEvent:
-			key := database.NewPortalKey(userTeam.Key.TeamID, event.Item.Channel)
-			portal := user.bridge.GetPortalByID(key)
-			if portal != nil {
-				portal.HandleSlackReaction(user, userTeam, event)
-			}
-		case *slack.ReactionRemovedEvent:
-			key := database.NewPortalKey(userTeam.Key.TeamID, event.Item.Channel)
-			portal := user.bridge.GetPortalByID(key)
-			if portal != nil {
-				portal.HandleSlackReactionRemoved(user, userTeam, event)
-			}
-		case *slack.UserTypingEvent:
-			key := database.NewPortalKey(userTeam.Key.TeamID, event.Channel)
-			portal := user.bridge.GetPortalByID(key)
-			if portal != nil {
-				portal.HandleSlackTyping(user, userTeam, event)
-			}
-		case *slack.ChannelMarkedEvent:
-			key := database.NewPortalKey(userTeam.Key.TeamID, event.Channel)
-			portal := user.bridge.GetPortalByID(key)
-			if portal != nil {
-				portal.HandleSlackChannelMarked(user, userTeam, event)
-			}
-		case *slack.ChannelJoinedEvent:
-			key := database.NewPortalKey(userTeam.Key.TeamID, event.Channel.ID)
-			portal := user.bridge.GetPortalByID(key)
-			if portal != nil {
-				if portal.MXID == "" {
-					portal.log.Debugln("Creating Matrix room from joined channel")
-					if err := portal.CreateMatrixRoom(user, userTeam, &event.Channel, false); err != nil {
-						portal.log.Errorln("Failed to create portal room:", err)
-						continue
-					}
-				}
-			} else {
-				portal.ensureUserInvited(user)
-			}
-		case *slack.ChannelLeftEvent:
-			key := database.NewPortalKey(userTeam.Key.TeamID, event.Channel)
-			portal := user.bridge.GetPortalByID(key)
-			if portal != nil {
-				portal.leave(userTeam)
-			}
-		case *slack.ChannelUpdateEvent:
-			key := database.NewPortalKey(userTeam.Key.TeamID, event.Channel)
-			portal := user.bridge.GetPortalByID(key)
-			if portal != nil {
-				portal.UpdateInfo(user, userTeam, nil, true)
-			}
-		case *slack.RTMError:
-			user.log.Errorln("rtm error:", event.Error())
-			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: event.Error()})
-		case *slack.FileSharedEvent, *slack.FilePublicEvent, *slack.FilePrivateEvent, *slack.FileCreatedEvent, *slack.FileChangeEvent, *slack.FileDeletedEvent, *slack.DesktopNotificationEvent:
-			// ignored intentionally, these are duplicates or do not contain useful information
-		default:
-			user.log.Warnln("unknown message", msg)
-		}
+	customPuppet := user.DoublePuppetIntent
+	if customPuppet != nil {
+		extraContent["fi.mau.will_auto_accept"] = true
 	}
-	user.log.Errorfln("Slack RTM for %s unexpectedly disconnected!", userTeam.Key)
-	user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: "Disconnected for unknown reason"})
-}
-
-func (user *User) connectTeam(userTeam *database.UserTeam) error {
-	user.log.Infofln("Connecting %s to Slack userteam %s (%s)", user.MXID, userTeam.Key, userTeam.TeamName)
-	slackOptions := []slack.Option{
-		slack.OptionLog(SlackgoLogger{user.log.Sub(fmt.Sprintf("SlackGo/%s", userTeam.Key))}),
-		//slack.OptionDebug(user.bridge.Config.Logging.PrintLevel <= 0),
-	}
-	if userTeam.CookieToken != "" {
-		slackOptions = append(slackOptions, slack.OptionCookie("d", userTeam.CookieToken))
-	}
-	userTeam.Client = slack.New(userTeam.Token, slackOptions...)
-
-	// test Slack connection before trying to go further
-	_, err := userTeam.Client.GetUserProfile(&slack.GetUserProfileParameters{})
-	if err != nil {
-		user.log.Errorln("Error connecting to Slack team", err)
-		return err
-	}
-
-	userTeam.RTM = userTeam.Client.NewRTM()
-
-	go userTeam.RTM.ManageConnection()
-
-	go user.slackMessageHandler(userTeam)
-
-	go user.UpdateTeam(userTeam, false)
-
-	return nil
-}
-
-func (user *User) isChannelOrOpenIM(channel *slack.Channel) bool {
-	if !channel.IsIM {
-		return true
-	} else {
-		return channel.Latest != nil && channel.Latest.SubType == ""
-	}
-}
-
-func (user *User) SyncPortals(team *Team, userTeam *database.UserTeam, force bool) error {
-	channelInfo := map[string]slack.Channel{}
-
-	if !strings.HasPrefix(userTeam.Token, "xoxs") {
-		// TODO: use pagination to make sure we get everything!
-		channels, _, err := userTeam.Client.GetConversationsForUser(&slack.GetConversationsForUserParameters{
-			Types: []string{"public_channel", "private_channel", "mpim", "im"},
-			Limit: user.bridge.Config.Bridge.Backfill.ConversationsCount,
-		})
-		if err != nil {
-			user.log.Warnfln("Error fetching channels: %v", err)
-		}
-		for i, channel := range channels {
-			// replace channel entry in list with one that has more metadata
-			c, err := userTeam.Client.GetConversationInfo(&slack.GetConversationInfoInput{
-				ChannelID:         channel.ID,
-				IncludeLocale:     true,
-				IncludeNumMembers: true,
-			})
-			if err != nil {
-				user.log.Errorfln("Error getting information about IM: %v", err)
-				return err
-			}
-			channels[i] = *c
-		}
-		sort.Slice(channels, func(i, j int) bool {
-			if channels[i].LastRead == "" {
-				return false
-			}
-			if channels[j].LastRead == "" {
-				return true
-			}
-			return parseSlackTimestamp(channels[i].LastRead).After(parseSlackTimestamp(channels[j].LastRead))
-		})
-		for _, channel := range channels {
-			if user.isChannelOrOpenIM(&channel) {
-				channelInfo[channel.ID] = channel
-			}
-		}
-	} else {
-		user.log.Warnfln("Not fetching channels for userteam %s: xoxs token type can't fetch user's joined channels", userTeam.Key)
-	}
-
-	portals := user.bridge.DB.Portal.GetAllForUserTeam(userTeam.Key)
-	for _, dbPortal := range portals {
-		// First, go through all pre-existing portals and update their info
-		portal := user.bridge.GetPortalByID(dbPortal.Key)
-		channel := channelInfo[dbPortal.Key.ChannelID]
-		if portal.MXID != "" {
-			if channel.ID == "" {
-				portal.UpdateInfo(user, userTeam, nil, force)
-			} else {
-				portal.UpdateInfo(user, userTeam, &channel, force)
-			}
-			portal.ensureUserInvited(user)
-			portal.InsertUser(userTeam.Key)
-		} else {
-			portal.CreateMatrixRoom(user, userTeam, &channel, true)
-		}
-		portal.InSpace = team.addPortalToTeam(portal.Portal, portal.InSpace)
-		portal.Update(nil)
-		// Delete already handled ones from the map
-		delete(channelInfo, dbPortal.Key.ChannelID)
-	}
-
-	for _, channel := range channelInfo {
-		// Remaining ones in the map are new channels that weren't handled yet
-		key := database.NewPortalKey(userTeam.Key.TeamID, channel.ID)
-		portal := user.bridge.GetPortalByID(key)
-		if portal.MXID != "" {
-			portal.UpdateInfo(user, userTeam, &channel, force)
-			portal.InsertUser(userTeam.Key)
-		} else {
-			portal.CreateMatrixRoom(user, userTeam, &channel, true)
-		}
-		portal.InSpace = team.addPortalToTeam(portal.Portal, portal.InSpace)
-		portal.Update(nil)
-	}
-
-	return nil
-}
-
-func (user *User) UpdateTeam(userTeam *database.UserTeam, force bool) error {
-	user.log.Debugfln("Updating team info for team %s", userTeam.Key.TeamID)
-	team := user.bridge.GetTeamByID(userTeam.Key.TeamID, true)
-
-	teamInfo, err := userTeam.Client.GetTeamInfo()
-	if err != nil {
-		user.log.Errorln("Failed to fetch team info ", userTeam.Key.TeamID)
-	}
-
-	var changed bool
-	if team.SpaceRoom == "" {
-		err = team.CreateMatrixRoom(user, teamInfo)
-	}
-
-	if team.TeamName != teamInfo.Name {
-		team.TeamName = teamInfo.Name
-		changed = true
-	}
-	if team.TeamDomain != teamInfo.Domain {
-		team.TeamDomain = teamInfo.Domain
-		changed = true
-	}
-	if team.TeamUrl != teamInfo.URL {
-		team.TeamUrl = teamInfo.URL
-		changed = true
-	}
-	if teamInfo.Icon["image_default"] != nil && teamInfo.Icon["image_default"] == true && team.Avatar != "" {
-		team.Avatar = ""
-		team.AvatarUrl = id.MustParseContentURI("")
-		changed = true
-	} else if teamInfo.Icon["image_default"] != nil && teamInfo.Icon["image_default"] == false && teamInfo.Icon["image_230"] != nil && team.Avatar != teamInfo.Icon["image_230"] {
-		avatar, err := uploadPlainFile(user.bridge.AS.BotIntent(), teamInfo.Icon["image_230"].(string))
-		if err != nil {
-			user.log.Warnfln("Error uploading new team avatar for team %s: %v", userTeam.Key.TeamID, err)
-		} else {
-			team.Avatar = teamInfo.Icon["image_230"].(string)
-			team.AvatarUrl = avatar
-			changed = true
-		}
-	} else {
-		changed = team.UpdateInfo(user, teamInfo)
-	}
-	team.Upsert()
-
-	emojis, err := userTeam.Client.GetEmoji()
-	if err != nil {
-		user.log.Error("Fetching emojis for team failed", err)
-	} else {
-		emojiCount, err := user.bridge.DB.Emoji.GetEmojiCount(userTeam.Key.TeamID)
-		if err != nil {
-			user.log.Error("Getting emoji count from database failed", err)
-		} else {
-			if emojiCount != len(emojis) {
-				user.log.Info("Importing emojis for team")
-				go user.bridge.ImportEmojis(userTeam, &emojis, false)
-			}
-		}
-	}
-
-	puppets := user.bridge.GetAllPuppetsForTeam(userTeam.Key.TeamID)
-	for _, puppet := range puppets {
-		puppet.UpdateInfo(userTeam, false, nil)
-	}
-
-	inSpace := user.addTeamToSpace(team.TeamInfo, userTeam.InSpace)
-	userTeam.InSpace = inSpace
-	userTeam.Upsert()
-
-	return user.SyncPortals(team, userTeam, changed || force)
-}
-
-func (user *User) Connect() error {
-	user.Lock()
-	defer user.Unlock()
-
-	user.log.Infofln("Connecting Slack teams for user %s", user.MXID)
-	for key, userTeam := range user.Teams {
-		user.bridge.usersByID[fmt.Sprintf("%s-%s", userTeam.Key.TeamID, userTeam.Key.SlackID)] = user
-		user.BridgeStates[key] = user.bridge.NewBridgeStateQueue(userTeam)
-		err := user.connectTeam(userTeam)
-		if err != nil && (err.Error() == "user_removed_from_team" || err.Error() == "invalid_auth") {
-			user.LogoutUserTeam(userTeam)
-			user.log.Infoln("User not logged in to Slack team, deleting")
-		} else if err != nil {
-			user.log.Errorln("Error connecting to Slack team", err)
-		}
-		// if err != nil {
-		// 	user.log.Errorfln("Error connecting to Slack userteam %s: %v", userTeam.Key, err)
-		// 	// TODO: more detailed error state
-		// 	user.BridgeStates[key].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: err.Error()})
-		// }
-	}
-
-	return nil
-}
-
-func (user *User) disconnectTeam(userTeam *database.UserTeam) error {
-	user.log.Infofln("Disconnecting Slack userteam %s", userTeam.Key)
-	if userTeam.RTM != nil {
-		if err := userTeam.RTM.Disconnect(); err != nil {
-			user.log.Errorfln("Error disconnecting RTM for %s: %v", userTeam.Key, err)
-			user.BridgeStates[userTeam.Key.TeamID].Send(status.BridgeState{StateEvent: status.StateUnknownError, Message: err.Error()})
-			return err
-		}
-	}
-
-	userTeam.Client = nil
-	user.log.Debugfln("Slack client for %s set to nil!", userTeam.Key)
-
-	return nil
-}
-
-func (user *User) Disconnect() error {
-	user.Lock()
-	defer user.Unlock()
-
-	user.log.Infofln("Disconnecting Slack teams for user %s", user.MXID)
-	for _, userTeam := range user.Teams {
-		if err := user.disconnectTeam(userTeam); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (user *User) GetUserTeam(teamID string) *database.UserTeam {
-	user.TeamsLock.Lock()
-	defer user.TeamsLock.Unlock()
-
-	if userTeam, found := user.Teams[teamID]; found {
-		return userTeam
-	}
-
-	return nil
-}
-
-// func (user *User) getDirectChats() map[id.UserID][]id.RoomID {
-// 	chats := map[id.UserID][]id.RoomID{}
-
-// 	privateChats := user.bridge.DB.Portal.FindPrivateChatsOf(user.DiscordID)
-// 	for _, portal := range privateChats {
-// 		if portal.MXID != "" {
-// 			puppetMXID := user.bridge.FormatPuppetMXID(portal.Key.Receiver)
-
-// 			chats[puppetMXID] = []id.RoomID{portal.MXID}
-// 		}
-// 	}
-
-// 	return chats
-// }
-
-// func (user *User) updateDirectChats(chats map[id.UserID][]id.RoomID) {
-// 	if !user.bridge.Config.Bridge.SyncDirectChatList {
-// 		return
-// 	}
-
-// 	puppet := user.bridge.GetPuppetByMXID(user.MXID)
-// 	if puppet == nil {
-// 		return
-// 	}
-
-// 	intent := puppet.CustomIntent()
-// 	if intent == nil {
-// 		return
-// 	}
-
-// 	method := http.MethodPatch
-// 	if chats == nil {
-// 		chats = user.getDirectChats()
-// 		method = http.MethodPut
-// 	}
-
-// 	user.log.Debugln("Updating m.direct list on homeserver")
-
-// 	var err error
-// 	if user.bridge.Config.Homeserver.Software {
-// 		urlPath := intent.BuildURL(mautrix.ClientURLPath{"unstable", "com.beeper.asmux", "dms"})
-// 		_, err = intent.MakeFullRequest(mautrix.FullRequest{
-// 			Method:      method,
-// 			URL:         urlPath,
-// 			Headers:     http.Header{"X-Asmux-Auth": {user.bridge.AS.Registration.AppToken}},
-// 			RequestJSON: chats,
-// 		})
-// 	} else {
-// 		existingChats := map[id.UserID][]id.RoomID{}
-
-// 		err = intent.GetAccountData(event.AccountDataDirectChats.Type, &existingChats)
-// 		if err != nil {
-// 			user.log.Warnln("Failed to get m.direct list to update it:", err)
-
-// 			return
-// 		}
-
-// 		for userID, rooms := range existingChats {
-// 			if _, ok := user.bridge.ParsePuppetMXID(userID); !ok {
-// 				// This is not a ghost user, include it in the new list
-// 				chats[userID] = rooms
-// 			} else if _, ok := chats[userID]; !ok && method == http.MethodPatch {
-// 				// This is a ghost user, but we're not replacing the whole list, so include it too
-// 				chats[userID] = rooms
-// 			}
-// 		}
-
-// 		err = intent.SetAccountData(event.AccountDataDirectChats.Type, &chats)
-// 	}
-
-// 	if err != nil {
-// 		user.log.Warnln("Failed to update m.direct list:", err)
-// 	}
-// }
-
-func (user *User) ensureInvited(intent *appservice.IntentAPI, roomID id.RoomID, isDirect bool) bool {
-	if intent == nil {
-		intent = user.bridge.Bot
-	}
-	ret := false
-
-	inviteContent := event.Content{
-		Parsed: &event.MemberEventContent{
-			Membership: event.MembershipInvite,
-			IsDirect:   isDirect,
-		},
-		Raw: map[string]interface{}{},
-	}
-
-	customPuppet := user.bridge.GetPuppetByCustomMXID(user.MXID)
-	if customPuppet != nil && customPuppet.CustomIntent() != nil {
-		inviteContent.Raw["fi.mau.will_auto_accept"] = true
-	}
-
-	_, err := intent.SendStateEvent(roomID, event.StateMember, user.MXID.String(), &inviteContent)
-
+	_, err := intent.InviteUser(ctx, roomID, &mautrix.ReqInviteUser{UserID: user.MXID}, extraContent)
 	var httpErr mautrix.HTTPError
 	if err != nil && errors.As(err, &httpErr) && httpErr.RespError != nil && strings.Contains(httpErr.RespError.Err, "is already in the room") {
-		user.bridge.StateStore.SetMembership(roomID, user.MXID, event.MembershipJoin)
-		ret = true
+		err = user.bridge.StateStore.SetMembership(ctx, roomID, user.MXID, event.MembershipJoin)
+		if err != nil {
+			user.zlog.Err(err).Stringer("room_id", roomID).Msg("Failed to update membership to join in state store after invite failed")
+		}
+		ok = true
+		return
 	} else if err != nil {
-		user.log.Warnfln("Failed to invite user to %s: %v", roomID, err)
+		user.zlog.Err(err).Stringer("room_id", roomID).Msg("Failed to invite user to room")
 	} else {
-		ret = true
+		ok = true
 	}
 
-	if customPuppet != nil && customPuppet.CustomIntent() != nil {
-		err = customPuppet.CustomIntent().EnsureJoined(roomID, appservice.EnsureJoinedParams{IgnoreCache: true})
+	if customPuppet != nil {
+		err = customPuppet.EnsureJoined(ctx, roomID, appservice.EnsureJoinedParams{IgnoreCache: true})
 		if err != nil {
-			user.log.Warnfln("Failed to auto-join %s: %v", roomID, err)
-			ret = false
+			user.zlog.Err(err).Stringer("room_id", roomID).Msg("Failed to auto-join room")
+			ok = false
 		} else {
-			ret = true
+			ok = true
 		}
 	}
-
-	return ret
+	return
 }
 
-func (user *User) updateChatMute(portal *Portal, muted bool) {
-	if len(portal.MXID) == 0 {
-		return
-	}
-	puppet := user.GetIDoublePuppet()
-	if puppet == nil {
-		return
-	}
-	intent := puppet.CustomIntent()
-	if intent == nil {
+func (user *User) updateChatMute(ctx context.Context, portal *Portal, muted bool) {
+	if len(portal.MXID) == 0 || user.DoublePuppetIntent == nil {
 		return
 	}
 	var err error
 	if muted {
-		user.log.Debugfln("Muting portal %s...", portal.MXID)
-		err = intent.PutPushRule("global", pushrules.RoomRule, string(portal.MXID), &mautrix.ReqPutPushRule{
+		user.zlog.Debug().Stringer("portal_mxid", portal.MXID).Msg("Muting portal")
+		err = user.DoublePuppetIntent.PutPushRule(ctx, "global", pushrules.RoomRule, string(portal.MXID), &mautrix.ReqPutPushRule{
 			Actions: []pushrules.PushActionType{pushrules.ActionDontNotify},
 		})
 	} else {
-		user.log.Debugfln("Unmuting portal %s...", portal.MXID)
-		err = intent.DeletePushRule("global", pushrules.RoomRule, string(portal.MXID))
+		user.zlog.Debug().Stringer("portal_mxid", portal.MXID).Msg("Unmuting portal")
+		err = user.DoublePuppetIntent.DeletePushRule(ctx, "global", pushrules.RoomRule, string(portal.MXID))
 	}
 	if err != nil && !errors.Is(err, mautrix.MNotFound) {
-		user.log.Warnfln("Failed to update push rule for %s through double puppet: %v", portal.MXID, err)
+		user.zlog.Err(err).Stringer("portal_mxid", portal.MXID).Msg("Failed to update push rule for portal")
 	}
 }
 
-func (user *User) getSpaceRoom(ptr *id.RoomID, name, topic string, parent id.RoomID) id.RoomID {
-	if len(*ptr) > 0 {
-		return *ptr
-	}
+func (user *User) GetSpaceRoom(ctx context.Context) (id.RoomID, error) {
 	user.spaceCreateLock.Lock()
 	defer user.spaceCreateLock.Unlock()
-	if len(*ptr) > 0 {
-		return *ptr
+	if len(user.SpaceRoom) > 0 {
+		return user.SpaceRoom, nil
 	}
 
-	initialState := []*event.Event{{
-		Type: event.StateRoomAvatar,
-		Content: event.Content{
-			Parsed: &event.RoomAvatarEventContent{
-				URL: user.bridge.Config.AppService.Bot.ParsedAvatar,
-			},
-		},
-	}}
-
-	if parent != "" {
-		parentIDStr := parent.String()
-		initialState = append(initialState, &event.Event{
-			Type:     event.StateSpaceParent,
-			StateKey: &parentIDStr,
+	resp, err := user.bridge.Bot.CreateRoom(ctx, &mautrix.ReqCreateRoom{
+		Visibility: "private",
+		Name:       "Slack",
+		Topic:      "Your Slack bridged chats",
+		InitialState: []*event.Event{{
+			Type: event.StateRoomAvatar,
 			Content: event.Content{
-				Parsed: &event.SpaceParentEventContent{
-					Canonical: true,
-					Via:       []string{user.bridge.AS.HomeserverDomain},
+				Parsed: &event.RoomAvatarEventContent{
+					URL: user.bridge.Config.AppService.Bot.ParsedAvatar,
 				},
 			},
-		})
-	}
-
-	resp, err := user.bridge.Bot.CreateRoom(&mautrix.ReqCreateRoom{
-		Visibility:   "private",
-		Name:         name,
-		Topic:        topic,
-		InitialState: initialState,
+		}},
 		CreationContent: map[string]interface{}{
 			"type": event.RoomTypeSpace,
 		},
@@ -971,42 +393,28 @@ func (user *User) getSpaceRoom(ptr *id.RoomID, name, topic string, parent id.Roo
 			},
 		},
 	})
-
 	if err != nil {
-		user.log.Error("Failed to auto-create space room")
-	} else {
-		*ptr = resp.RoomID
-		user.Update()
-		user.ensureInvited(nil, *ptr, false)
-
-		if parent != "" {
-			_, err = user.bridge.Bot.SendStateEvent(parent, event.StateSpaceChild, resp.RoomID.String(), &event.SpaceChildEventContent{
-				Via:   []string{user.bridge.AS.HomeserverDomain},
-				Order: " 0000",
-			})
-			if err != nil {
-				user.log.Error("Failed to add created space room to parent space")
-			}
-		}
+		user.zlog.Err(err).Msg("Failed to auto-create space room")
+		return "", fmt.Errorf("failed to create space: %w", err)
 	}
-	return *ptr
+	user.SpaceRoom = resp.RoomID
+	err = user.Update(ctx)
+	if err != nil {
+		user.zlog.Err(err).Msg("Failed to save user after creating space room")
+	}
+	user.ensureInvited(ctx, nil, user.SpaceRoom, false)
+	return user.SpaceRoom, nil
 }
 
-func (user *User) GetSpaceRoom() id.RoomID {
-	return user.getSpaceRoom(&user.SpaceRoom, "Slack", "Your Slack bridged chats", "")
-}
-
-func (user *User) addTeamToSpace(teamInfo *database.TeamInfo, isInSpace bool) bool {
-	if len(teamInfo.SpaceRoom) > 0 && !isInSpace {
-		_, err := user.bridge.Bot.SendStateEvent(user.GetSpaceRoom(), event.StateSpaceChild, teamInfo.SpaceRoom.String(), &event.SpaceChildEventContent{
-			Via: []string{user.bridge.AS.HomeserverDomain},
-		})
-		if err != nil {
-			user.log.Errorfln("Failed to add team space %s to user space", teamInfo.SpaceRoom)
-		} else {
-			isInSpace = true
-		}
+func (user *User) SendBridgeAlert(message string, args ...any) {
+	if user.ManagementRoom == "" {
+		return
 	}
-
-	return isInSpace
+	if len(args) > 0 {
+		message = fmt.Sprintf(message, args...)
+	}
+	_, err := user.bridge.Bot.SendText(context.TODO(), user.ManagementRoom, message)
+	if err != nil {
+		user.zlog.Err(err).Msg("Failed to send bridge alert")
+	}
 }

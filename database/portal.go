@@ -1,5 +1,5 @@
 // mautrix-slack - A Matrix-Slack puppeting bridge.
-// Copyright (C) 2022 Tulir Asokan
+// Copyright (C) 2024 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -17,13 +17,87 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 
-	log "maunium.net/go/maulogger/v2"
-
+	"go.mau.fi/util/dbutil"
 	"maunium.net/go/mautrix/id"
-	"maunium.net/go/mautrix/util/dbutil"
 )
+
+type PortalQuery struct {
+	*dbutil.QueryHelper[*Portal]
+}
+
+func newPortal(qh *dbutil.QueryHelper[*Portal]) *Portal {
+	return &Portal{qh: qh}
+}
+
+const (
+	getAllPortalsQuery = `
+		SELECT team_id, channel_id, receiver, mxid, type, dm_user_id,
+		       plain_name, name, name_set, topic, topic_set, avatar, avatar_mxc, avatar_set,
+		       encrypted, in_space, first_slack_id
+		FROM portal
+	`
+	getPortalByIDQuery        = getAllPortalsQuery + `WHERE team_id=$1 AND channel_id=$2`
+	getPortalByMXIDQuery      = getAllPortalsQuery + `WHERE mxid=$1`
+	getDMPortalsWithUserQuery = getAllPortalsQuery + `WHERE team_id=$1 AND dm_user_id=$2 AND type=$3`
+	getUserTeamPortalSubquery = `
+		SELECT 1 FROM user_team_portal
+			WHERE user_team_portal.user_mxid=$1
+			  AND user_team_portal.user_id=$2
+			  AND user_team_portal.team_id=$3
+			  AND user_team_portal.channel_id=portal.channel_id
+	`
+	getAllPortalsForUserQuery = getAllPortalsQuery + "WHERE EXISTS(" + getUserTeamPortalSubquery + ")"
+	insertPortalQuery         = `
+		INSERT INTO portal (
+			team_id, channel_id, receiver, mxid, type, dm_user_id,
+			plain_name, name, name_set, topic, topic_set, avatar, avatar_mxc, avatar_set,
+			encrypted, in_space, first_slack_id
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+	`
+	updatePortalQuery = `
+		UPDATE portal SET
+			receiver=$3, mxid=$4, type=$5, dm_user_id=$6,
+			plain_name=$7, name=$8, name_set=$9, topic=$10, topic_set=$11,
+			avatar=$12, avatar_mxc=$13, avatar_set=$14,
+			encrypted=$15, in_space=$16, first_slack_id=$17
+		WHERE team_id=$1 AND channel_id=$2
+	`
+	deletePortalQuery = `
+		DELETE FROM portal WHERE team_id=$1 AND channel_id=$2
+	`
+	insertUserTeamPortalQuery = `
+		INSERT INTO user_team_portal (team_id, user_id, channel_id, user_mxid)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT DO NOTHING
+	`
+	deleteUserTeamPortalQuery = `
+		DELETE FROM user_team_portal WHERE team_id=$1 AND user_id=$2 AND channel_id=$3
+	`
+)
+
+func (pq *PortalQuery) GetAll(ctx context.Context) ([]*Portal, error) {
+	return pq.QueryMany(ctx, getAllPortalsQuery)
+}
+
+func (pq *PortalQuery) GetByID(ctx context.Context, key PortalKey) (*Portal, error) {
+	return pq.QueryOne(ctx, getPortalByIDQuery, key.TeamID, key.ChannelID)
+}
+
+func (pq *PortalQuery) GetByMXID(ctx context.Context, mxid id.RoomID) (*Portal, error) {
+	return pq.QueryOne(ctx, getPortalByMXIDQuery, mxid)
+}
+
+func (pq *PortalQuery) GetAllForUserTeam(ctx context.Context, utk UserTeamMXIDKey) ([]*Portal, error) {
+	return pq.QueryMany(ctx, getAllPortalsForUserQuery, utk.UserMXID, utk.UserID, utk.TeamID)
+}
+
+func (pq *PortalQuery) FindPrivateChatsWith(ctx context.Context, utk UserTeamKey) ([]*Portal, error) {
+	return pq.QueryMany(ctx, getDMPortalsWithUserQuery, utk.TeamID, utk.UserID, ChannelTypeDM)
+}
 
 type ChannelType int64
 
@@ -48,11 +122,11 @@ func (ct ChannelType) String() string {
 }
 
 type Portal struct {
-	db  *Database
-	log log.Logger
+	qh *dbutil.QueryHelper[*Portal]
 
-	Key  PortalKey
-	MXID id.RoomID
+	PortalKey
+	Receiver string
+	MXID     id.RoomID
 
 	Type     ChannelType
 	DMUserID string
@@ -62,118 +136,71 @@ type Portal struct {
 	NameSet   bool
 	Topic     string
 	TopicSet  bool
-	Encrypted bool
 	Avatar    string
-	AvatarURL id.ContentURI
+	AvatarMXC id.ContentURI
 	AvatarSet bool
+	Encrypted bool
+	InSpace   bool
 
-	FirstEventID id.EventID
-	NextBatchID  id.BatchID
 	FirstSlackID string
-
-	InSpace bool
 }
 
-func (p *Portal) Scan(row dbutil.Scannable) *Portal {
-	var mxid, dmUserID, avatarURL, firstEventID, nextBatchID, firstSlackID sql.NullString
-
-	err := row.Scan(&p.Key.TeamID, &p.Key.ChannelID, &mxid,
-		&p.Type, &dmUserID, &p.PlainName, &p.Name, &p.NameSet, &p.Topic,
-		&p.TopicSet, &p.Avatar, &avatarURL, &p.AvatarSet, &firstEventID,
-		&p.Encrypted, &nextBatchID, &firstSlackID, &p.InSpace)
-
+func (p *Portal) Scan(row dbutil.Scannable) (*Portal, error) {
+	var mxid, dmUserID, avatarMXC, firstSlackID sql.NullString
+	err := row.Scan(
+		&p.TeamID,
+		&p.ChannelID,
+		&p.Receiver,
+		&mxid,
+		&p.Type,
+		&dmUserID,
+		&p.PlainName,
+		&p.Name,
+		&p.NameSet,
+		&p.Topic,
+		&p.TopicSet,
+		&p.Avatar,
+		&avatarMXC,
+		&p.AvatarSet,
+		&p.Encrypted,
+		&p.InSpace,
+		&firstSlackID,
+	)
 	if err != nil {
-		if err != sql.ErrNoRows {
-			p.log.Errorln("Database scan failed:", err)
-		}
-
-		return nil
+		return nil, err
 	}
-
 	p.MXID = id.RoomID(mxid.String)
 	p.DMUserID = dmUserID.String
-	p.AvatarURL, _ = id.ParseContentURI(avatarURL.String)
-	p.FirstEventID = id.EventID(firstEventID.String)
-	p.NextBatchID = id.BatchID(nextBatchID.String)
+	p.AvatarMXC, _ = id.ParseContentURI(avatarMXC.String)
 	p.FirstSlackID = firstSlackID.String
-
-	return p
+	return p, nil
 }
 
-func (p *Portal) mxidPtr() *id.RoomID {
-	if p.MXID != "" {
-		return &p.MXID
+func (p *Portal) sqlVariables() []any {
+	return []any{
+		p.TeamID, p.ChannelID, p.Receiver, dbutil.StrPtr(p.MXID), p.Type, dbutil.StrPtr(p.DMUserID),
+		p.PlainName, p.Name, p.NameSet, p.Topic, p.TopicSet, p.Avatar, dbutil.StrPtr(p.AvatarMXC.String()), p.AvatarSet,
+		p.Encrypted, p.InSpace, p.FirstSlackID,
 	}
 
-	return nil
 }
 
-func (p *Portal) Insert() {
-	query := "INSERT INTO portal" +
-		" (team_id, channel_id, mxid, type, dm_user_id, plain_name," +
-		" name, name_set, topic, topic_set, avatar, avatar_url, avatar_set," +
-		" first_event_id, encrypted, next_batch_id, first_slack_id, in_space)" +
-		" VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)"
-
-	_, err := p.db.Exec(query, p.Key.TeamID, p.Key.ChannelID,
-		p.mxidPtr(), p.Type, p.DMUserID, p.PlainName, p.Name, p.NameSet,
-		p.Topic, p.TopicSet, p.Avatar, p.AvatarURL.String(), p.AvatarSet,
-		p.FirstEventID.String(), p.Encrypted, p.NextBatchID.String(), p.FirstSlackID, p.InSpace)
-
-	if err != nil {
-		p.log.Warnfln("Failed to insert %s: %v", p.Key, err)
-	}
+func (p *Portal) Insert(ctx context.Context) error {
+	return p.qh.Exec(ctx, insertPortalQuery, p.sqlVariables()...)
 }
 
-func (p *Portal) Update(txn dbutil.Transaction) {
-	query := "UPDATE portal SET" +
-		" mxid=$1, type=$2, dm_user_id=$3, plain_name=$4, name=$5, name_set=$6," +
-		" topic=$7, topic_set=$8, avatar=$9, avatar_url=$10, avatar_set=$11," +
-		" first_event_id=$12, encrypted=$13, next_batch_id=$14, first_slack_id=$15, in_space=$16" +
-		" WHERE team_id=$17 AND channel_id=$18"
-
-	args := []interface{}{p.mxidPtr(), p.Type, p.DMUserID, p.PlainName,
-		p.Name, p.NameSet, p.Topic, p.TopicSet, p.Avatar, p.AvatarURL.String(),
-		p.AvatarSet, p.FirstEventID.String(), p.Encrypted, p.NextBatchID.String(), p.FirstSlackID,
-		p.InSpace, p.Key.TeamID, p.Key.ChannelID}
-
-	var err error
-	if txn != nil {
-		_, err = txn.Exec(query, args...)
-	} else {
-		_, err = p.db.Exec(query, args...)
-	}
-
-	if err != nil {
-		p.log.Warnfln("Failed to update %s: %v", p.Key, err)
-	}
+func (p *Portal) Update(ctx context.Context) error {
+	return p.qh.Exec(ctx, updatePortalQuery, p.sqlVariables()...)
 }
 
-func (p *Portal) Delete() {
-	query := "DELETE FROM portal WHERE team_id=$1 AND channel_id=$2"
-	_, err := p.db.Exec(query, p.Key.TeamID, p.Key.ChannelID)
-	if err != nil {
-		p.log.Warnfln("Failed to delete %s: %v", p.Key, err)
-	}
+func (p *Portal) Delete(ctx context.Context) error {
+	return p.qh.Exec(ctx, deletePortalQuery, p.TeamID, p.ChannelID)
 }
 
-func (p *Portal) InsertUser(utk UserTeamKey) {
-	query := "INSERT INTO user_team_portal" +
-		" (matrix_user_id, slack_user_id, slack_team_id, portal_channel_id)" +
-		" VALUES ($1, $2, $3, $4)" +
-		" ON CONFLICT DO NOTHING"
-
-	_, err := p.db.Exec(query, utk.MXID, utk.SlackID, utk.TeamID, p.Key.ChannelID)
-	if err != nil {
-		p.log.Warnfln("Failed to insert userteam %s: %v", utk, err)
-	}
+func (p *Portal) InsertUser(ctx context.Context, utk UserTeamMXIDKey) error {
+	return p.qh.Exec(ctx, insertUserTeamPortalQuery, utk.TeamID, utk.UserID, p.ChannelID, utk.UserMXID)
 }
 
-func (p *Portal) DeleteUser(utk UserTeamKey) {
-	query := "DELETE FROM user_team_portal WHERE matrix_user_id=$1 AND slack_user_id=$2" +
-		" slack_team_id=$3 AND portal_channel_id=$4"
-	_, err := p.db.Exec(query, utk.MXID, utk.SlackID, utk.TeamID, p.Key.ChannelID)
-	if err != nil {
-		p.log.Warnfln("Failed to delete userteam %s: %v", utk, err)
-	}
+func (p *Portal) DeleteUser(ctx context.Context, utk UserTeamMXIDKey) error {
+	return p.qh.Exec(ctx, deleteUserTeamPortalQuery, utk.TeamID, utk.UserID, p.ChannelID)
 }

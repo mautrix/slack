@@ -1,5 +1,5 @@
 // mautrix-slack - A Matrix-Slack puppeting bridge.
-// Copyright (C) 2022 Tulir Asokan
+// Copyright (C) 2024 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -17,120 +17,68 @@
 package database
 
 import (
+	"context"
 	"database/sql"
-	"sync"
 
-	log "maunium.net/go/maulogger/v2"
-
+	"go.mau.fi/util/dbutil"
 	"maunium.net/go/mautrix/id"
-	"maunium.net/go/mautrix/util/dbutil"
 )
 
+type UserQuery struct {
+	*dbutil.QueryHelper[*User]
+}
+
+func newUser(qh *dbutil.QueryHelper[*User]) *User {
+	return &User{qh: qh}
+}
+
+const (
+	getUserByMXIDQuery              = `SELECT mxid, management_room, space_room, access_token FROM "user" WHERE mxid=$1`
+	getAllUsersWithAccessTokenQuery = `SELECT mxid, management_room, space_room, access_token FROM "user" WHERE access_token<>''`
+	insertUserQuery                 = `INSERT INTO "user" (mxid, management_room, space_room, access_token) VALUES ($1, $2, $3, $4)`
+	updateUserQuery                 = `UPDATE "user" SET management_room=$2, space_room=$3, access_token=$4 WHERE mxid=$1`
+)
+
+func (uq *UserQuery) GetByMXID(ctx context.Context, userID id.UserID) (*User, error) {
+	return uq.QueryOne(ctx, getUserByMXIDQuery, userID)
+}
+
+func (uq *UserQuery) GetAllWithAccessToken(ctx context.Context) ([]*User, error) {
+	return uq.QueryMany(ctx, getAllUsersWithAccessTokenQuery)
+}
+
 type User struct {
-	db  *Database
-	log log.Logger
+	qh *dbutil.QueryHelper[*User]
 
 	MXID           id.UserID
 	ManagementRoom id.RoomID
 	SpaceRoom      id.RoomID
-
-	TeamsLock sync.Mutex
-	Teams     map[string]*UserTeam
+	AccessToken    string
 }
 
-func (user *User) loadTeams() {
-	user.TeamsLock.Lock()
-	defer user.TeamsLock.Unlock()
+func (u *User) Scan(row dbutil.Scannable) (*User, error) {
+	var managementRoom, spaceRoom, accessToken sql.NullString
 
-	for _, userTeam := range user.db.UserTeam.GetAllByMXIDWithToken(user.MXID) {
-		user.Teams[userTeam.Key.TeamID] = userTeam
-	}
-}
-
-func (u *User) Scan(row dbutil.Scannable) *User {
-	var spaceRoom sql.NullString
-
-	err := row.Scan(&u.MXID, &u.ManagementRoom, &spaceRoom)
+	err := row.Scan(&u.MXID, &managementRoom, &spaceRoom, &accessToken)
 	if err != nil {
-		if err != sql.ErrNoRows {
-			u.log.Errorln("Database scan failed:", err)
-		}
-
-		return nil
+		return nil, err
 	}
 
 	u.SpaceRoom = id.RoomID(spaceRoom.String)
+	u.ManagementRoom = id.RoomID(managementRoom.String)
+	u.AccessToken = accessToken.String
 
-	u.loadTeams()
-
-	return u
+	return u, err
 }
 
-func (u *User) SyncTeams() {
-	u.TeamsLock.Lock()
-	defer u.TeamsLock.Unlock()
-
-	for _, userteam := range u.Teams {
-		userteam.Upsert()
-	}
-
-	// Delete not logged in teams from the database.
-	query := "DELETE FROM user_team WHERE mxid=$1 AND token=NULL"
-
-	_, err := u.db.Exec(query, u.MXID)
-	if err != nil {
-		u.log.Warnfln("Failed to prune old teams for %s: %v", u.MXID, err)
-	}
+func (u *User) sqlVariables() []any {
+	return []any{u.MXID, dbutil.StrPtr(u.ManagementRoom), dbutil.StrPtr(u.SpaceRoom), dbutil.StrPtr(u.AccessToken)}
 }
 
-func (u *User) Insert() {
-	query := "INSERT INTO \"user\" (mxid, management_room, space_room) VALUES ($1, $2, $3);"
-
-	_, err := u.db.Exec(query, u.MXID, u.ManagementRoom, u.SpaceRoom)
-
-	if err != nil {
-		u.log.Warnfln("Failed to insert %s: %v", u.MXID, err)
-	}
-
-	u.SyncTeams()
+func (u *User) Insert(ctx context.Context) error {
+	return u.qh.Exec(ctx, insertUserQuery, u.sqlVariables()...)
 }
 
-func (u *User) Update() {
-	query := "UPDATE \"user\" SET management_room=$1, space_room=$2 WHERE mxid=$3;"
-
-	_, err := u.db.Exec(query, u.ManagementRoom, u.SpaceRoom, u.MXID)
-
-	if err != nil {
-		u.log.Warnfln("Failed to update %q: %v", u.MXID, err)
-	}
-
-	u.SyncTeams()
-}
-
-func (u *User) TeamLoggedIn(email, domain string) bool {
-	u.TeamsLock.Lock()
-	defer u.TeamsLock.Unlock()
-
-	for _, team := range u.Teams {
-		if team.SlackEmail == email && team.TeamName == domain {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (u *User) GetLoggedInTeams() []*UserTeam {
-	u.TeamsLock.Lock()
-	defer u.TeamsLock.Unlock()
-
-	teams := []*UserTeam{}
-
-	for _, team := range u.Teams {
-		if team.Token != "" {
-			teams = append(teams, team)
-		}
-	}
-
-	return teams
+func (u *User) Update(ctx context.Context) error {
+	return u.qh.Exec(ctx, updateUserQuery, u.sqlVariables()...)
 }

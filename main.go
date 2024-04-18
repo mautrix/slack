@@ -1,5 +1,5 @@
 // mautrix-slack - A Matrix-Slack puppeting bridge.
-// Copyright (C) 2022 Tulir Asokan
+// Copyright (C) 2024 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -20,11 +20,11 @@ import (
 	_ "embed"
 	"sync"
 
+	"go.mau.fi/util/configupgrade"
+
 	"maunium.net/go/mautrix/bridge"
 	"maunium.net/go/mautrix/bridge/commands"
-	"maunium.net/go/mautrix/format"
 	"maunium.net/go/mautrix/id"
-	"maunium.net/go/mautrix/util/configupgrade"
 
 	"go.mau.fi/mautrix-slack/config"
 	"go.mau.fi/mautrix-slack/database"
@@ -49,29 +49,22 @@ type SlackBridge struct {
 
 	provisioning *ProvisioningAPI
 
-	MatrixHTMLParser *format.HTMLParser
+	//BackfillQueue          *BackfillQueue
+	//historySyncLoopStarted bool
 
-	BackfillQueue          *BackfillQueue
-	historySyncLoopStarted bool
-
-	usersByMXID map[id.UserID]*User
-	usersByID   map[string]*User // the key is teamID-userID
-	usersLock   sync.Mutex
-
-	managementRooms     map[id.RoomID]*User
-	managementRoomsLock sync.Mutex
+	usersByMXID     map[id.UserID]*User
+	managementRooms map[id.RoomID]*User
+	userTeamsByID   map[database.UserTeamKey]*UserTeam
+	teamsByMXID     map[id.RoomID]*Team
+	teamsByID       map[string]*Team
+	userAndTeamLock sync.Mutex
 
 	portalsByMXID map[id.RoomID]*Portal
 	portalsByID   map[database.PortalKey]*Portal
 	portalsLock   sync.Mutex
 
-	teamsByMXID map[id.RoomID]*Team
-	teamsByID   map[string]*Team
-	teamsLock   sync.Mutex
-
-	puppets             map[string]*Puppet
-	puppetsByCustomMXID map[id.UserID]*Puppet
-	puppetsLock         sync.Mutex
+	puppets     map[database.UserTeamKey]*Puppet
+	puppetsLock sync.Mutex
 }
 
 func (br *SlackBridge) GetExampleConfig() string {
@@ -90,9 +83,7 @@ func (br *SlackBridge) Init() {
 	br.CommandProcessor = commands.NewProcessor(&br.Bridge)
 	br.RegisterCommands()
 
-	br.DB = database.New(br.Bridge.DB, br.Log.Sub("Database"))
-
-	br.MatrixHTMLParser = NewParser(br)
+	br.DB = database.New(br.Bridge.DB)
 }
 
 func (br *SlackBridge) Start() {
@@ -100,20 +91,20 @@ func (br *SlackBridge) Start() {
 		br.provisioning = newProvisioningAPI(br)
 	}
 
-	br.BackfillQueue = &BackfillQueue{
-		BackfillQuery:   br.DB.Backfill,
-		reCheckChannels: []chan bool{},
-		log:             br.Log.Sub("BackfillQueue"),
-	}
+	//br.BackfillQueue = &BackfillQueue{
+	//	BackfillQuery:   br.DB.Backfill,
+	//	reCheckChannels: []chan bool{},
+	//	log:             br.Log.Sub("BackfillQueue"),
+	//}
 
 	br.WaitWebsocketConnected()
 	go br.startUsers()
 }
 
 func (br *SlackBridge) Stop() {
-	for _, user := range br.usersByMXID {
-		br.Log.Debugln("Disconnecting", user.MXID)
-		user.Disconnect()
+	for _, userTeam := range br.userTeamsByID {
+		userTeam.Log.Debug().Msg("Disconnecting team")
+		userTeam.Disconnect()
 	}
 }
 
@@ -134,7 +125,7 @@ func (br *SlackBridge) GetIUser(mxid id.UserID, create bool) bridge.User {
 }
 
 func (br *SlackBridge) IsGhost(mxid id.UserID) bool {
-	_, _, isGhost := br.ParsePuppetMXID(mxid)
+	_, isGhost := br.ParsePuppetMXID(mxid)
 	return isGhost
 }
 
@@ -152,19 +143,16 @@ func (br *SlackBridge) CreatePrivatePortal(id id.RoomID, user bridge.User, ghost
 
 func main() {
 	br := &SlackBridge{
-		usersByMXID: make(map[id.UserID]*User),
-		usersByID:   make(map[string]*User),
-
+		usersByMXID:     make(map[id.UserID]*User),
 		managementRooms: make(map[id.RoomID]*User),
+		userTeamsByID:   make(map[database.UserTeamKey]*UserTeam),
+		teamsByMXID:     make(map[id.RoomID]*Team),
+		teamsByID:       make(map[string]*Team),
 
 		portalsByMXID: make(map[id.RoomID]*Portal),
 		portalsByID:   make(map[database.PortalKey]*Portal),
 
-		teamsByMXID: make(map[id.RoomID]*Team),
-		teamsByID:   make(map[string]*Team),
-
-		puppets:             make(map[string]*Puppet),
-		puppetsByCustomMXID: make(map[id.UserID]*Puppet),
+		puppets: make(map[database.UserTeamKey]*Puppet),
 	}
 	br.Bridge = bridge.Bridge{
 		Name:              "mautrix-slack",

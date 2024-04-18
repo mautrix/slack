@@ -1,5 +1,5 @@
 // mautrix-slack - A Matrix-Slack puppeting bridge.
-// Copyright (C) 2022 Tulir Asokan
+// Copyright (C) 2024 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -29,25 +29,21 @@ import (
 	"maunium.net/go/mautrix/bridge/status"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
+
+	"go.mau.fi/mautrix-slack/msgconv"
 )
 
 var (
-	errUserNotLoggedIn             = errors.New("user is not logged in to this Slack team")
-	errMNoticeDisabled             = errors.New("bridging m.notice messages is disabled")
-	errUnexpectedParsedContentType = errors.New("unexpected parsed content type")
-	errUnknownMsgType              = errors.New("unknown msgtype")
-	errUnexpectedRelatesTo         = errors.New("unexpected relation type")
-	errMediaDownloadFailed         = errors.New("failed to download media")
-	errMediaSlackUploadFailed      = errors.New("failed to upload media to Slack")
-	errMediaUnsupportedType        = errors.New("unsupported media type")
-	errTargetNotFound              = errors.New("target event not found")
-	errEmojiShortcodeNotFound      = errors.New("emoji shortcode not found")
-	errUnknownEmoji                = errors.New("unknown emoji")
-	errReactionDatabaseNotFound    = errors.New("reaction database entry not found")
-	errReactionTargetNotFound      = errors.New("reaction target message not found")
-	errTargetIsFake                = errors.New("target is a fake event")
-	errReactionSentBySomeoneElse   = errors.New("target reaction was sent by someone else")
-	errDMSentByOtherUser           = errors.New("target message was sent by the other user in a DM")
+	errUserNotLoggedIn        = errors.New("user is not logged in to this Slack team")
+	errMNoticeDisabled        = errors.New("bridging m.notice messages is disabled")
+	errUnexpectedRelatesTo    = errors.New("unexpected relation type")
+	errMediaSlackUploadFailed = errors.New("failed to upload media to Slack")
+	errMediaUnsupportedType   = errors.New("unsupported media type")
+	errEmojiShortcodeNotFound = errors.New("emoji shortcode not found")
+	errDuplicateReaction      = errors.New("duplicate reaction")
+	errUnknownEmoji           = errors.New("unknown emoji")
+	errReactionTargetNotFound = errors.New("reaction target message not found")
+	errMessageInWrongRoom     = errors.New("message is in another room")
 
 	errMessageTakingLong     = errors.New("bridging the message is taking longer than usual")
 	errTimeoutBeforeHandling = errors.New("message timed out before handling was started")
@@ -55,8 +51,8 @@ var (
 
 func errorToStatusReason(err error) (reason event.MessageStatusReason, status event.MessageStatus, isCertain, sendNotice bool, humanMessage string) {
 	switch {
-	case errors.Is(err, errUnexpectedParsedContentType),
-		errors.Is(err, errUnknownMsgType):
+	case errors.Is(err, msgconv.ErrUnexpectedParsedContentType),
+		errors.Is(err, msgconv.ErrUnknownMsgType):
 		return event.MessageStatusUnsupported, event.MessageStatusFail, true, true, ""
 	case errors.Is(err, errMNoticeDisabled):
 		return event.MessageStatusUnsupported, event.MessageStatusFail, true, false, ""
@@ -68,19 +64,20 @@ func errorToStatusReason(err error) (reason event.MessageStatusReason, status ev
 		return event.MessageStatusTooOld, event.MessageStatusRetriable, false, true, "handling the message took too long and was cancelled"
 	case errors.Is(err, errMessageTakingLong):
 		return event.MessageStatusTooOld, event.MessageStatusPending, false, true, err.Error()
-	case errors.Is(err, errTargetNotFound),
-		errors.Is(err, errTargetIsFake),
-		errors.Is(err, errReactionDatabaseNotFound),
-		errors.Is(err, errReactionTargetNotFound),
-		errors.Is(err, errReactionSentBySomeoneElse),
-		errors.Is(err, errDMSentByOtherUser):
-		return event.MessageStatusGenericError, event.MessageStatusFail, true, false, ""
+	case errors.Is(err, msgconv.ErrEditTargetNotFound):
+		return event.MessageStatusGenericError, event.MessageStatusFail, true, false, "edit target is not known"
+	case errors.Is(err, msgconv.ErrThreadRootNotFound):
+		return event.MessageStatusGenericError, event.MessageStatusFail, true, false, "reply target is not known"
+	case errors.Is(err, msgconv.ErrMediaOnlyEditCaption):
+		return event.MessageStatusGenericError, event.MessageStatusFail, true, false, err.Error()
+	case errors.Is(err, errReactionTargetNotFound):
+		return event.MessageStatusGenericError, event.MessageStatusFail, true, false, "reaction target is not known"
 	default:
 		return event.MessageStatusGenericError, event.MessageStatusRetriable, false, true, ""
 	}
 }
 
-func (portal *Portal) sendErrorMessage(evt *event.Event, err error, confirmed bool, editID id.EventID) id.EventID {
+func (portal *Portal) sendErrorMessage(ctx context.Context, evt *event.Event, err error, confirmed bool, editID id.EventID) id.EventID {
 	if !portal.bridge.Config.Bridge.MessageErrorNotices {
 		return ""
 	}
@@ -101,7 +98,7 @@ func (portal *Portal) sendErrorMessage(evt *event.Event, err error, confirmed bo
 	} else {
 		content.SetReply(evt)
 	}
-	resp, err := portal.sendMatrixMessage(portal.MainIntent(), event.EventMessage, content, nil, 0)
+	resp, err := portal.sendMatrixMessage(ctx, portal.MainIntent(), event.EventMessage, content, nil, 0)
 	if err != nil {
 		portal.log.Warnfln("Failed to send bridging error message:", err)
 		return ""
@@ -109,7 +106,7 @@ func (portal *Portal) sendErrorMessage(evt *event.Event, err error, confirmed bo
 	return resp.EventID
 }
 
-func (portal *Portal) sendStatusEvent(evtID, lastRetry id.EventID, err error) {
+func (portal *Portal) sendStatusEvent(ctx context.Context, evtID, lastRetry id.EventID, err error) {
 	if !portal.bridge.Config.Bridge.MessageStatusEvents {
 		return
 	}
@@ -135,22 +132,22 @@ func (portal *Portal) sendStatusEvent(evtID, lastRetry id.EventID, err error) {
 		content.Reason, content.Status, _, _, content.Message = errorToStatusReason(err)
 		content.Error = err.Error()
 	}
-	_, err = intent.SendMessageEvent(portal.MXID, event.BeeperMessageStatus, &content)
+	_, err = intent.SendMessageEvent(ctx, portal.MXID, event.BeeperMessageStatus, &content)
 	if err != nil {
 		portal.log.Warnln("Failed to send message status event:", err)
 	}
 }
 
-func (portal *Portal) sendDeliveryReceipt(eventID id.EventID) {
+func (portal *Portal) sendDeliveryReceipt(ctx context.Context, eventID id.EventID) {
 	if portal.bridge.Config.Bridge.DeliveryReceipts {
-		err := portal.bridge.Bot.MarkRead(portal.MXID, eventID)
+		err := portal.bridge.Bot.MarkRead(ctx, portal.MXID, eventID)
 		if err != nil {
 			portal.log.Debugfln("Failed to send delivery receipt for %s: %v", eventID, err)
 		}
 	}
 }
 
-func (portal *Portal) sendMessageMetrics(evt *event.Event, err error, part string, ms *metricSender) {
+func (portal *Portal) sendMessageMetrics(ctx context.Context, evt *event.Event, err error, part string, ms *metricSender) {
 	var msgType string
 	switch evt.Type {
 	case event.EventMessage:
@@ -180,16 +177,16 @@ func (portal *Portal) sendMessageMetrics(evt *event.Event, err error, part strin
 		checkpointStatus := status.ReasonToCheckpointStatus(reason, statusCode)
 		portal.bridge.SendMessageCheckpoint(evt, status.MsgStepRemote, err, checkpointStatus, ms.getRetryNum())
 		if sendNotice {
-			ms.setNoticeID(portal.sendErrorMessage(evt, err, isCertain, ms.getNoticeID()))
+			ms.setNoticeID(portal.sendErrorMessage(ctx, evt, err, isCertain, ms.getNoticeID()))
 		}
-		portal.sendStatusEvent(origEvtID, evt.ID, err)
+		portal.sendStatusEvent(ctx, origEvtID, evt.ID, err)
 	} else {
 		portal.log.Debugfln("Handled Matrix %s %s", msgType, evtDescription)
-		portal.sendDeliveryReceipt(evt.ID)
+		portal.sendDeliveryReceipt(ctx, evt.ID)
 		portal.bridge.SendMessageSuccessCheckpoint(evt, status.MsgStepRemote, ms.getRetryNum())
-		portal.sendStatusEvent(origEvtID, evt.ID, nil)
+		portal.sendStatusEvent(ctx, origEvtID, evt.ID, nil)
 		if prevNotice := ms.popNoticeID(); prevNotice != "" {
-			_, _ = portal.MainIntent().RedactEvent(portal.MXID, prevNotice, mautrix.ReqRedact{
+			_, _ = portal.MainIntent().RedactEvent(ctx, portal.MXID, prevNotice, mautrix.ReqRedact{
 				Reason: "error resolved",
 			})
 		}
@@ -273,13 +270,13 @@ func (ms *metricSender) setNoticeID(evtID id.EventID) {
 	}
 }
 
-func (ms *metricSender) sendMessageMetrics(evt *event.Event, err error, part string, completed bool) {
+func (ms *metricSender) sendMessageMetrics(ctx context.Context, evt *event.Event, err error, part string, completed bool) {
 	ms.lock.Lock()
 	defer ms.lock.Unlock()
 	if !completed && ms.completed {
 		return
 	}
-	ms.portal.sendMessageMetrics(evt, err, part, ms)
+	ms.portal.sendMessageMetrics(ctx, evt, err, part, ms)
 	ms.retryNum++
 	ms.completed = completed
 }

@@ -17,6 +17,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,7 +26,7 @@ import (
 	"maunium.net/go/mautrix/id"
 )
 
-func uploadPlainFile(intent *appservice.IntentAPI, url string) (id.ContentURI, error) {
+func uploadPlainFile(ctx context.Context, intent *appservice.IntentAPI, url string) (id.ContentURI, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return id.ContentURI{}, fmt.Errorf("failed to prepare request: %w", err)
@@ -43,7 +44,7 @@ func uploadPlainFile(intent *appservice.IntentAPI, url string) (id.ContentURI, e
 	}
 
 	mime := http.DetectContentType(data)
-	resp, err := intent.UploadBytes(data, mime)
+	resp, err := intent.UploadBytes(ctx, data, mime)
 	if err != nil {
 		return id.ContentURI{}, fmt.Errorf("failed to upload avatar to Matrix: %w", err)
 	}

@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
-	"time"
 
 	"github.com/slack-go/slack"
 
@@ -56,19 +55,23 @@ func (mb *MaxMessages) GetMaxMessagesFor(t database.ChannelType) int {
 }
 
 type BridgeConfig struct {
-	UsernameTemplate       string `yaml:"username_template"`
-	DisplaynameTemplate    string `yaml:"displayname_template"`
-	BotDisplaynameTemplate string `yaml:"bot_displayname_template"`
-	ChannelNameTemplate    string `yaml:"channel_name_template"`
-	PrivateChatPortalMeta  string `yaml:"private_chat_portal_meta"`
+	UsernameTemplate      string `yaml:"username_template"`
+	DisplaynameTemplate   string `yaml:"displayname_template"`
+	ChannelNameTemplate   string `yaml:"channel_name_template"`
+	TeamNameTemplate      string `yaml:"team_name_template"`
+	PrivateChatPortalMeta string `yaml:"private_chat_portal_meta"`
 
 	CommandPrefix string `yaml:"command_prefix"`
 
-	DeliveryReceipts     bool `yaml:"delivery_receipts"`
-	ResendBridgeInfo     bool `yaml:"resend_bridge_info"`
-	MessageStatusEvents  bool `yaml:"message_status_events"`
-	MessageErrorNotices  bool `yaml:"message_error_notices"`
-	CustomEmojiReactions bool `yaml:"custom_emoji_reactions"`
+	DeliveryReceipts            bool `yaml:"delivery_receipts"`
+	ResendBridgeInfo            bool `yaml:"resend_bridge_info"`
+	MessageStatusEvents         bool `yaml:"message_status_events"`
+	MessageErrorNotices         bool `yaml:"message_error_notices"`
+	CustomEmojiReactions        bool `yaml:"custom_emoji_reactions"`
+	KickOnLogout                bool `yaml:"kick_on_logout"`
+	WorkspaceAvatarInRooms      bool `yaml:"workspace_avatar_in_rooms"`
+	ParticipantSyncCount        int  `yaml:"participant_sync_count"`
+	ParticipantSyncOnlyOnCreate bool `yaml:"participant_sync_only_on_create"`
 
 	ManagementRoomText bridgeconfig.ManagementRoomTexts `yaml:"management_room_text"`
 
@@ -80,17 +83,7 @@ type BridgeConfig struct {
 	DefaultBridgeReceipts bool `yaml:"default_bridge_receipts"`
 	DefaultBridgePresence bool `yaml:"default_bridge_presence"`
 
-	DoublePuppetServerMap      map[string]string `yaml:"double_puppet_server_map"`
-	DoublePuppetAllowDiscovery bool              `yaml:"double_puppet_allow_discovery"`
-	LoginSharedSecretMap       map[string]string `yaml:"login_shared_secret_map"`
-
-	MessageHandlingTimeout struct {
-		ErrorAfterStr string `yaml:"error_after"`
-		DeadlineStr   string `yaml:"deadline"`
-
-		ErrorAfter time.Duration `yaml:"-"`
-		Deadline   time.Duration `yaml:"-"`
-	} `yaml:"message_handling_timeout"`
+	DoublePuppetConfig bridgeconfig.DoublePuppetConfig `yaml:",inline"`
 
 	Encryption bridgeconfig.EncryptionConfig `yaml:"encryption"`
 
@@ -117,6 +110,7 @@ type BridgeConfig struct {
 	displaynameTemplate    *template.Template `yaml:"-"`
 	botDisplaynameTemplate *template.Template `yaml:"-"`
 	channelNameTemplate    *template.Template `yaml:"-"`
+	teamNameTemplate       *template.Template `yaml:"-"`
 }
 
 type umBridgeConfig BridgeConfig
@@ -139,12 +133,12 @@ func (bc *BridgeConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		return err
 	}
 
-	bc.botDisplaynameTemplate, err = template.New("bot_displayname").Parse(bc.BotDisplaynameTemplate)
+	bc.channelNameTemplate, err = template.New("channel_name").Parse(bc.ChannelNameTemplate)
 	if err != nil {
 		return err
 	}
 
-	bc.channelNameTemplate, err = template.New("channel_name").Parse(bc.ChannelNameTemplate)
+	bc.teamNameTemplate, err = template.New("team_name").Parse(bc.TeamNameTemplate)
 	if err != nil {
 		return err
 	}
@@ -154,50 +148,59 @@ func (bc *BridgeConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 
 var _ bridgeconfig.BridgeConfig = (*BridgeConfig)(nil)
 
-func (bc BridgeConfig) GetEncryptionConfig() bridgeconfig.EncryptionConfig {
+func (bc *BridgeConfig) GetEncryptionConfig() bridgeconfig.EncryptionConfig {
 	return bc.Encryption
 }
 
-func (bc BridgeConfig) GetCommandPrefix() string {
+func (bc *BridgeConfig) GetCommandPrefix() string {
 	return bc.CommandPrefix
 }
 
-func (bc BridgeConfig) GetManagementRoomTexts() bridgeconfig.ManagementRoomTexts {
+func (bc *BridgeConfig) GetManagementRoomTexts() bridgeconfig.ManagementRoomTexts {
 	return bc.ManagementRoomText
 }
 
-func (bc BridgeConfig) FormatUsername(userid string) string {
+func (bc *BridgeConfig) GetDoublePuppetConfig() bridgeconfig.DoublePuppetConfig {
+	return bc.DoublePuppetConfig
+}
+
+func (bc *BridgeConfig) FormatUsername(userID string) string {
 	var buffer strings.Builder
-	_ = bc.usernameTemplate.Execute(&buffer, userid)
+	_ = bc.usernameTemplate.Execute(&buffer, userID)
 	return buffer.String()
 }
 
-func (bc BridgeConfig) FormatDisplayname(user *slack.User) string {
+func (bc *BridgeConfig) FormatDisplayname(user *slack.User) string {
 	var buffer strings.Builder
-	_ = bc.displaynameTemplate.Execute(&buffer, user.Profile)
+	_ = bc.displaynameTemplate.Execute(&buffer, user)
 	return buffer.String()
 }
 
-func (bc BridgeConfig) FormatBotDisplayname(bot *slack.Bot) string {
-	var buffer strings.Builder
-	_ = bc.botDisplaynameTemplate.Execute(&buffer, bot)
-	return buffer.String()
+func (bc *BridgeConfig) FormatBotDisplayname(bot *slack.Bot) string {
+	return bc.FormatDisplayname(&slack.User{
+		ID:    bot.ID,
+		Name:  bot.Name,
+		IsBot: true,
+	})
 }
 
 type ChannelNameParams struct {
-	Name     string
-	Type     database.ChannelType
-	TeamName string
+	*slack.Channel
+	Type       database.ChannelType
+	TeamName   string
+	TeamDomain string
 }
 
-func (bc BridgeConfig) FormatChannelName(params ChannelNameParams) string {
-	if params.Type == database.ChannelTypeDM || params.Type == database.ChannelTypeGroupDM {
-		return ""
-	} else {
-		var buffer strings.Builder
-		_ = bc.channelNameTemplate.Execute(&buffer, params)
-		return buffer.String()
-	}
+func (bc *BridgeConfig) FormatChannelName(params ChannelNameParams) string {
+	var buffer strings.Builder
+	_ = bc.channelNameTemplate.Execute(&buffer, params)
+	return buffer.String()
+}
+
+func (bc *BridgeConfig) FormatTeamName(params *slack.TeamInfo) string {
+	var buffer strings.Builder
+	_ = bc.teamNameTemplate.Execute(&buffer, params)
+	return buffer.String()
 }
 
 func (bc *BridgeConfig) GetResendBridgeInfo() bool {

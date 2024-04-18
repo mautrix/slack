@@ -1,5 +1,5 @@
 // mautrix-slack - A Matrix-Slack puppeting bridge.
-// Copyright (C) 2022 Tulir Asokan
+// Copyright (C) 2024 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"maunium.net/go/mautrix/bridge/commands"
+	"maunium.net/go/mautrix/bridge/status"
 )
 
 type WrappedCommandEvent struct {
@@ -60,26 +61,28 @@ var cmdPing = &commands.FullHandler{
 	Name: "ping",
 	Help: commands.HelpMeta{
 		Section:     commands.HelpSectionAuth,
-		Description: "Check which teams you're currently signed into",
+		Description: "Check which workspaces you're currently signed into",
 	},
 }
 
 func fnPing(ce *WrappedCommandEvent) {
-	if len(ce.User.Teams) == 0 {
-		ce.Reply("You are not signed in to any Slack teams.")
-		return
-	}
 	var text strings.Builder
-	text.WriteString("You are signed in to the following Slack teams:\n")
-	for _, team := range ce.User.Teams {
-		teamInfo := ce.Bridge.DB.TeamInfo.GetBySlackTeam(team.Key.TeamID)
-		text.WriteString(fmt.Sprintf("%s - %s - %s.slack.com", teamInfo.TeamID, teamInfo.TeamName, teamInfo.TeamDomain))
-		if team.RTM == nil {
-			text.WriteString(" (Error: not connected to Slack)")
+	text.WriteString("You're signed into the following Slack workspaces:\n")
+	ce.Bridge.userAndTeamLock.Lock()
+	isEmpty := len(ce.User.teams) == 0
+	for _, ut := range ce.User.teams {
+		_, _ = fmt.Fprintf(&text, "* `%s`: %s / %s.slack.com", ut.Team.ID, ut.Team.Name, ut.Team.Domain)
+		if ut.RTM == nil {
+			text.WriteString(" (not connected)")
 		}
-		text.WriteRune('\n')
+		text.WriteByte('\n')
 	}
-	ce.Reply(text.String())
+	ce.Bridge.userAndTeamLock.Unlock()
+	if isEmpty {
+		ce.Reply("You aren't signed into any Slack workspaces")
+	} else {
+		ce.Reply(text.String())
+	}
 }
 
 var cmdLoginPassword = &commands.FullHandler{
@@ -98,13 +101,8 @@ func fnLoginPassword(ce *WrappedCommandEvent) {
 		return
 	}
 
-	if ce.User.IsLoggedInTeam(ce.Args[0], ce.Args[1]) {
-		ce.Reply("%s is already logged in to team %s", ce.Args[0], ce.Args[1])
-		return
-	}
-
 	user := ce.Bridge.GetUserByMXID(ce.User.MXID)
-	err := user.LoginTeam(ce.Args[0], ce.Args[1], ce.Args[2])
+	err := user.LoginTeam(ce.Ctx, ce.Args[0], ce.Args[1], ce.Args[2])
 	if err != nil {
 		ce.Reply("Failed to log in as %s for team %s: %v", ce.Args[0], ce.Args[1], err)
 		return
@@ -133,7 +131,7 @@ func fnLoginToken(ce *WrappedCommandEvent) {
 	cookieToken, _ := url.PathUnescape(ce.Args[1])
 
 	user := ce.Bridge.GetUserByMXID(ce.User.MXID)
-	info, err := user.TokenLogin(ce.Args[0], cookieToken)
+	info, err := user.TokenLogin(ce.Ctx, ce.Args[0], cookieToken)
 	if err != nil {
 		ce.Reply("Failed to log in with token: %v", err)
 	} else {
@@ -153,20 +151,23 @@ var cmdLogout = &commands.FullHandler{
 }
 
 func fnLogout(ce *WrappedCommandEvent) {
-	if len(ce.Args) != 2 {
-		ce.Reply("**Usage**: $cmdprefix logout <email> <domain>")
-
+	if len(ce.Args) != 1 {
+		ce.Reply("**Usage**: $cmdprefix logout <workspace ID>")
 		return
 	}
-	domain := strings.TrimSuffix(ce.Args[1], ".slack.com")
-	userTeam := ce.User.bridge.DB.UserTeam.GetBySlackDomain(ce.User.MXID, ce.Args[0], domain)
-
-	err := ce.User.LogoutUserTeam(userTeam)
-	if err != nil {
-		ce.Reply("Error logging out: %v", err)
-	} else {
-		ce.Reply("Logged out successfully.")
+	teamID := strings.ToUpper(ce.Args[1])
+	if teamID[0] != 'T' {
+		ce.Reply("That doesn't look like a workspace ID")
+		return
 	}
+	ut := ce.User.GetTeam(teamID)
+	if ut == nil || ut.Token == "" {
+		ce.Reply("You're not logged into that team")
+		return
+	}
+
+	ut.Logout(ce.Ctx, status.BridgeState{StateEvent: status.StateLoggedOut})
+	ce.Reply("Logged out %s in %s / %s.slack.com", ut.Email, ut.TeamID, ut.Team.Name, ut.Team.Domain)
 }
 
 var cmdSyncTeams = &commands.FullHandler{
@@ -180,21 +181,21 @@ var cmdSyncTeams = &commands.FullHandler{
 }
 
 func fnSyncTeams(ce *WrappedCommandEvent) {
-	for _, team := range ce.User.Teams {
-		ce.User.UpdateTeam(team, true)
-	}
-	ce.Reply("Done syncing teams.")
+	//for _, team := range ce.User.Teams {
+	//	ce.User.UpdateTeam(team, true)
+	//}
+	//ce.Reply("Done syncing teams.")
 }
 
 var cmdDeletePortal = &commands.FullHandler{
 	Func:           wrapCommand(fnDeletePortal),
 	Name:           "delete-portal",
 	RequiresPortal: true,
+	RequiresAdmin:  true, // TODO allow deleting without bridge admin if it's the only user
 }
 
 func fnDeletePortal(ce *WrappedCommandEvent) {
-	ce.Portal.delete()
-
-	ce.Bridge.cleanupRoom(ce.Portal.MainIntent(), ce.Portal.MXID, false, ce.Log)
-	ce.Log.Infofln("Deleted portal")
+	ce.Portal.Delete(ce.Ctx)
+	ce.Portal.Cleanup(ce.Ctx)
+	ce.ZLog.Info().Msg("Deleted portal")
 }

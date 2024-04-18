@@ -1,5 +1,5 @@
 // mautrix-slack - A Matrix-Slack puppeting bridge.
-// Copyright (C) 2022 Max Sandholm
+// Copyright (C) 2024 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -17,145 +17,219 @@
 package main
 
 import (
+	"context"
 	_ "embed"
-	"encoding/json"
-	"regexp"
 	"strings"
 
+	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix/id"
 
+	"github.com/slack-go/slack"
 	"go.mau.fi/mautrix-slack/database"
+	"go.mau.fi/mautrix-slack/msgconv/emoji"
 )
 
-//go:embed resources/emoji.json
-var emojiFileData []byte
-var emojis map[string]string
-
-var re regexp.Regexp = *regexp.MustCompile(`:[^:\s]*:`)
-
-func replaceShortcodesWithEmojis(text string) string {
-	return re.ReplaceAllStringFunc(text, shortcodeToEmoji)
-}
-
-func convertSlackReaction(text string) string {
-	var converted string
-	emoji := strings.Split(text, "::")
-	for _, e := range emoji {
-		converted += shortcodeToEmoji(e)
-	}
-	return converted
-}
-
-func shortcodeToEmoji(code string) string {
-	strippedCode := strings.Trim(code, ":")
-	emoji, found := emojis[strippedCode]
-	if found {
-		return emoji
-	} else {
-		return code
-	}
-}
-
-func emojiToShortcode(emoji string) string {
-	var partCodes []string
-	for _, r := range withoutVariationSelector(emoji) {
-		for code, e := range emojis {
-			if string(r) == withoutVariationSelector(e) {
-				partCodes = append(partCodes, code)
-				continue
-			}
-		}
-	}
-	return strings.Join(partCodes, "::")
-}
-
-func withoutVariationSelector(str string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '\ufe0f' {
-			return -1
-		}
-		return r
-	}, str)
-}
-
-func init() {
-	json.Unmarshal(emojiFileData, &emojis)
-}
-
-func (br *SlackBridge) ImportEmojis(userTeam *database.UserTeam, list *map[string]string, overwrite bool) error {
-	if list == nil {
-		resp, err := userTeam.Client.GetEmoji()
+func (ut *UserTeam) handleEmojiChange(ctx context.Context, evt *slack.EmojiChangedEvent) {
+	ut.Team.emojiLock.Lock()
+	defer ut.Team.emojiLock.Unlock()
+	log := zerolog.Ctx(ctx)
+	log.UpdateContext(func(c zerolog.Context) zerolog.Context {
+		return c.Str("subtype", evt.SubType)
+	})
+	switch evt.SubType {
+	case "add":
+		ut.addEmoji(ctx, evt.Name, evt.Value)
+	case "remove":
+		err := ut.bridge.DB.Emoji.DeleteMany(ctx, ut.TeamID, evt.Names...)
 		if err != nil {
-			br.ZLog.Err(err).Msg("failed to fetch emoji list from Slack")
-			return err
+			log.Err(err).Strs("emoji_ids", evt.Names).Msg("Failed to delete emojis from database")
 		}
-		list = &resp
+	case "rename":
+		dbEmoji, err := ut.bridge.DB.Emoji.GetBySlackID(ctx, ut.TeamID, evt.OldName)
+		if err != nil {
+			log.Err(err).Msg("Failed to get emoji from database for renaming")
+		} else if dbEmoji == nil || dbEmoji.Value != evt.Value {
+			log.Warn().Msg("Old emoji not found for renaming, adding new one")
+			ut.addEmoji(ctx, evt.NewName, evt.Value)
+		} else if err = dbEmoji.Rename(ctx, evt.NewName); err != nil {
+			log.Err(err).Msg("Failed to rename emoji in database")
+		}
+	default:
+		log.Warn().Msg("Unknown emoji change subtype, resyncing emojis")
+		err := ut.syncEmojis(ctx, false)
+		if err != nil {
+			log.Err(err).Msg("Failed to resync emojis")
+		}
+	}
+}
+
+func (ut *UserTeam) addEmoji(ctx context.Context, emojiName, emojiValue string) *database.Emoji {
+	log := zerolog.Ctx(ctx)
+	dbEmoji, err := ut.bridge.DB.Emoji.GetBySlackID(ctx, ut.TeamID, emojiName)
+	if err != nil {
+		log.Err(err).
+			Str("emoji_name", emojiName).
+			Str("emoji_value", emojiValue).
+			Msg("Failed to check if emoji already exists")
+		return nil
+	}
+	var newAlias string
+	var newImageMXC id.ContentURI
+	if strings.HasPrefix(emojiValue, "alias:") {
+		newAlias = ut.TryGetEmoji(ctx, strings.TrimPrefix(emojiValue, "alias:"))
+		if strings.HasPrefix(newAlias, "mxc://") {
+			newImageMXC, _ = id.ParseContentURI(newAlias)
+		}
+		if dbEmoji != nil && dbEmoji.Value == emojiValue && dbEmoji.Alias == newAlias && dbEmoji.ImageMXC == newImageMXC {
+			return dbEmoji
+		}
+	} else {
+		if dbEmoji != nil && dbEmoji.Value == emojiValue {
+			return dbEmoji
+		}
+		// Don't reupload emojis that are only missing the value column (but do set the value column so it's there in the future)
+		if dbEmoji == nil || dbEmoji.Value != "" || dbEmoji.ImageMXC.IsEmpty() {
+			newImageMXC, err = uploadPlainFile(ctx, ut.bridge.Bot, emojiValue)
+			if err != nil {
+				log.Err(err).
+					Str("emoji_name", emojiName).
+					Str("emoji_value", emojiValue).
+					Msg("Failed to reupload emoji")
+				return nil
+			}
+		}
+	}
+	if dbEmoji == nil {
+		dbEmoji = ut.bridge.DB.Emoji.New()
+		dbEmoji.TeamID = ut.TeamID
+		dbEmoji.EmojiID = emojiName
+	}
+	dbEmoji.Value = emojiValue
+	dbEmoji.Alias = newAlias
+	dbEmoji.ImageMXC = newImageMXC
+	err = dbEmoji.Upsert(ctx)
+	if err != nil {
+		log.Err(err).
+			Str("emoji_name", emojiName).
+			Str("emoji_value", emojiValue).
+			Msg("Failed to save custom emoji to database")
+	}
+	return dbEmoji
+}
+
+func (ut *UserTeam) ResyncEmojisDueToNotFound(ctx context.Context) bool {
+	if !ut.Team.emojiLock.TryLock() {
+		return false
+	}
+	defer ut.Team.emojiLock.Unlock()
+	err := ut.syncEmojis(ctx, false)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to sync emojis after emoji wasn't found")
+		return false
+	}
+	return true
+}
+
+func (ut *UserTeam) SyncEmojis(ctx context.Context) {
+	ut.Team.emojiLock.Lock()
+	defer ut.Team.emojiLock.Lock()
+	err := ut.syncEmojis(ctx, true)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to sync emojis")
+	}
+}
+
+func (ut *UserTeam) syncEmojis(ctx context.Context, onlyIfCountMismatch bool) error {
+	log := zerolog.Ctx(ctx).With().Str("action", "sync emojis").Logger()
+	resp, err := ut.Client.GetEmojiContext(ctx)
+	if err != nil {
+		log.Err(err).Msg("Failed to fetch emoji list")
+		return err
+	}
+	if onlyIfCountMismatch {
+		emojiCount, err := ut.bridge.DB.Emoji.GetEmojiCount(ctx, ut.TeamID)
+		if err != nil {
+			log.Err(err).Msg("Failed to get emoji count from database")
+			return nil
+		} else if emojiCount == len(resp) {
+			return nil
+		}
 	}
 
-	deferredAliases := map[string]string{}
-	uploaded := map[string]id.ContentURI{}
+	deferredAliases := make(map[string]string)
+	uploaded := make(map[string]id.ContentURI, len(resp))
+	existingIDs := make([]string, 0, len(resp))
 
-	for key, url := range *list {
-		existing := br.DB.Emoji.GetBySlackID(key, userTeam.Key.TeamID)
-		if existing == nil || overwrite {
-			if strings.HasPrefix(url, "alias:") {
-				deferredAliases[key] = strings.TrimPrefix(url, "alias:")
-				continue
+	for key, url := range resp {
+		existingIDs = append(existingIDs, key)
+		if strings.HasPrefix(url, "alias:") {
+			deferredAliases[key] = strings.TrimPrefix(url, "alias:")
+		} else {
+			addedEmoji := ut.addEmoji(ctx, key, url)
+			if addedEmoji != nil && !addedEmoji.ImageMXC.IsEmpty() {
+				uploaded[key] = addedEmoji.ImageMXC
 			}
-
-			uri, err := uploadPlainFile(br.AS.BotIntent(), url)
-			if err != nil {
-				br.ZLog.Err(err).Str("url", url).Msg("failed to upload emoji to matrix")
-				continue
-			}
-
-			uploaded[key] = uri
-
-			dbEmoji := br.DB.Emoji.New()
-			dbEmoji.SlackID = key
-			dbEmoji.SlackTeam = userTeam.Key.TeamID
-			dbEmoji.ImageURL = uri
-			dbEmoji.Upsert(nil)
 		}
 	}
 
 	for key, alias := range deferredAliases {
+		dbEmoji := ut.bridge.DB.Emoji.New()
+		dbEmoji.EmojiID = key
+		dbEmoji.TeamID = ut.TeamID
 		if uri, ok := uploaded[alias]; ok {
-			dbEmoji := br.DB.Emoji.New()
-			dbEmoji.SlackID = key
-			dbEmoji.SlackTeam = userTeam.Key.TeamID
 			dbEmoji.Alias = alias
-			dbEmoji.ImageURL = uri
-			dbEmoji.Upsert(nil)
-		} else if unicode := shortcodeToEmoji(alias); unicode != alias {
-			dbEmoji := br.DB.Emoji.New()
-			dbEmoji.SlackID = key
-			dbEmoji.SlackTeam = userTeam.Key.TeamID
+			dbEmoji.ImageMXC = uri
+		} else if unicode, ok := emoji.ShortcodeToUnicodeMap[alias]; ok {
 			dbEmoji.Alias = unicode
-			dbEmoji.Upsert(nil)
+		}
+		err = dbEmoji.Upsert(ctx)
+		if err != nil {
+			log.Err(err).
+				Str("emoji_id", key).
+				Str("alias", alias).
+				Msg("Failed to save deferred emoji alias to database")
+		}
+	}
+
+	emojiCount, err := ut.bridge.DB.Emoji.GetEmojiCount(ctx, ut.TeamID)
+	if err != nil {
+		log.Err(err).Msg("Failed to get emoji count from database to check if emojis need to be pruned")
+	} else if emojiCount > len(resp) {
+		err = ut.bridge.DB.Emoji.Prune(ctx, ut.TeamID, existingIDs...)
+		if err != nil {
+			log.Err(err).Msg("Failed to prune removed emojis from database")
 		}
 	}
 
 	return nil
 }
 
-func (br *SlackBridge) GetEmoji(shortcode string, userTeam *database.UserTeam) string {
-	converted := convertSlackReaction(shortcode)
-	if converted != shortcode {
-		return converted
+func (ut *UserTeam) TryGetEmoji(ctx context.Context, shortcode string) string {
+	unicode, ok := emoji.ShortcodeToUnicodeMap[shortcode]
+	if ok {
+		return unicode
 	}
 
-	dbEmoji := br.DB.Emoji.GetBySlackID(shortcode, userTeam.Key.TeamID)
-	if dbEmoji == nil {
-		br.ImportEmojis(userTeam, nil, false)
-		dbEmoji = br.DB.Emoji.GetBySlackID(shortcode, userTeam.Key.TeamID)
-	}
-
-	if dbEmoji != nil && !dbEmoji.ImageURL.IsEmpty() {
-		return dbEmoji.ImageURL.String()
+	dbEmoji, err := ut.bridge.DB.Emoji.GetBySlackID(ctx, ut.TeamID, shortcode)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Str("shortcode", shortcode).Msg("Failed to get emoji from database")
+		return ""
+	} else if dbEmoji != nil && !dbEmoji.ImageMXC.IsEmpty() {
+		return dbEmoji.ImageMXC.String()
 	} else if dbEmoji != nil {
 		return dbEmoji.Alias
 	} else {
-		return shortcode
+		return ""
 	}
+}
+
+func (ut *UserTeam) GetEmoji(ctx context.Context, shortcode string) string {
+	emojiVal := ut.TryGetEmoji(ctx, shortcode)
+	if emojiVal == "" && ut.ResyncEmojisDueToNotFound(ctx) {
+		emojiVal = ut.TryGetEmoji(ctx, shortcode)
+	}
+	if emojiVal == "" {
+		emojiVal = shortcode
+	}
+	return emojiVal
 }

@@ -17,9 +17,9 @@
 package config
 
 import (
+	up "go.mau.fi/util/configupgrade"
+	"go.mau.fi/util/random"
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
-	"maunium.net/go/mautrix/util"
-	up "maunium.net/go/mautrix/util/configupgrade"
 )
 
 func DoUpgrade(helper *up.Helper) {
@@ -27,13 +27,17 @@ func DoUpgrade(helper *up.Helper) {
 
 	helper.Copy(up.Str, "bridge", "username_template")
 	helper.Copy(up.Str, "bridge", "displayname_template")
-	helper.Copy(up.Str, "bridge", "bot_displayname_template")
 	helper.Copy(up.Str, "bridge", "channel_name_template")
+	helper.Copy(up.Str, "bridge", "team_name_template")
 	helper.Copy(up.Int, "bridge", "portal_message_buffer")
 	helper.Copy(up.Bool, "bridge", "delivery_receipts")
 	helper.Copy(up.Bool, "bridge", "message_status_events")
 	helper.Copy(up.Bool, "bridge", "message_error_notices")
 	helper.Copy(up.Bool, "bridge", "custom_emoji_reactions")
+	helper.Copy(up.Bool, "bridge", "kick_on_logout")
+	helper.Copy(up.Bool, "bridge", "workspace_avatar_in_rooms")
+	helper.Copy(up.Int, "bridge", "participant_sync_count")
+	helper.Copy(up.Bool, "bridge", "participant_sync_only_on_create")
 	helper.Copy(up.Bool, "bridge", "sync_with_custom_puppets")
 	helper.Copy(up.Bool, "bridge", "sync_direct_chat_list")
 	helper.Copy(up.Bool, "bridge", "federate_rooms")
@@ -85,7 +89,7 @@ func DoUpgrade(helper *up.Helper) {
 
 	helper.Copy(up.Str, "bridge", "provisioning", "prefix")
 	if secret, ok := helper.Get(up.Str, "bridge", "provisioning", "shared_secret"); !ok || secret == "generate" {
-		sharedSecret := util.RandomString(64)
+		sharedSecret := random.String(64)
 		helper.Set(up.Str, sharedSecret, "bridge", "provisioning", "shared_secret")
 	} else {
 		helper.Copy(up.Str, "bridge", "provisioning", "shared_secret")

@@ -19,8 +19,9 @@ package main
 import (
 	"time"
 
-	"go.mau.fi/mautrix-slack/database"
 	log "maunium.net/go/maulogger/v2"
+
+	"go.mau.fi/mautrix-slack/database"
 )
 
 type BackfillQueue struct {
@@ -53,17 +54,17 @@ func (bq *BackfillQueue) GetNextBackfill(reCheckChannel chan bool) *database.Bac
 	}
 }
 
-func (bridge *SlackBridge) HandleBackfillRequestsLoop() {
+func (br *SlackBridge) HandleBackfillRequestsLoop() {
 	reCheckChannel := make(chan bool)
-	bridge.BackfillQueue.reCheckChannels = append(bridge.BackfillQueue.reCheckChannels, reCheckChannel)
+	br.BackfillQueue.reCheckChannels = append(br.BackfillQueue.reCheckChannels, reCheckChannel)
 
 	for {
-		state := bridge.BackfillQueue.GetNextBackfill(reCheckChannel)
-		bridge.Log.Infofln("Handling backfill for portal %s", state.Portal)
+		state := br.BackfillQueue.GetNextBackfill(reCheckChannel)
+		br.Log.Infofln("Handling backfill for portal %s", state.Portal)
 
-		portal := bridge.GetPortalByID(*state.Portal)
+		portal := br.GetPortalByID(*state.Portal)
 
-		bridge.backfillInChunks(state, portal)
+		br.backfillInChunks(state, portal)
 		//req.MarkDone()
 	}
 }

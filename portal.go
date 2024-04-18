@@ -1,5 +1,5 @@
 // mautrix-slack - A Matrix-Slack puppeting bridge.
-// Copyright (C) 2022 Tulir Asokan
+// Copyright (C) 2024 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -17,20 +17,24 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/rs/zerolog"
+	"go.mau.fi/util/exslices"
 	"golang.org/x/exp/slices"
 	log "maunium.net/go/maulogger/v2"
+	"maunium.net/go/maulogger/v2/maulogadapt"
 
 	"github.com/slack-go/slack"
+	"go.mau.fi/mautrix-slack/msgconv"
+	"go.mau.fi/mautrix-slack/msgconv/emoji"
 
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/appservice"
@@ -38,7 +42,6 @@ import (
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
-	"maunium.net/go/mautrix/util/dbutil"
 
 	"go.mau.fi/mautrix-slack/config"
 	"go.mau.fi/mautrix-slack/database"
@@ -50,11 +53,20 @@ type portalMatrixMessage struct {
 	receivedAt time.Time
 }
 
+type portalSlackMessage struct {
+	evt      any
+	userTeam *UserTeam
+}
+
 type Portal struct {
 	*database.Portal
 
+	Team *Team
+
 	bridge *SlackBridge
-	log    log.Logger
+	zlog   zerolog.Logger
+	// Deprecated
+	log log.Logger
 
 	roomCreateLock          sync.Mutex
 	encryptLock             sync.Mutex
@@ -62,11 +74,12 @@ type Portal struct {
 	latestEventBackfillLock sync.Mutex
 
 	matrixMessages chan portalMatrixMessage
-
-	slackMessageLock sync.Mutex
+	slackMessages  chan portalSlackMessage
 
 	currentlyTyping     []id.UserID
 	currentlyTypingLock sync.Mutex
+
+	MsgConv *msgconv.MessageConverter
 }
 
 var (
@@ -84,13 +97,18 @@ func (portal *Portal) IsEncrypted() bool {
 
 func (portal *Portal) MarkEncrypted() {
 	portal.Encrypted = true
-	portal.Update(nil)
+	portal.Update(context.TODO())
 }
 
 func (portal *Portal) shouldSetDMRoomMetadata() bool {
-	return !portal.IsPrivateChat() ||
-		portal.bridge.Config.Bridge.PrivateChatPortalMeta == "always" ||
-		(portal.IsEncrypted() && portal.bridge.Config.Bridge.PrivateChatPortalMeta != "never")
+	if portal.Type == database.ChannelTypeDM {
+		return portal.bridge.Config.Bridge.PrivateChatPortalMeta == "always" ||
+			(portal.IsEncrypted() && portal.bridge.Config.Bridge.PrivateChatPortalMeta != "never")
+	} else if portal.Type == database.ChannelTypeGroupDM {
+		return portal.bridge.Config.Bridge.PrivateChatPortalMeta != "never"
+	} else {
+		return true
+	}
 }
 
 func (portal *Portal) ReceiveMatrixEvent(user bridge.User, evt *event.Event) {
@@ -99,56 +117,54 @@ func (portal *Portal) ReceiveMatrixEvent(user bridge.User, evt *event.Event) {
 	}
 }
 
-func (portal *Portal) HandleMatrixReadReceipt(sender bridge.User, eventID id.EventID, receipt event.ReadReceipt) {
-	//portal.handleMatrixReadReceipt(sender.(*User), eventID, receiptTimestamp, true)
-	userTeam := sender.(*User).GetUserTeam(portal.Key.TeamID)
-
-	portal.markSlackRead(sender.(*User), userTeam, eventID)
-}
-
-func (portal *Portal) markSlackRead(user *User, userTeam *database.UserTeam, eventID id.EventID) {
-	if !userTeam.IsConnected() {
-		portal.log.Debugfln("Not marking Slack conversation %s as read by %s: not connected to Slack", portal.Key, user.MXID)
-		return
-	}
-
-	message := portal.bridge.DB.Message.GetByMatrixID(portal.Key, eventID)
-	if message == nil {
-		portal.log.Debugfln("Not marking Slack channel for portal %s as read: unknown message", portal.Key)
-		return
-	}
-
-	userTeam.Client.MarkConversation(portal.Key.ChannelID, message.SlackID)
-	portal.log.Debugfln("Marked message %s as read by %s in portal %s", message.SlackID, user.MXID, portal.Key)
-}
-
-var (
-	portalCreationDummyEvent = event.Type{Type: "fi.mau.dummy.portal_created", Class: event.MessageEventType}
-)
-
-func (br *SlackBridge) loadPortal(dbPortal *database.Portal, key *database.PortalKey) *Portal {
-	// If we weren't given a portal we'll attempt to create it if a key was
-	// provided.
+func (br *SlackBridge) loadPortal(ctx context.Context, dbPortal *database.Portal, key *database.PortalKey) *Portal {
 	if dbPortal == nil {
 		if key == nil {
 			return nil
 		}
 
 		dbPortal = br.DB.Portal.New()
-		dbPortal.Key = *key
-		dbPortal.Insert()
+		dbPortal.PortalKey = *key
+		err := dbPortal.Insert(ctx)
+		if err != nil {
+			br.ZLog.Err(err).Stringer("portal_key", dbPortal.PortalKey).Msg("Failed to insert new portal")
+			return nil
+		}
 	}
 
-	portal := br.NewPortal(dbPortal)
-
-	// No need to lock, it is assumed that our callers have already acquired
-	// the lock.
-	br.portalsByID[portal.Key] = portal
+	portal := br.newPortal(dbPortal)
+	br.portalsByID[portal.PortalKey] = portal
 	if portal.MXID != "" {
 		br.portalsByMXID[portal.MXID] = portal
 	}
 
 	return portal
+}
+
+func (br *SlackBridge) newPortal(dbPortal *database.Portal) *Portal {
+	portal := &Portal{
+		Portal: dbPortal,
+		bridge: br,
+
+		matrixMessages: make(chan portalMatrixMessage, br.Config.Bridge.PortalMessageBuffer),
+
+		Team: br.GetTeamByID(dbPortal.TeamID),
+	}
+	portal.MsgConv = msgconv.New(portal, br.Config.Homeserver.Domain, int(br.MediaConfig.UploadSize))
+	portal.updateLogger()
+	go portal.messageLoop()
+	go portal.slackRepeatTypingUpdater()
+
+	return portal
+}
+
+func (portal *Portal) updateLogger() {
+	logWith := portal.bridge.ZLog.With().Str("channel_id", portal.ChannelID).Str("team_id", portal.TeamID)
+	if portal.MXID != "" {
+		logWith = logWith.Stringer("mxid", portal.MXID)
+	}
+	portal.zlog = logWith.Logger()
+	portal.log = maulogadapt.ZeroAsMau(&portal.zlog)
 }
 
 func (br *SlackBridge) GetPortalByMXID(mxid id.RoomID) *Portal {
@@ -157,7 +173,13 @@ func (br *SlackBridge) GetPortalByMXID(mxid id.RoomID) *Portal {
 
 	portal, ok := br.portalsByMXID[mxid]
 	if !ok {
-		return br.loadPortal(br.DB.Portal.GetByMXID(mxid), nil)
+		ctx := context.TODO()
+		dbPortal, err := br.DB.Portal.GetByMXID(ctx, mxid)
+		if err != nil {
+			br.ZLog.Err(err).Stringer("mxid", mxid).Msg("Failed to get portal by MXID")
+			return nil
+		}
+		return br.loadPortal(ctx, dbPortal, nil)
 	}
 
 	return portal
@@ -169,14 +191,20 @@ func (br *SlackBridge) GetPortalByID(key database.PortalKey) *Portal {
 
 	portal, ok := br.portalsByID[key]
 	if !ok {
-		return br.loadPortal(br.DB.Portal.GetByID(key), &key)
+		ctx := context.TODO()
+		dbPortal, err := br.DB.Portal.GetByID(ctx, key)
+		if err != nil {
+			br.ZLog.Err(err).Stringer("key", key).Msg("Failed to get portal by ID")
+			return nil
+		}
+		return br.loadPortal(ctx, dbPortal, &key)
 	}
 
 	return portal
 }
 
 func (br *SlackBridge) GetAllPortals() []*Portal {
-	return br.dbPortalsToPortals(br.DB.Portal.GetAll())
+	return br.dbPortalsToPortals(br.DB.Portal.GetAll(context.TODO()))
 }
 
 func (br *SlackBridge) GetAllIPortals() (iportals []bridge.Portal) {
@@ -188,48 +216,33 @@ func (br *SlackBridge) GetAllIPortals() (iportals []bridge.Portal) {
 	return iportals
 }
 
-func (br *SlackBridge) GetAllPortalsForUserTeam(utk database.UserTeamKey) []*Portal {
-	return br.dbPortalsToPortals(br.DB.Portal.GetAllForUserTeam(utk))
+func (br *SlackBridge) GetAllPortalsForUserTeam(utk database.UserTeamMXIDKey) []*Portal {
+	return br.dbPortalsToPortals(br.DB.Portal.GetAllForUserTeam(context.TODO(), utk))
 }
 
-func (br *SlackBridge) GetDMPortalsWith(otherUserID string) []*Portal {
-	return br.dbPortalsToPortals(br.DB.Portal.FindPrivateChatsWith(otherUserID))
+func (br *SlackBridge) GetDMPortalsWith(otherUserKey database.UserTeamKey) []*Portal {
+	return br.dbPortalsToPortals(br.DB.Portal.FindPrivateChatsWith(context.TODO(), otherUserKey))
 }
 
-func (br *SlackBridge) dbPortalsToPortals(dbPortals []*database.Portal) []*Portal {
+func (br *SlackBridge) dbPortalsToPortals(dbPortals []*database.Portal, err error) []*Portal {
+	if err != nil {
+		br.ZLog.Err(err).Msg("Failed to load portals")
+		return nil
+	}
 	br.portalsLock.Lock()
 	defer br.portalsLock.Unlock()
 
 	output := make([]*Portal, len(dbPortals))
-	for index, dbPortal := range dbPortals {
-		if dbPortal == nil {
-			continue
+	for i, dbPortal := range dbPortals {
+		portal, ok := br.portalsByID[dbPortal.PortalKey]
+		if ok {
+			output[i] = portal
+		} else {
+			output[i] = br.loadPortal(context.TODO(), dbPortal, nil)
 		}
-
-		portal, ok := br.portalsByID[dbPortal.Key]
-		if !ok {
-			portal = br.loadPortal(dbPortal, nil)
-		}
-
-		output[index] = portal
 	}
 
 	return output
-}
-
-func (br *SlackBridge) NewPortal(dbPortal *database.Portal) *Portal {
-	portal := &Portal{
-		Portal: dbPortal,
-		bridge: br,
-		log:    br.Log.Sub(fmt.Sprintf("Portal/%s", dbPortal.Key)),
-
-		matrixMessages: make(chan portalMatrixMessage, br.Config.Bridge.PortalMessageBuffer),
-	}
-
-	go portal.messageLoop()
-	go portal.slackRepeatTypingUpdater()
-
-	return portal
 }
 
 func (portal *Portal) messageLoop() {
@@ -237,6 +250,8 @@ func (portal *Portal) messageLoop() {
 		select {
 		case msg := <-portal.matrixMessages:
 			portal.handleMatrixMessages(msg)
+		case msg := <-portal.slackMessages:
+			portal.handleSlackEvent(msg.userTeam, msg.evt)
 		}
 	}
 }
@@ -245,47 +260,19 @@ func (portal *Portal) IsPrivateChat() bool {
 	return portal.Type == database.ChannelTypeDM
 }
 
-func (portal *Portal) MainIntent() *appservice.IntentAPI {
+func (portal *Portal) GetDMPuppet() *Puppet {
 	if portal.IsPrivateChat() && portal.DMUserID != "" {
-		puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, portal.DMUserID)
-		if puppet.CustomMXID == "" {
-			return puppet.IntentFor(portal)
-		}
+		return portal.Team.GetPuppetByID(portal.DMUserID)
 	}
-
-	return portal.bridge.Bot
+	return nil
 }
 
-func (portal *Portal) syncParticipants(source *User, sourceTeam *database.UserTeam, participants []string, invite bool) []id.UserID {
-	userIDs := make([]id.UserID, 0, len(participants)+1)
-	for _, participant := range participants {
-		portal.log.Infofln("Getting participant %s", participant)
-		puppet := portal.bridge.GetPuppetByID(sourceTeam.Key.TeamID, participant)
-
-		puppet.UpdateInfo(sourceTeam, true, nil)
-
-		user := portal.bridge.GetUserByID(sourceTeam.Key.TeamID, participant)
-
-		if user != nil {
-			userIDs = append(userIDs, user.MXID)
-		}
-		if user == nil || puppet.CustomMXID != user.MXID {
-			userIDs = append(userIDs, puppet.MXID)
-		}
-
-		if invite {
-			if user != nil {
-				portal.ensureUserInvited(user)
-			}
-
-			if user == nil || !puppet.IntentFor(portal).IsCustomPuppet {
-				if err := puppet.IntentFor(portal).EnsureJoined(portal.MXID); err != nil {
-					portal.log.Warnfln("Failed to make puppet of %s join %s: %v", participant, portal.MXID, err)
-				}
-			}
-		}
+func (portal *Portal) MainIntent() *appservice.IntentAPI {
+	dmPuppet := portal.GetDMPuppet()
+	if dmPuppet != nil {
+		return dmPuppet.IntentFor(portal)
 	}
-	return userIDs
+	return portal.bridge.Bot
 }
 
 func (portal *Portal) GetEncryptionEventContent() (evt *event.EncryptionEventContent) {
@@ -297,36 +284,33 @@ func (portal *Portal) GetEncryptionEventContent() (evt *event.EncryptionEventCon
 	return
 }
 
-func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, channel *slack.Channel, fill bool) error {
+func (portal *Portal) CreateMatrixRoom(ctx context.Context, source *UserTeam, channel *slack.Channel) error {
 	portal.roomCreateLock.Lock()
 	defer portal.roomCreateLock.Unlock()
-
-	portal.slackMessageLock.Lock()
-	defer portal.slackMessageLock.Unlock()
-
-	// If we have a matrix id the room should exist so we have nothing to do.
 	if portal.MXID != "" {
 		return nil
 	}
 
-	channel = portal.UpdateInfo(user, userTeam, channel, false)
+	var invite []id.UserID
+	channel, invite = portal.UpdateInfo(ctx, source, channel, true)
 	if channel == nil {
 		return fmt.Errorf("didn't find channel metadata")
+	} else if portal.Type == database.ChannelTypeUnknown {
+		return fmt.Errorf("unknown channel type")
+	} else if portal.Type == database.ChannelTypeGroupDM && len(channel.Members) == 0 {
+		return fmt.Errorf("group DM has no members")
+	} else if portal.Type == database.ChannelTypeDM && portal.DMUserID == "" {
+		return fmt.Errorf("other user in DM not known")
 	}
-	typeFound := portal.setChannelType(channel)
-	if !typeFound {
-		portal.log.Warnln("No appropriate type found for channel")
-		return nil
-	}
-	if portal.Type == database.ChannelTypeGroupDM && len(channel.Members) == 0 {
-		portal.log.Warnln("Group DM with no members, not bridging")
-		return nil
+	// Clear invite list for private chats, we don't want to invite the room creator
+	if portal.IsPrivateChat() {
+		invite = []id.UserID{}
 	}
 
-	portal.log.Infoln("Creating Matrix room for channel:", portal.Portal.Key.ChannelID)
+	portal.zlog.Info().Msg("Creating Matrix room for channel")
 
 	intent := portal.MainIntent()
-	if err := intent.EnsureRegistered(); err != nil {
+	if err := intent.EnsureRegistered(ctx); err != nil {
 		return err
 	}
 
@@ -340,12 +324,27 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		Type:     event.StateHalfShotBridge,
 		Content:  event.Content{Parsed: bridgeInfo},
 		StateKey: &bridgeInfoStateKey,
+	}, {
+		Type: event.StateSpaceParent,
+		Content: event.Content{Parsed: &event.SpaceParentEventContent{
+			Via:       []string{portal.bridge.Config.Homeserver.Domain},
+			Canonical: true,
+		}},
+		StateKey: (*string)(&portal.Team.MXID),
 	}}
 
-	creationContent := make(map[string]interface{})
-	creationContent["m.federate"] = portal.bridge.Config.Bridge.FederateRooms
-
-	var invite []id.UserID
+	creationContent := make(map[string]any)
+	if !portal.bridge.Config.Bridge.FederateRooms {
+		creationContent["m.federate"] = false
+	}
+	avatarSet := false
+	if !portal.AvatarMXC.IsEmpty() && portal.shouldSetDMRoomMetadata() {
+		avatarSet = true
+		initialState = append(initialState, &event.Event{
+			Type:    event.StateRoomAvatar,
+			Content: event.Content{Parsed: &event.RoomAvatarEventContent{URL: portal.AvatarMXC}},
+		})
+	}
 
 	if portal.bridge.Config.Bridge.Encryption.Default {
 		initialState = append(initialState, &event.Event{
@@ -358,28 +357,14 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 
 		if portal.IsPrivateChat() {
 			invite = append(invite, portal.bridge.Bot.UserID)
-			portal.log.Infoln("added the bot because this portal is encrypted")
 		}
 	}
 
-	var members []string
-	// no members are included in channels, only in group DMs
-	switch portal.Type {
-	case database.ChannelTypeChannel:
-		members = portal.getChannelMembers(userTeam, 3) // TODO: this just fetches 3 members so channels don't have to look like DMs
-	case database.ChannelTypeDM:
-		members = []string{channel.User, userTeam.Key.SlackID}
-	case database.ChannelTypeGroupDM:
-		members = channel.Members
-	}
-
-	autoJoinInvites := portal.bridge.Config.Homeserver.Software == bridgeconfig.SoftwareHungry
+	autoJoinInvites := portal.bridge.SpecVersions.Supports(mautrix.BeeperFeatureAutojoinInvites)
 	if autoJoinInvites {
-		portal.log.Debugfln("Hungryserv mode: adding all group members in create request")
-		participants := portal.syncParticipants(user, userTeam, members, false)
-		invite = append(invite, participants...)
-		if !slices.Contains(invite, user.MXID) {
-			invite = append(invite, user.MXID)
+		portal.zlog.Debug().Msg("Hungryserv mode: adding all group members in create request")
+		if !slices.Contains(invite, source.UserMXID) {
+			invite = append(invite, source.UserMXID)
 		}
 	}
 	req := &mautrix.ReqCreateRoom{
@@ -396,28 +381,31 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 	if !portal.shouldSetDMRoomMetadata() {
 		req.Name = ""
 	}
-	resp, err := intent.CreateRoom(req)
+	resp, err := intent.CreateRoom(ctx, req)
 	if err != nil {
 		portal.log.Warnln("Failed to create room:", err)
 		return err
 	}
 
 	portal.NameSet = req.Name != ""
+	portal.AvatarSet = avatarSet
 	portal.TopicSet = true
 	portal.MXID = resp.RoomID
 	portal.bridge.portalsLock.Lock()
 	portal.bridge.portalsByMXID[portal.MXID] = portal
 	portal.bridge.portalsLock.Unlock()
-	portal.Update(nil)
+	portal.updateLogger()
+	portal.zlog.Info().Msg("Matrix room created")
 
-	portal.InsertUser(userTeam.Key)
-
-	portal.log.Infoln("Matrix room created:", portal.MXID)
+	err = portal.Update(ctx)
+	if err != nil {
+		portal.zlog.Err(err).Msg("Failed to save portal after creating Matrix room")
+	}
 
 	if portal.Encrypted && portal.IsPrivateChat() {
-		err = portal.bridge.Bot.EnsureJoined(portal.MXID, appservice.EnsureJoinedParams{BotOverride: portal.MainIntent().Client})
+		err = portal.bridge.Bot.EnsureJoined(ctx, portal.MXID, appservice.EnsureJoinedParams{BotOverride: portal.MainIntent().Client})
 		if err != nil {
-			portal.log.Errorfln("Failed to ensure bridge bot is joined to private chat portal: %v", err)
+			portal.zlog.Err(err).Msg("Failed to ensure bridge bot is joined to private chat portal")
 		}
 	}
 
@@ -427,46 +415,39 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 		inviteMembership = event.MembershipJoin
 	}
 	for _, userID := range invite {
-		portal.bridge.StateStore.SetMembership(portal.MXID, userID, inviteMembership)
+		portal.bridge.StateStore.SetMembership(ctx, portal.MXID, userID, inviteMembership)
 	}
 
 	if !autoJoinInvites {
-		portal.ensureUserInvited(user)
-		user.syncChatDoublePuppetDetails(portal, true)
-		portal.syncParticipants(user, userTeam, members, true)
+		portal.ensureUserInvited(ctx, source.User)
+		for _, mxid := range invite {
+			puppet := portal.bridge.GetPuppetByMXID(mxid)
+			if puppet != nil {
+				err = puppet.IntentFor(portal).EnsureJoined(ctx, portal.MXID)
+				if err != nil {
+					portal.zlog.Err(err).Stringer("puppet_mxid", mxid).Msg("Failed to ensure puppet is joined to portal")
+				}
+			}
+		}
 	}
 	if portal.Type == database.ChannelTypeChannel {
-		user.updateChatMute(portal, true)
+		source.User.updateChatMute(ctx, portal, true)
 	}
 
-	// if portal.IsPrivateChat() {
-	// 	puppet := user.bridge.GetPuppetByID(userTeam.Key.TeamID, portal.Key.UserID)
-
-	// 	chats := map[id.UserID][]id.RoomID{puppet.MXID: {portal.MXID}}
-	// 	user.updateDirectChats(chats)
-	// }
-
-	firstEventResp, err := portal.MainIntent().SendMessageEvent(portal.MXID, portalCreationDummyEvent, struct{}{})
-	if err != nil {
-		portal.log.Errorln("Failed to send dummy event to mark portal creation:", err)
-	} else {
-		portal.FirstEventID = firstEventResp.EventID
-		portal.Update(nil)
-	}
-
-	if portal.bridge.Config.Bridge.Backfill.Enable {
+	/*if portal.bridge.Config.Bridge.Backfill.Enable {
 		portal.log.Debugln("Performing initial backfill batch")
-		initialMessages, err := userTeam.Client.GetConversationHistory(&slack.GetConversationHistoryParameters{
-			ChannelID: portal.Key.ChannelID,
+		initialMessages, err := source.Client.GetConversationHistory(&slack.GetConversationHistoryParameters{
+			ChannelID: portal.ChannelID,
 			Inclusive: true,
 			Limit:     portal.bridge.Config.Bridge.Backfill.ImmediateMessages,
 		})
-		backfillState := portal.bridge.DB.Backfill.NewBackfillState(&portal.Key)
+		backfillState := portal.bridge.DB.Backfill.New()
+		backfillState.Portal = portal.PortalKey
 		if err != nil {
 			portal.log.Errorfln("Error fetching initial backfill messages: %v", err)
 			backfillState.BackfillComplete = true
 		} else {
-			resp, err := portal.backfill(userTeam, initialMessages.Messages, true)
+			resp, err := portal.backfill(source, initialMessages.Messages, true)
 			if err != nil {
 				portal.log.Errorfln("Error sending initial backfill batch: %v", err)
 			}
@@ -478,62 +459,51 @@ func (portal *Portal) CreateMatrixRoom(user *User, userTeam *database.UserTeam, 
 			}
 		}
 		portal.log.Debugln("Enqueueing backfill")
-		backfillState.Upsert()
+		backfillState.Upsert(ctx)
 		portal.bridge.BackfillQueue.ReCheck()
-	}
+	}*/
 
 	return nil
 }
 
-func (portal *Portal) getChannelMembers(userTeam *database.UserTeam, limit int) []string {
-	members, _, err := userTeam.Client.GetUsersInConversation(&slack.GetUsersInConversationParameters{
-		ChannelID: portal.Key.ChannelID,
-		Limit:     limit,
-	})
-	if err != nil {
-		portal.log.Errorfln("Error fetching channel members for %v: %v", portal.Key, err)
-		return nil
+func (portal *Portal) getChannelMembers(source *UserTeam, limit int) (output []string) {
+	var cursor string
+	for limit > 0 {
+		chunkLimit := limit
+		if chunkLimit > 200 {
+			chunkLimit = 100
+		}
+		membersChunk, nextCursor, err := source.Client.GetUsersInConversation(&slack.GetUsersInConversationParameters{
+			ChannelID: portal.ChannelID,
+			Limit:     limit,
+			Cursor:    cursor,
+		})
+		if err != nil {
+			portal.zlog.Err(err).Msg("Failed to get channel members")
+			break
+		}
+		output = append(output, membersChunk...)
+		cursor = nextCursor
+		limit -= len(membersChunk)
+		if nextCursor == "" || len(membersChunk) < chunkLimit {
+			break
+		}
 	}
-	return members
-
+	return
 }
 
-func (portal *Portal) ensureUserInvited(user *User) bool {
-	return user.ensureInvited(portal.MainIntent(), portal.MXID, portal.IsPrivateChat())
+func (portal *Portal) ensureUserInvited(ctx context.Context, user *User) bool {
+	return user.ensureInvited(ctx, portal.MainIntent(), portal.MXID, portal.IsPrivateChat())
 }
 
-func (portal *Portal) markMessageHandled(txn dbutil.Transaction, slackID string, slackThreadID string, mxid id.EventID, authorID string) *database.Message {
-	msg := portal.bridge.DB.Message.New()
-	msg.Channel = portal.Key
-	msg.SlackID = slackID
-	msg.MatrixID = mxid
-	msg.AuthorID = authorID
-	msg.SlackThreadID = slackThreadID
-	msg.Insert(txn)
-
-	return msg
-}
-
-// func (portal *Portal) sendMediaFailedMessage(intent *appservice.IntentAPI, bridgeErr error) {
-// 	content := &event.MessageEventContent{
-// 		Body:    fmt.Sprintf("Failed to bridge media: %v", bridgeErr),
-// 		MsgType: event.MsgNotice,
-// 	}
-
-// 	_, err := portal.sendMatrixMessage(intent, event.EventMessage, content, nil, time.Now().UTC().UnixMilli())
-// 	if err != nil {
-// 		portal.log.Warnfln("failed to send error message to matrix: %v", err)
-// 	}
-// }
-
-func (portal *Portal) encrypt(intent *appservice.IntentAPI, content *event.Content, eventType event.Type) (event.Type, error) {
+func (portal *Portal) encrypt(ctx context.Context, intent *appservice.IntentAPI, content *event.Content, eventType event.Type) (event.Type, error) {
 	if !portal.Encrypted || portal.bridge.Crypto == nil {
 		return eventType, nil
 	}
 	intent.AddDoublePuppetValue(content)
 	// TODO maybe the locking should be inside mautrix-go?
 	portal.encryptLock.Lock()
-	err := portal.bridge.Crypto.Encrypt(portal.MXID, eventType, content)
+	err := portal.bridge.Crypto.Encrypt(ctx, portal.MXID, eventType, content)
 	portal.encryptLock.Unlock()
 	if err != nil {
 		return eventType, fmt.Errorf("failed to encrypt event: %w", err)
@@ -541,44 +511,19 @@ func (portal *Portal) encrypt(intent *appservice.IntentAPI, content *event.Conte
 	return event.EventEncrypted, nil
 }
 
-const doublePuppetKey = "fi.mau.double_puppet_source"
-const doublePuppetValue = "mautrix-slack"
-
-func (portal *Portal) sendMatrixMessage(intent *appservice.IntentAPI, eventType event.Type, content *event.MessageEventContent, extraContent map[string]interface{}, timestamp int64) (*mautrix.RespSendEvent, error) {
+func (portal *Portal) sendMatrixMessage(ctx context.Context, intent *appservice.IntentAPI, eventType event.Type, content *event.MessageEventContent, extraContent map[string]interface{}, timestamp int64) (*mautrix.RespSendEvent, error) {
 	wrappedContent := event.Content{Parsed: content, Raw: extraContent}
-	if timestamp != 0 && intent.IsCustomPuppet {
-		if wrappedContent.Raw == nil {
-			wrappedContent.Raw = map[string]interface{}{}
-		}
-		if intent.IsCustomPuppet {
-			wrappedContent.Raw[doublePuppetKey] = doublePuppetValue
-		}
-	}
 	var err error
-	eventType, err = portal.encrypt(intent, &wrappedContent, eventType)
+	eventType, err = portal.encrypt(ctx, intent, &wrappedContent, eventType)
 	if err != nil {
 		return nil, err
 	}
 
-	if eventType == event.EventEncrypted {
-		// Clear other custom keys if the event was encrypted, but keep the double puppet identifier
-		if intent.IsCustomPuppet {
-			wrappedContent.Raw = map[string]interface{}{doublePuppetKey: doublePuppetValue}
-		} else {
-			wrappedContent.Raw = nil
-		}
-	}
-
-	_, _ = intent.UserTyping(portal.MXID, false, 0)
-	if timestamp == 0 {
-		return intent.SendMessageEvent(portal.MXID, eventType, &wrappedContent)
-	} else {
-		return intent.SendMassagedMessageEvent(portal.MXID, eventType, &wrappedContent, timestamp)
-	}
+	_, _ = intent.UserTyping(ctx, portal.MXID, false, 0)
+	return intent.SendMassagedMessageEvent(ctx, portal.MXID, eventType, &wrappedContent, timestamp)
 }
 
 func (portal *Portal) handleMatrixMessages(msg portalMatrixMessage) {
-
 	evtTS := time.UnixMilli(msg.evt.Timestamp)
 	timings := messageTimings{
 		initReceive:  msg.evt.Mautrix.ReceivedAt.Sub(evtTS),
@@ -587,262 +532,99 @@ func (portal *Portal) handleMatrixMessages(msg portalMatrixMessage) {
 		totalReceive: time.Since(evtTS),
 	}
 	ms := metricSender{portal: portal, timings: &timings}
+	log := portal.zlog.With().
+		Str("action", "handle matrix event").
+		Stringer("sender", msg.evt.Sender).
+		Str("event_type", msg.evt.Type.Type).
+		Logger()
+	ctx := log.WithContext(context.TODO())
+	ut := msg.user.GetTeam(portal.TeamID)
+	if ut == nil || ut.Token == "" || ut.Client == nil {
+		portal.log.Warnfln("User %s not logged into team %s", msg.user.MXID, portal.TeamID)
+		go ms.sendMessageMetrics(ctx, msg.evt, errUserNotLoggedIn, "Ignoring", true)
+		return
+	}
+	log.UpdateContext(func(c zerolog.Context) zerolog.Context {
+		return c.Str("sender_slack_id", ut.UserID)
+	})
 
 	switch msg.evt.Type {
 	case event.EventMessage:
-		portal.handleMatrixMessage(msg.user, msg.evt, &ms)
+		portal.handleMatrixMessage(ctx, ut, msg.evt, &ms)
 	case event.EventRedaction:
-		portal.handleMatrixRedaction(msg.user, msg.evt)
+		portal.handleMatrixRedaction(ctx, ut, msg.evt)
 	case event.EventReaction:
-		portal.handleMatrixReaction(msg.user, msg.evt, &ms)
+		portal.handleMatrixReaction(ctx, ut, msg.evt, &ms)
 	default:
 		portal.log.Debugln("unknown event type", msg.evt.Type)
 	}
 }
 
-func (portal *Portal) handleMatrixMessage(sender *User, evt *event.Event, ms *metricSender) {
-	portal.slackMessageLock.Lock()
-	defer portal.slackMessageLock.Unlock()
-
+func (portal *Portal) handleMatrixMessage(ctx context.Context, sender *UserTeam, evt *event.Event, ms *metricSender) {
+	log := zerolog.Ctx(ctx)
+	ctx = context.WithValue(ctx, convertContextKeySource, sender)
 	start := time.Now()
-
-	userTeam := sender.GetUserTeam(portal.Key.TeamID)
-	if userTeam == nil {
-		portal.log.Warnfln("User %s not logged into team %s", sender.MXID, portal.Key.TeamID)
-		go ms.sendMessageMetrics(evt, errUserNotLoggedIn, "Ignoring", true)
-		return
-	}
-	if userTeam.Client == nil {
-		portal.log.Errorfln("Client for userteam %s is nil!", userTeam.Key)
-		return
-	}
-
-	existing := portal.bridge.DB.Message.GetByMatrixID(portal.Key, evt.ID)
-	if existing != nil {
-		portal.log.Debugln("not handling duplicate message", evt.ID)
-		go ms.sendMessageMetrics(evt, nil, "", true)
-		return
-	}
-
-	messageAge := ms.timings.totalReceive
-	errorAfter := portal.bridge.Config.Bridge.MessageHandlingTimeout.ErrorAfter
-	deadline := portal.bridge.Config.Bridge.MessageHandlingTimeout.Deadline
-	isScheduled, _ := evt.Content.Raw["com.beeper.scheduled"].(bool)
-	if isScheduled {
-		portal.log.Debugfln("%s is a scheduled message, extending handling timeouts", evt.ID)
-		errorAfter *= 10
-		deadline *= 10
-	}
-
-	if errorAfter > 0 {
-		remainingTime := errorAfter - messageAge
-		if remainingTime < 0 {
-			go ms.sendMessageMetrics(evt, errTimeoutBeforeHandling, "Timeout handling", true)
-			return
-		} else if remainingTime < 1*time.Second {
-			portal.log.Warnfln("Message %s was delayed before reaching the bridge, only have %s (of %s timeout) until delay warning", evt.ID, remainingTime, errorAfter)
-		}
-		go func() {
-			time.Sleep(remainingTime)
-			ms.sendMessageMetrics(evt, errMessageTakingLong, "Timeout handling", false)
-		}()
-	}
-
-	ctx := context.Background()
-	if deadline > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, deadline)
-		defer cancel()
-	}
-	ms.timings.preproc = time.Since(start)
-
-	start = time.Now()
-	options, fileUpload, threadTs, err := portal.convertMatrixMessage(ctx, sender, userTeam, evt)
+	sendOpts, fileUpload, threadID, err := portal.MsgConv.ToSlack(ctx, evt)
 	ms.timings.convert = time.Since(start)
 
 	start = time.Now()
 	var timestamp string
-	if options == nil && fileUpload == nil {
-		go ms.sendMessageMetrics(evt, err, "Error converting", true)
+	if err != nil {
+		go ms.sendMessageMetrics(ctx, evt, err, "Error converting", true)
 		return
-	} else if options != nil {
-		portal.log.Debugfln("Sending message %s to Slack %s %s", evt.ID, portal.Key.TeamID, portal.Key.ChannelID)
-		_, timestamp, err = userTeam.Client.PostMessage(
-			portal.Key.ChannelID,
+	} else if sendOpts != nil {
+		log.Debug().Msg("Sending message to Slack")
+		_, timestamp, err = sender.Client.PostMessageContext(
+			ctx,
+			portal.ChannelID,
 			slack.MsgOptionAsUser(true),
-			slack.MsgOptionCompose(options...))
+			sendOpts)
 		if err != nil {
-			go ms.sendMessageMetrics(evt, err, "Error sending", true)
+			go ms.sendMessageMetrics(ctx, evt, err, "Error sending", true)
 			return
 		}
 	} else if fileUpload != nil {
-		portal.log.Debugfln("Uploading file from message %s to Slack %s %s", evt.ID, portal.Key.TeamID, portal.Key.ChannelID)
-		file, err := userTeam.Client.UploadFile(*fileUpload)
+		log.Debug().Msg("Uploading attachment to Slack")
+		file, err := sender.Client.UploadFileContext(ctx, *fileUpload)
 		if err != nil {
-			portal.log.Errorfln("Failed to upload slack attachment: %v", err)
-			go ms.sendMessageMetrics(evt, errMediaSlackUploadFailed, "Error uploading", true)
+			log.Err(err).Msg("Failed to upload attachment to Slack")
+			go ms.sendMessageMetrics(ctx, evt, errMediaSlackUploadFailed, "Error uploading", true)
 			return
 		}
 		var shareInfo slack.ShareFileInfo
 		// Slack puts the channel message info after uploading a file in either file.shares.private or file.shares.public
-		if info, found := file.Shares.Private[portal.Key.ChannelID]; found && len(info) > 0 {
+		if info, found := file.Shares.Private[portal.ChannelID]; found && len(info) > 0 {
 			shareInfo = info[0]
-		} else if info, found := file.Shares.Public[portal.Key.ChannelID]; found && len(info) > 0 {
+		} else if info, found = file.Shares.Public[portal.ChannelID]; found && len(info) > 0 {
 			shareInfo = info[0]
 		} else {
-			go ms.sendMessageMetrics(evt, errMediaSlackUploadFailed, "Error uploading", true)
+			go ms.sendMessageMetrics(ctx, evt, errMediaSlackUploadFailed, "Error uploading", true)
 			return
 		}
 		timestamp = shareInfo.Ts
 	}
 	ms.timings.totalSend = time.Since(start)
-	go ms.sendMessageMetrics(evt, err, "Error sending", true)
-	// TODO: store these timings in some way
-
+	go ms.sendMessageMetrics(ctx, evt, err, "Error sending", true)
 	if timestamp != "" {
 		dbMsg := portal.bridge.DB.Message.New()
-		dbMsg.Channel = portal.Key
-		dbMsg.SlackID = timestamp
-		dbMsg.MatrixID = evt.ID
-		dbMsg.AuthorID = userTeam.Key.SlackID
-		dbMsg.SlackThreadID = threadTs
-		dbMsg.Insert(nil)
-	}
-}
-
-func (portal *Portal) convertMatrixMessage(ctx context.Context, sender *User, userTeam *database.UserTeam, evt *event.Event) (options []slack.MsgOption, fileUpload *slack.FileUploadParameters, threadTs string, err error) {
-	content, ok := evt.Content.Parsed.(*event.MessageEventContent)
-	if !ok {
-		return nil, nil, "", errUnexpectedParsedContentType
-	}
-
-	var existingTs string
-	if content.RelatesTo != nil && content.RelatesTo.Type == event.RelReplace { // fetch the slack original TS for editing purposes
-		existing := portal.bridge.DB.Message.GetByMatrixID(portal.Key, content.RelatesTo.EventID)
-		if existing != nil && existing.SlackID != "" {
-			existingTs = existing.SlackID
-			content = content.NewContent
-		} else {
-			portal.log.Errorfln("Matrix message %s is an edit, but can't find the original Slack message ID", evt.ID)
-			return nil, nil, "", errTargetNotFound
-		}
-	} else if content.RelatesTo != nil && content.RelatesTo.Type == event.RelThread { // fetch the thread root ID via Matrix thread
-		rootMessage := portal.bridge.DB.Message.GetByMatrixID(portal.Key, content.RelatesTo.GetThreadParent())
-		if rootMessage != nil {
-			threadTs = rootMessage.SlackID
-		}
-	} else if threadTs == "" && content.RelatesTo != nil && content.RelatesTo.InReplyTo != nil { // if the first method failed, try via Matrix reply
-		var slackMessageID string
-		var slackThreadID string
-		parentMessage := portal.bridge.DB.Message.GetByMatrixID(portal.Key, content.RelatesTo.GetReplyTo())
-		if parentMessage != nil {
-			slackMessageID = parentMessage.SlackID
-			slackThreadID = parentMessage.SlackThreadID
-		} else {
-			parentAttachment := portal.bridge.DB.Attachment.GetByMatrixID(portal.Key, content.RelatesTo.GetReplyTo())
-			if parentAttachment != nil {
-				slackMessageID = parentAttachment.SlackMessageID
-				slackThreadID = parentAttachment.SlackThreadID
-			}
-		}
-		if slackThreadID != "" {
-			threadTs = slackThreadID
-		} else {
-			threadTs = slackMessageID
-		}
-	}
-
-	switch content.MsgType {
-	case event.MsgText, event.MsgEmote, event.MsgNotice:
-		if content.Format == event.FormatHTML {
-			options = []slack.MsgOption{slack.MsgOptionText(portal.bridge.ParseMatrix(content.FormattedBody), false)}
-		} else {
-			options = []slack.MsgOption{slack.MsgOptionText(content.Body, false)}
-		}
-		if threadTs != "" {
-			options = append(options, slack.MsgOptionTS(threadTs))
-		}
-		if existingTs != "" {
-			options = append(options, slack.MsgOptionUpdate(existingTs))
-		}
-		if content.MsgType == event.MsgEmote {
-			options = append(options, slack.MsgOptionMeMessage())
-		}
-		return options, nil, threadTs, nil
-	case event.MsgAudio, event.MsgFile, event.MsgImage, event.MsgVideo:
-		data, err := portal.downloadMatrixAttachment(content)
+		dbMsg.PortalKey = portal.PortalKey
+		dbMsg.MessageID = timestamp
+		dbMsg.MXID = evt.ID
+		dbMsg.AuthorID = sender.UserID
+		dbMsg.ThreadID = threadID
+		err = dbMsg.Insert(ctx)
 		if err != nil {
-			portal.log.Errorfln("Failed to download matrix attachment: %v", err)
-			return nil, nil, "", errMediaDownloadFailed
+			log.Err(err).Msg("Failed to insert message to database")
 		}
-
-		var filename, caption string
-		if content.FileName == "" || content.FileName == content.Body {
-			filename = content.Body
-		} else {
-			filename = content.FileName
-			caption = content.Body
-		}
-		fileUpload = &slack.FileUploadParameters{
-			Filename:        filename,
-			Filetype:        content.Info.MimeType,
-			Reader:          bytes.NewReader(data),
-			Channels:        []string{portal.Key.ChannelID},
-			ThreadTimestamp: threadTs,
-		}
-		if caption != "" {
-			fileUpload.InitialComment = caption
-		}
-		return nil, fileUpload, threadTs, nil
-	default:
-		return nil, nil, "", errUnknownMsgType
 	}
 }
 
-func (portal *Portal) handleMatrixReaction(sender *User, evt *event.Event, ms *metricSender) {
-	portal.slackMessageLock.Lock()
-	defer portal.slackMessageLock.Unlock()
-
-	userTeam := sender.GetUserTeam(portal.Key.TeamID)
-	if userTeam == nil {
-		go ms.sendMessageMetrics(evt, errUserNotLoggedIn, "Ignoring", true)
-		return
-	}
-
+func (portal *Portal) handleMatrixReaction(ctx context.Context, sender *UserTeam, evt *event.Event, ms *metricSender) {
+	log := zerolog.Ctx(ctx)
 	reaction := evt.Content.AsReaction()
 	if reaction.RelatesTo.Type != event.RelAnnotation {
-		portal.log.Errorfln("Ignoring reaction %s due to unknown m.relates_to data", evt.ID)
-		ms.sendMessageMetrics(evt, errUnexpectedRelatesTo, "Error sending", true)
-		return
-	}
-
-	var slackID string
-
-	msg := portal.bridge.DB.Message.GetByMatrixID(portal.Key, reaction.RelatesTo.EventID)
-
-	// Due to the differences in attachments between Slack and Matrix, if a
-	// user reacts to a media message on discord our lookup above will fail
-	// because the relation of matrix media messages to attachments in handled
-	// in the attachments table instead of messages so we need to check that
-	// before continuing.
-	//
-	// This also leads to interesting problems when a Slack message comes in
-	// with multiple attachments. A user can react to each one individually on
-	// Matrix, which will cause us to send it twice. Slack tends to ignore
-	// this, but if the user removes one of them, discord removes it and now
-	// they're out of sync. Perhaps we should add a counter to the reactions
-	// table to keep them in sync and to avoid sending duplicates to Slack.
-	if msg == nil {
-		attachment := portal.bridge.DB.Attachment.GetByMatrixID(portal.Key, reaction.RelatesTo.EventID)
-		if attachment != nil {
-			slackID = attachment.SlackMessageID
-		}
-	} else {
-		slackID = msg.SlackID
-	}
-	if slackID == "" {
-		portal.log.Debugf("Message %s has not yet been sent to slack", reaction.RelatesTo.EventID)
-		ms.sendMessageMetrics(evt, errReactionTargetNotFound, "Error sending", true)
+		log.Warn().Msg("Ignoring reaction due to unknown m.relates_to data")
+		ms.sendMessageMetrics(ctx, evt, errUnexpectedRelatesTo, "Error sending", true)
 		return
 	}
 
@@ -850,110 +632,145 @@ func (portal *Portal) handleMatrixReaction(sender *User, evt *event.Event, ms *m
 	if strings.HasPrefix(reaction.RelatesTo.Key, "mxc://") {
 		uri, err := id.ParseContentURI(reaction.RelatesTo.Key)
 		if err == nil {
-			customEmoji := portal.bridge.DB.Emoji.GetByMXC(uri)
-			if customEmoji != nil {
-				emojiID = customEmoji.SlackID
+			customEmoji, err := portal.bridge.DB.Emoji.GetByMXC(ctx, uri)
+			if err != nil {
+				log.Err(err).Msg("Failed to get custom emoji from database")
+			} else if customEmoji != nil {
+				emojiID = customEmoji.EmojiID
 			}
 		}
 	} else {
-		emojiID = emojiToShortcode(reaction.RelatesTo.Key)
+		emojiID = emoji.UnicodeToShortcodeMap[reaction.RelatesTo.Key]
 	}
 
 	if emojiID == "" {
-		portal.log.Errorfln("Couldn't find shortcode for emoji %s", reaction.RelatesTo.Key)
-		ms.sendMessageMetrics(evt, errEmojiShortcodeNotFound, "Error sending", true)
+		log.Warn().Str("reaction_key", reaction.RelatesTo.Key).Msg("Couldn't find shortcode for reaction emoji")
+		ms.sendMessageMetrics(ctx, evt, errEmojiShortcodeNotFound, "Error sending", true)
 		return
 	}
 
-	// TODO: Figure out if this is a custom emoji or not.
-	// emojiID := reaction.RelatesTo.Key
-	// if strings.HasPrefix(emojiID, "mxc://") {
-	// 	uri, _ := id.ParseContentURI(emojiID)
-	// 	emoji := portal.bridge.DB.Emoji.GetByMatrixURL(uri)
-	// 	if emoji == nil {
-	// 		portal.log.Errorfln("failed to find emoji for %s", emojiID)
-
-	// 		return
-	// 	}
-
-	// 	emojiID = emoji.APIName()
-	// }
-
-	err := userTeam.Client.AddReaction(emojiID, slack.ItemRef{
-		Channel:   portal.Key.ChannelID,
-		Timestamp: slackID,
-	})
-	ms.sendMessageMetrics(evt, err, "Error sending", true)
+	msg, err := portal.bridge.DB.Message.GetByMXID(ctx, reaction.RelatesTo.EventID)
 	if err != nil {
-		portal.log.Debugfln("Failed to send reaction %s id:%s: %v", portal.Key, slackID, err)
+		log.Err(err).Msg("Failed to get reaction target message from database")
+		// TODO log and metrics
+		return
+	} else if msg == nil || msg.PortalKey != portal.PortalKey {
+		log.Warn().Msg("Reaction target message not found")
+		ms.sendMessageMetrics(ctx, evt, errReactionTargetNotFound, "Error sending", true)
+		return
+	}
+	log.UpdateContext(func(c zerolog.Context) zerolog.Context {
+		return c.Str("target_message_id", msg.MessageID)
+	})
+
+	existingReaction, err := portal.bridge.DB.Reaction.GetBySlackID(ctx, portal.PortalKey, msg.MessageID, sender.UserID, emojiID)
+	if err != nil {
+		log.Err(err).Msg("Failed to check if reaction already exists")
+	} else if existingReaction != nil {
+		log.Debug().Msg("Ignoring duplicate reaction")
+		ms.sendMessageMetrics(ctx, evt, errDuplicateReaction, "Ignoring", true)
+		return
+	}
+
+	err = sender.Client.AddReactionContext(ctx, emojiID, slack.ItemRef{
+		Channel:   msg.ChannelID,
+		Timestamp: msg.MessageID,
+	})
+	ms.sendMessageMetrics(ctx, evt, err, "Error sending", true)
+	if err != nil {
+		log.Err(err).Msg("Failed to send reaction")
 		return
 	}
 
 	dbReaction := portal.bridge.DB.Reaction.New()
-	dbReaction.Channel = portal.Key
-	dbReaction.MatrixEventID = evt.ID
-	dbReaction.SlackMessageID = slackID
-	dbReaction.AuthorID = userTeam.Key.SlackID
-	dbReaction.MatrixName = reaction.RelatesTo.Key
-	dbReaction.SlackName = emojiID
-	dbReaction.Insert(nil)
-	portal.log.Debugfln("Inserted reaction %v %s %s %s %s into database", dbReaction.Channel, dbReaction.MatrixEventID, dbReaction.SlackMessageID, dbReaction.AuthorID, dbReaction.SlackName)
+	dbReaction.PortalKey = portal.PortalKey
+	dbReaction.MXID = evt.ID
+	dbReaction.MessageID = msg.MessageID
+	dbReaction.MessageFirstPart = msg.Part
+	dbReaction.AuthorID = sender.UserID
+	dbReaction.EmojiID = emojiID
+	err = dbReaction.Insert(ctx)
+	if err != nil {
+		log.Err(err).Msg("Failed to insert reaction into database")
+	}
 }
 
-func (portal *Portal) handleMatrixRedaction(user *User, evt *event.Event) {
-	portal.slackMessageLock.Lock()
-	defer portal.slackMessageLock.Unlock()
-
-	userTeam := user.GetUserTeam(portal.Key.TeamID)
-	if userTeam == nil {
-		go portal.sendMessageMetrics(evt, errUserNotLoggedIn, "Ignoring", nil)
-		return
-	}
+func (portal *Portal) handleMatrixRedaction(ctx context.Context, sender *UserTeam, evt *event.Event) {
 	portal.log.Debugfln("Received redaction %s from %s", evt.ID, evt.Sender)
 
 	// First look if we're redacting a message
-	message := portal.bridge.DB.Message.GetByMatrixID(portal.Key, evt.Redacts)
-	if message != nil {
-		if message.SlackID != "" {
-			_, _, err := userTeam.Client.DeleteMessage(portal.Key.ChannelID, message.SlackID)
-			if err != nil {
-				portal.log.Debugfln("Failed to delete slack message %s: %v", message.SlackID, err)
-			} else {
-				message.Delete()
-			}
-			go portal.sendMessageMetrics(evt, err, "Error sending", nil)
-		} else {
-			go portal.sendMessageMetrics(evt, errTargetNotFound, "Error sending", nil)
+	message, err := portal.bridge.DB.Message.GetByMXID(ctx, evt.Redacts)
+	if err != nil {
+		// TODO log and metrics
+		return
+	} else if message != nil {
+		if message.PortalKey != portal.PortalKey {
+			// TODO log and metrics
+			return
 		}
+		_, _, err := sender.Client.DeleteMessageContext(ctx, message.ChannelID, message.MessageID)
+		if err != nil {
+			portal.log.Debugfln("Failed to delete slack message %s: %v", message.ChannelID, err)
+		} else {
+			message.Delete(ctx)
+		}
+		go portal.sendMessageMetrics(ctx, evt, err, "Error sending", nil)
 		return
 	}
 
 	// Now check if it's a reaction.
-	reaction := portal.bridge.DB.Reaction.GetByMatrixID(portal.Key, evt.Redacts)
-	if reaction != nil {
-		if reaction.SlackName != "" {
-			err := userTeam.Client.RemoveReaction(reaction.SlackName, slack.ItemRef{
-				Channel:   portal.Key.ChannelID,
-				Timestamp: reaction.SlackMessageID,
-			})
-			if err != nil && err.Error() != "no_reaction" {
-				portal.log.Debugfln("Failed to delete reaction %s for message %s: %v", reaction.SlackName, reaction.SlackMessageID, err)
-			} else if err != nil && err.Error() == "no_reaction" {
-				portal.log.Warnfln("Didn't delete Slack reaction %s for message %s: reaction doesn't exist on Slack", reaction.SlackName, reaction.SlackMessageID)
-				reaction.Delete()
-				err = nil // not reporting an error for this
-			} else {
-				reaction.Delete()
-			}
-			go portal.sendMessageMetrics(evt, err, "Error sending", nil)
-		} else {
-			go portal.sendMessageMetrics(evt, errUnknownEmoji, "Error sending", nil)
+	reaction, err := portal.bridge.DB.Reaction.GetByMXID(ctx, evt.Redacts)
+	if err != nil {
+		// TODO log and metrics
+		return
+	} else if reaction != nil {
+		if reaction.PortalKey != portal.PortalKey {
+			// TODO log and metrics
+			return
 		}
+		err = sender.Client.RemoveReactionContext(ctx, reaction.EmojiID, slack.ItemRef{
+			Channel:   portal.ChannelID,
+			Timestamp: reaction.MessageID,
+		})
+		if err != nil && err.Error() != "no_reaction" {
+			portal.log.Debugfln("Failed to delete reaction %s for message %s: %v", reaction.EmojiID, reaction.MessageID, err)
+		} else if err != nil && err.Error() == "no_reaction" {
+			portal.log.Warnfln("Didn't delete Slack reaction %s for message %s: reaction doesn't exist on Slack", reaction.EmojiID, reaction.MessageID)
+			reaction.Delete(ctx)
+			err = nil // not reporting an error for this
+		} else {
+			reaction.Delete(ctx)
+		}
+		go portal.sendMessageMetrics(ctx, evt, err, "Error sending", nil)
 		return
 	}
 
-	portal.log.Warnfln("Failed to redact %s@%s: no event found", portal.Key, evt.Redacts)
-	go portal.sendMessageMetrics(evt, errReactionTargetNotFound, "Error sending", nil)
+	portal.log.Warnfln("Failed to redact %s@%s: no event found", portal.PortalKey, evt.Redacts)
+	go portal.sendMessageMetrics(ctx, evt, errReactionTargetNotFound, "Error sending", nil)
+}
+
+func (portal *Portal) HandleMatrixReadReceipt(sender bridge.User, eventID id.EventID, receipt event.ReadReceipt) {
+	portal.handleMatrixReadReceipt(sender.(*User).GetTeam(portal.TeamID), eventID)
+}
+
+func (portal *Portal) handleMatrixReadReceipt(user *UserTeam, eventID id.EventID) {
+	if user == nil || user.Client == nil {
+		// TODO log
+		return
+	}
+	ctx := context.TODO()
+
+	message, err := portal.bridge.DB.Message.GetByMXID(ctx, eventID)
+	if err != nil {
+		// TODO log
+		return
+	} else if message == nil {
+		// TODO log
+		return
+	}
+
+	err = user.Client.MarkConversationContext(ctx, portal.ChannelID, message.MessageID)
+	// TODO log errors and successes
 }
 
 func typingDiff(prev, new []id.UserID) (started []id.UserID) {
@@ -975,22 +792,10 @@ func (portal *Portal) HandleMatrixTyping(newTyping []id.UserID) {
 	startedTyping := typingDiff(portal.currentlyTyping, newTyping)
 	portal.currentlyTyping = newTyping
 	for _, userID := range startedTyping {
-		user := portal.bridge.GetUserByMXID(userID)
-		if user != nil {
-			userTeam := user.GetUserTeam(portal.Key.TeamID)
-			if userTeam != nil && userTeam.IsLoggedIn() {
-				portal.sendSlackTyping(userTeam)
-			}
+		userTeam := portal.Team.GetCachedUserByMXID(userID)
+		if userTeam != nil && userTeam.RTM != nil {
+			userTeam.RTM.SendMessage(userTeam.RTM.NewTypingMessage(portal.ChannelID))
 		}
-	}
-}
-
-func (portal *Portal) sendSlackTyping(userTeam *database.UserTeam) {
-	if userTeam.RTM != nil {
-		typing := userTeam.RTM.NewTypingMessage(portal.Key.ChannelID)
-		userTeam.RTM.SendMessage(typing)
-	} else {
-		portal.log.Debugfln("RTM for userteam %s not connected!", userTeam.Key)
 	}
 }
 
@@ -1006,76 +811,104 @@ func (portal *Portal) sendSlackRepeatTyping() {
 	defer portal.currentlyTypingLock.Unlock()
 
 	for _, userID := range portal.currentlyTyping {
-		user := portal.bridge.GetUserByMXID(userID)
-		if user != nil {
-			userTeam := user.GetUserTeam(portal.Key.TeamID)
-			if userTeam != nil && userTeam.IsConnected() {
-				portal.sendSlackTyping(userTeam)
-			}
+		userTeam := portal.Team.GetCachedUserByMXID(userID)
+		if userTeam != nil && userTeam.RTM != nil {
+			userTeam.RTM.SendMessage(userTeam.RTM.NewTypingMessage(portal.ChannelID))
 		}
 	}
 }
 
 func (portal *Portal) HandleMatrixLeave(brSender bridge.User) {
 	portal.log.Debugln("User left private chat portal, cleaning up and deleting...")
-	portal.delete()
-	portal.bridge.cleanupRoom(portal.MainIntent(), portal.MXID, false, portal.log)
-
-	// TODO: figure out how to close a dm from the API.
-
-	portal.cleanupIfEmpty()
+	portal.CleanupIfEmpty(portal.zlog.WithContext(context.TODO()))
 }
 
-func (portal *Portal) leave(userTeam *database.UserTeam) {
+func (portal *Portal) DeleteUser(ctx context.Context, userTeam *UserTeam) {
+	err := portal.Portal.DeleteUser(ctx, userTeam.UserTeamMXIDKey)
+	if err != nil {
+		portal.zlog.Err(err).Object("user_team_key", userTeam.UserTeamMXIDKey).
+			Msg("Failed to delete user portal row from database")
+	}
+
 	if portal.MXID == "" {
 		return
 	}
 
-	intent := portal.bridge.GetPuppetByID(portal.Key.TeamID, userTeam.Key.SlackID).IntentFor(portal)
-	intent.LeaveRoom(portal.MXID)
+	puppet := portal.bridge.GetPuppetByID(userTeam.UserTeamKey)
+	if userTeam.User.DoublePuppetIntent != nil {
+		_, err = userTeam.User.DoublePuppetIntent.LeaveRoom(ctx, portal.MXID, &mautrix.ReqLeave{
+			Reason: "User left channel",
+		})
+		if err != nil {
+			portal.zlog.Err(err).Stringer("user_mxid", userTeam.UserMXID).
+				Msg("Failed to leave room with double puppet")
+		}
+	} else {
+		_, err = portal.MainIntent().KickUser(ctx, portal.MXID, &mautrix.ReqKickUser{
+			Reason: "User left channel",
+			UserID: userTeam.UserMXID,
+		})
+		if err != nil {
+			portal.zlog.Err(err).Stringer("user_mxid", userTeam.UserMXID).
+				Msg("Failed to kick user")
+		}
 
-	portal.cleanupIfEmpty()
+		_, err = puppet.DefaultIntent().LeaveRoom(ctx, portal.MXID, &mautrix.ReqLeave{
+			Reason: "User left channel",
+		})
+		if err != nil {
+			portal.zlog.Err(err).Stringer("ghost_mxid", puppet.MXID).
+				Msg("Failed to leave room with ghost")
+		}
+	}
+
+	portal.CleanupIfEmpty(ctx)
 }
 
-func (portal *Portal) delete() {
-	portal.Portal.Delete()
+func (portal *Portal) Delete(ctx context.Context) {
+	err := portal.Portal.Delete(ctx)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to delete portal from database")
+	}
 	portal.bridge.portalsLock.Lock()
-	delete(portal.bridge.portalsByID, portal.Key)
-
+	delete(portal.bridge.portalsByID, portal.PortalKey)
 	if portal.MXID != "" {
 		delete(portal.bridge.portalsByMXID, portal.MXID)
 	}
-
 	portal.bridge.portalsLock.Unlock()
 }
 
-func (portal *Portal) cleanupIfEmpty() {
-	users, err := portal.getMatrixUsers()
+func (portal *Portal) CleanupIfEmpty(ctx context.Context) {
+	users, err := portal.getMatrixUsers(ctx)
 	if err != nil && !errors.Is(err, mautrix.MForbidden) {
 		portal.log.Errorfln("Failed to get Matrix user list to determine if portal needs to be cleaned up: %v", err)
-
 		return
 	}
 
 	if len(users) == 0 {
 		portal.log.Infoln("Room seems to be empty, cleaning up...")
-		portal.delete()
-		if portal.bridge.SpecVersions.UnstableFeatures["com.beeper.room_yeeting"] {
-			intent := portal.MainIntent()
-			err := intent.BeeperDeleteRoom(portal.MXID)
-			if err == nil || errors.Is(err, mautrix.MNotFound) {
-				return
-			}
-			portal.log.Warnfln("Failed to delete %s using hungryserv yeet endpoint, falling back to normal behavior: %v", portal.MXID, err)
-		}
-		portal.bridge.cleanupRoom(portal.MainIntent(), portal.MXID, false, portal.log)
+		portal.Delete(ctx)
+		portal.Cleanup(ctx)
 	}
 }
 
-func (br *SlackBridge) cleanupRoom(intent *appservice.IntentAPI, mxid id.RoomID, puppetsOnly bool, log log.Logger) {
-	members, err := intent.JoinedMembers(mxid)
+func (portal *Portal) Cleanup(ctx context.Context) {
+	portal.bridge.cleanupRoom(ctx, portal.MainIntent(), portal.MXID, false)
+}
+
+func (br *SlackBridge) cleanupRoom(ctx context.Context, intent *appservice.IntentAPI, mxid id.RoomID, puppetsOnly bool) {
+	log := zerolog.Ctx(ctx)
+	if br.SpecVersions.Supports(mautrix.BeeperFeatureRoomYeeting) {
+		err := intent.BeeperDeleteRoom(ctx, mxid)
+		if err == nil || errors.Is(err, mautrix.MNotFound) {
+			return
+		}
+		log.Err(err).Msg("Failed to delete room using hungryserv yeet endpoint, falling back to normal behavior")
+	}
+
+	members, err := intent.JoinedMembers(ctx, mxid)
 	if err != nil {
-		log.Errorln("Failed to get portal members for cleanup:", err)
+		log.Err(err).Msg("Failed to get portal members for cleanup")
 		return
 	}
 
@@ -1086,33 +919,33 @@ func (br *SlackBridge) cleanupRoom(intent *appservice.IntentAPI, mxid id.RoomID,
 
 		puppet := br.GetPuppetByMXID(member)
 		if puppet != nil {
-			_, err = puppet.DefaultIntent().LeaveRoom(mxid)
+			_, err = puppet.DefaultIntent().LeaveRoom(ctx, mxid)
 			if err != nil {
-				log.Errorln("Error leaving as puppet while cleaning up portal:", err)
+				log.Err(err).Stringer("ghost_mxid", mxid).Msg("Failed to leave room with ghost while cleaning up portal")
 			}
 		} else if !puppetsOnly {
-			_, err = intent.KickUser(mxid, &mautrix.ReqKickUser{UserID: member, Reason: "Deleting portal"})
+			_, err = intent.KickUser(ctx, mxid, &mautrix.ReqKickUser{UserID: member, Reason: "Deleting portal"})
 			if err != nil {
-				log.Errorln("Error kicking user while cleaning up portal:", err)
+				log.Err(err).Stringer("user_mxid", mxid).Msg("Failed to kick user while cleaning up portal")
 			}
 		}
 	}
 
-	_, err = intent.LeaveRoom(mxid)
+	_, err = intent.LeaveRoom(ctx, mxid)
 	if err != nil {
-		log.Errorln("Error leaving with main intent while cleaning up portal:", err)
+		log.Err(err).Msg("Failed to leave room with main intent while cleaning up portal")
 	}
 }
 
-func (portal *Portal) getMatrixUsers() ([]id.UserID, error) {
-	members, err := portal.MainIntent().JoinedMembers(portal.MXID)
+func (portal *Portal) getMatrixUsers(ctx context.Context) ([]id.UserID, error) {
+	members, err := portal.MainIntent().JoinedMembers(ctx, portal.MXID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get member list: %w", err)
 	}
 
 	var users []id.UserID
 	for userID := range members.Joined {
-		_, _, isPuppet := portal.bridge.ParsePuppetMXID(userID)
+		_, isPuppet := portal.bridge.ParsePuppetMXID(userID)
 		if !isPuppet && userID != portal.bridge.Bot.UserID {
 			users = append(users, userID)
 		}
@@ -1143,7 +976,17 @@ func parseSlackTimestamp(timestamp string) time.Time {
 }
 
 func (portal *Portal) getBridgeInfoStateKey() string {
-	return fmt.Sprintf("fi.mau.slack://slackgo/%s/%s", portal.Key.TeamID, portal.Key.ChannelID)
+	return fmt.Sprintf("fi.mau.slack://slackgo/%s/%s", portal.TeamID, portal.ChannelID)
+}
+
+type CustomBridgeInfoContent struct {
+	event.BridgeEventContent
+	RoomType string `json:"com.beeper.room_type,omitempty"`
+}
+
+func init() {
+	event.TypeMap[event.StateBridge] = reflect.TypeOf(CustomBridgeInfoContent{})
+	event.TypeMap[event.StateHalfShotBridge] = reflect.TypeOf(CustomBridgeInfoContent{})
 }
 
 func (portal *Portal) getBridgeInfo() (string, CustomBridgeInfoContent) {
@@ -1157,89 +1000,94 @@ func (portal *Portal) getBridgeInfo() (string, CustomBridgeInfoContent) {
 				AvatarURL:   portal.bridge.Config.AppService.Bot.ParsedAvatar.CUString(),
 				ExternalURL: "https://slack.com/",
 			},
+			Network: &event.BridgeInfoSection{
+				ID:          portal.TeamID,
+				DisplayName: portal.Team.Name,
+				ExternalURL: portal.Team.URL,
+				AvatarURL:   portal.Team.AvatarMXC.CUString(),
+			},
 			Channel: event.BridgeInfoSection{
-				ID:          portal.Key.ChannelID,
+				ID:          portal.ChannelID,
 				DisplayName: portal.Name,
+				ExternalURL: fmt.Sprintf("https://app.slack.com/client/%s/%s", portal.TeamID, portal.ChannelID),
 			},
 		},
 	}
-
 	if portal.Type == database.ChannelTypeDM || portal.Type == database.ChannelTypeGroupDM {
 		bridgeInfo.RoomType = "dm"
 	}
-
-	teamInfo := portal.bridge.DB.TeamInfo.GetBySlackTeam(portal.Key.TeamID)
-	if teamInfo != nil {
-		bridgeInfo.Network = &event.BridgeInfoSection{
-			ID:          portal.Key.TeamID,
-			DisplayName: teamInfo.TeamName,
-			ExternalURL: teamInfo.TeamUrl,
-			AvatarURL:   teamInfo.AvatarUrl.CUString(),
-		}
-	}
-	var bridgeInfoStateKey = portal.getBridgeInfoStateKey()
-
-	return bridgeInfoStateKey, bridgeInfo
+	return portal.getBridgeInfoStateKey(), bridgeInfo
 }
 
-func (portal *Portal) UpdateBridgeInfo() {
+func (portal *Portal) UpdateBridgeInfo(ctx context.Context) {
 	if len(portal.MXID) == 0 {
 		portal.log.Debugln("Not updating bridge info: no Matrix room created")
 		return
 	}
 	portal.log.Debugln("Updating bridge info...")
 	stateKey, content := portal.getBridgeInfo()
-	_, err := portal.MainIntent().SendStateEvent(portal.MXID, event.StateBridge, stateKey, content)
+	_, err := portal.MainIntent().SendStateEvent(ctx, portal.MXID, event.StateBridge, stateKey, content)
 	if err != nil {
 		portal.log.Warnln("Failed to update m.bridge:", err)
 	}
 	// TODO remove this once https://github.com/matrix-org/matrix-doc/pull/2346 is in spec
-	_, err = portal.MainIntent().SendStateEvent(portal.MXID, event.StateHalfShotBridge, stateKey, content)
+	_, err = portal.MainIntent().SendStateEvent(ctx, portal.MXID, event.StateHalfShotBridge, stateKey, content)
 	if err != nil {
 		portal.log.Warnln("Failed to update uk.half-shot.bridge:", err)
 	}
 }
 
-func (portal *Portal) setChannelType(channel *slack.Channel) bool {
-	if channel == nil {
-		portal.log.Errorln("can't get type from nil channel metadata")
+func (portal *Portal) updateChannelType(channel *slack.Channel) bool {
+	var newType database.ChannelType
+	if channel.IsMpIM {
+		newType = database.ChannelTypeGroupDM
+	} else if channel.IsIM {
+		newType = database.ChannelTypeDM
+	} else if channel.Name != "" {
+		newType = database.ChannelTypeChannel
+	} else {
+		portal.zlog.Warn().Msg("Channel type couldn't be determined")
 		return false
 	}
-
-	if channel.IsMpIM {
-		portal.Type = database.ChannelTypeGroupDM
-		return true
-	} else if channel.IsIM {
-		portal.Type = database.ChannelTypeDM
-		return true
-	} else if channel.Name != "" {
-		portal.Type = database.ChannelTypeChannel
-		return true
+	if portal.Type == database.ChannelTypeUnknown {
+		portal.zlog.Debug().Stringer("channel_type", newType).Msg("Found channel type")
+		portal.Type = newType
+	} else if portal.Type != newType {
+		portal.zlog.Warn().Stringer("channel_type", newType).Msg("Channel type changed")
+		portal.Type = newType
+	} else {
+		return false
 	}
-
-	portal.log.Errorfln("unknown channel type, metadata %v", channel)
-	return false
+	return true
 }
 
 func (portal *Portal) GetPlainName(meta *slack.Channel) string {
-	if portal.Type == database.ChannelTypeDM || portal.Type == database.ChannelTypeGroupDM {
-		return ""
-	} else {
+	switch portal.Type {
+	case database.ChannelTypeDM:
+		return portal.GetDMPuppet().Name
+	case database.ChannelTypeGroupDM:
+		puppetNames := make([]string, len(meta.Members))
+		for i, member := range meta.Members {
+			puppet := portal.Team.GetPuppetByID(member)
+			puppetNames[i] = puppet.Name
+		}
+		return strings.Join(puppetNames, ", ")
+	default:
 		return meta.Name
 	}
 }
 
-func (portal *Portal) UpdateNameDirect(name string) bool {
-	if name == "#" || portal.Name == name && (portal.NameSet || portal.MXID == "" || !portal.shouldSetDMRoomMetadata()) {
+func (portal *Portal) UpdateNameDirect(ctx context.Context, name string) bool {
+	if portal.Name == name && (portal.NameSet || portal.MXID == "" || !portal.shouldSetDMRoomMetadata()) {
 		return false
 	}
-	portal.log.Debugfln("Updating name %q -> %q", portal.Name, name)
+	portal.zlog.Debug().Str("old_name", portal.Name).Str("new_name", name).Msg("Updating room name")
 	portal.Name = name
 	portal.NameSet = false
-	if portal.MXID != "" && portal.Name != "" && portal.shouldSetDMRoomMetadata() {
-		_, err := portal.MainIntent().SetRoomName(portal.MXID, portal.Name)
+	if portal.MXID != "" && portal.shouldSetDMRoomMetadata() {
+		_, err := portal.MainIntent().SetRoomName(ctx, portal.MXID, portal.Name)
 		if err != nil {
-			portal.log.Warnln("Failed to update room name:", err)
+			portal.zlog.Err(err).Msg("Failed to update room name")
 		} else {
 			portal.NameSet = true
 		}
@@ -1247,65 +1095,60 @@ func (portal *Portal) UpdateNameDirect(name string) bool {
 	return true
 }
 
-func (portal *Portal) UpdateName(meta *slack.Channel, sourceTeam *database.UserTeam) bool {
-	plainName := portal.GetPlainName(meta)
-
-	plainNameChanged := portal.PlainName != plainName
-	portal.PlainName = plainName
-
+func (portal *Portal) UpdateName(ctx context.Context, meta *slack.Channel) bool {
+	if (portal.Type == database.ChannelTypeChannel && meta.Name == "") || !portal.shouldSetDMRoomMetadata() {
+		return false
+	}
+	meta.Name = portal.GetPlainName(meta)
+	plainNameChanged := portal.PlainName != meta.Name
+	portal.PlainName = meta.Name
 	formattedName := portal.bridge.Config.Bridge.FormatChannelName(config.ChannelNameParams{
-		Name:     plainName,
-		Type:     portal.Type,
-		TeamName: sourceTeam.TeamName,
+		Channel:    meta,
+		Type:       portal.Type,
+		TeamName:   portal.Team.Name,
+		TeamDomain: portal.Team.Domain,
 	})
 
-	return portal.UpdateNameDirect(formattedName) || plainNameChanged
+	return portal.UpdateNameDirect(ctx, formattedName) || plainNameChanged
 }
 
-func (portal *Portal) updateRoomAvatar() {
+func (portal *Portal) updateRoomAvatar(ctx context.Context) {
 	if portal.MXID == "" || !portal.shouldSetDMRoomMetadata() {
 		return
 	}
-	_, err := portal.MainIntent().SetRoomAvatar(portal.MXID, portal.AvatarURL)
+	_, err := portal.MainIntent().SetRoomAvatar(ctx, portal.MXID, portal.AvatarMXC)
 	if err != nil {
-		portal.log.Warnln("Failed to update room avatar:", err)
+		portal.zlog.Err(err).Msg("Failed to update room avatar")
 	} else {
 		portal.AvatarSet = true
 	}
 }
 
-func (portal *Portal) UpdateAvatarFromPuppet(puppet *Puppet) bool {
-	if portal.Avatar == puppet.Avatar && portal.AvatarURL == puppet.AvatarURL && (portal.AvatarSet || portal.MXID == "" || !portal.shouldSetDMRoomMetadata()) {
-		return false
+func (portal *Portal) UpdateNameFromPuppet(ctx context.Context, puppet *Puppet) {
+	if portal.UpdateNameDirect(ctx, puppet.Name) {
+		err := portal.Update(ctx)
+		if err != nil {
+			portal.zlog.Err(err).Msg("Failed to save portal after updating name")
+		}
+		portal.UpdateBridgeInfo(ctx)
 	}
-
-	portal.log.Debugfln("Updating avatar from puppet %q -> %q", portal.Avatar, puppet.Avatar)
-	portal.Avatar = puppet.Avatar
-	portal.AvatarURL = puppet.AvatarURL
-	portal.AvatarSet = false
-	portal.updateRoomAvatar()
-
-	return true
 }
 
-func (portal *Portal) UpdateTopicDirect(topic string) bool {
-	if portal.Topic == topic && (portal.TopicSet || portal.MXID == "") {
-		return false
+func (portal *Portal) UpdateAvatarFromPuppet(ctx context.Context, puppet *Puppet) {
+	if portal.Avatar == puppet.Avatar && portal.AvatarMXC == puppet.AvatarMXC && (portal.AvatarSet || portal.MXID == "" || !portal.shouldSetDMRoomMetadata()) {
+		return
 	}
 
-	portal.log.Debugfln("Updating topic for room %s", portal.Key.ChannelID)
-	portal.Topic = topic
-	portal.TopicSet = false
-	if portal.MXID != "" {
-		_, err := portal.MainIntent().SetRoomTopic(portal.MXID, portal.Topic)
-		if err != nil {
-			portal.log.Warnln("Failed to update room topic:", err)
-		} else {
-			portal.TopicSet = true
-		}
+	portal.zlog.Debug().Msg("Updating avatar from puppet")
+	portal.Avatar = puppet.Avatar
+	portal.AvatarMXC = puppet.AvatarMXC
+	portal.AvatarSet = false
+	portal.updateRoomAvatar(ctx)
+	err := portal.Update(ctx)
+	if err != nil {
+		portal.zlog.Err(err).Msg("Failed to save portal after updating avatar")
 	}
-
-	return true
+	portal.UpdateBridgeInfo(ctx)
 }
 
 func (portal *Portal) getTopic(meta *slack.Channel) string {
@@ -1313,66 +1156,232 @@ func (portal *Portal) getTopic(meta *slack.Channel) string {
 	case database.ChannelTypeDM, database.ChannelTypeGroupDM:
 		return ""
 	case database.ChannelTypeChannel:
-		plainTopic := meta.Topic.Value
-		plainDescription := meta.Purpose.Value
-
-		var topicParts []string
-
-		if plainTopic != "" {
-			topicParts = append(topicParts, fmt.Sprintf("Topic: %s", plainTopic))
+		topicParts := make([]string, 0, 2)
+		if meta.Topic.Value != "" {
+			topicParts = append(topicParts, meta.Topic.Value)
 		}
-		if plainDescription != "" {
-			topicParts = append(topicParts, fmt.Sprintf("Description: %s", plainDescription))
+		if meta.Purpose.Value != "" {
+			topicParts = append(topicParts, meta.Purpose.Value)
 		}
-
-		return strings.Join(topicParts, "\n")
+		return strings.Join(topicParts, "\n---\n")
 	default:
 		return ""
 	}
 }
 
-func (portal *Portal) UpdateTopic(meta *slack.Channel, sourceTeam *database.UserTeam) bool {
-	matrixTopic := portal.getTopic(meta)
-
-	changed := portal.Topic != matrixTopic
-	return portal.UpdateTopicDirect(matrixTopic) || changed
+func (portal *Portal) UpdateTopic(ctx context.Context, meta *slack.Channel) bool {
+	newTopic := portal.getTopic(meta)
+	if portal.Topic == newTopic && (portal.TopicSet || portal.MXID == "") {
+		return false
+	}
+	portal.zlog.Debug().Str("old_topic", portal.Topic).Str("new_topic", newTopic).Msg("Updating room topic")
+	portal.Topic = newTopic
+	portal.TopicSet = false
+	if portal.MXID != "" {
+		_, err := portal.MainIntent().SetRoomTopic(ctx, portal.MXID, portal.Topic)
+		if err != nil {
+			portal.zlog.Err(err).Msg("Failed to update room topic")
+		} else {
+			portal.TopicSet = true
+		}
+	}
+	return true
 }
 
-func (portal *Portal) UpdateInfo(source *User, sourceTeam *database.UserTeam, meta *slack.Channel, force bool) *slack.Channel {
-	portal.log.Debugfln("Updating info for portal %s", portal.Key)
-	changed := false
+func (portal *Portal) syncParticipants(ctx context.Context, source *UserTeam, participants []string) []id.UserID {
+	infosMap := make(map[string]*slack.User)
 
+	for _, participantChunk := range exslices.Chunk(participants, 100) {
+		infos, err := source.Client.GetUsersInfoContext(ctx, participantChunk...)
+		if err != nil {
+			portal.zlog.Err(err).Msg("Failed to get info of participants")
+			return nil
+		}
+		for _, info := range *infos {
+			infoCopy := info
+			infosMap[info.ID] = &infoCopy
+		}
+	}
+
+	userIDs := make([]id.UserID, 0, len(participants)+1)
+	for _, participant := range participants {
+		puppet := portal.Team.GetPuppetByID(participant)
+		puppet.UpdateInfo(ctx, source, infosMap[participant], nil)
+
+		user := portal.Team.GetCachedUserByID(participant)
+		inviteGhost := false
+		if user != nil {
+			userIDs = append(userIDs, user.UserMXID)
+		}
+		if user == nil || user.User.DoublePuppetIntent == nil {
+			inviteGhost = true
+			userIDs = append(userIDs, puppet.MXID)
+		}
+
+		if portal.MXID != "" {
+			if user != nil {
+				portal.ensureUserInvited(ctx, user.User)
+			}
+			if inviteGhost {
+				if err := puppet.DefaultIntent().EnsureJoined(ctx, portal.MXID); err != nil {
+					portal.zlog.Err(err).Str("user_id", participant).Msg("Failed to make ghost of user join portal room")
+				}
+			}
+		}
+	}
+	return userIDs
+}
+
+func (portal *Portal) UpdateInfo(ctx context.Context, source *UserTeam, meta *slack.Channel, syncChannelParticipants bool) (*slack.Channel, []id.UserID) {
 	if meta == nil {
-		portal.log.Debugfln("UpdateInfo called without metadata, fetching from server via %s", sourceTeam.Key.SlackID)
+		portal.zlog.Debug().Object("via_user_id", source.UserTeamMXIDKey).Msg("Fetching channel meta from server")
 		var err error
-		meta, err = sourceTeam.Client.GetConversationInfo(&slack.GetConversationInfoInput{
-			ChannelID:         portal.Key.ChannelID,
+		meta, err = source.Client.GetConversationInfo(&slack.GetConversationInfoInput{
+			ChannelID:         portal.ChannelID,
 			IncludeLocale:     true,
 			IncludeNumMembers: true,
 		})
 		if err != nil {
-			portal.log.Errorfln("Failed to fetch meta via %s: %v", sourceTeam.Key.SlackID, err)
-			return nil
+			portal.zlog.Err(err).Msg("Failed to fetch channel meta")
+			return nil, nil
 		}
 	}
 
-	changed = portal.setChannelType(meta) || changed
+	changed := portal.updateChannelType(meta)
 
 	if portal.DMUserID == "" && portal.IsPrivateChat() {
 		portal.DMUserID = meta.User
-		portal.log.Infoln("Found other user ID:", portal.DMUserID)
+		portal.zlog.Info().Str("other_user_id", portal.DMUserID).Msg("Found other user ID")
+		changed = true
+	}
+	if portal.Receiver == "" && ((portal.Type == database.ChannelTypeDM && meta.User == portal.DMUserID) || portal.Type == database.ChannelTypeGroupDM) {
+		portal.Receiver = source.UserID
 		changed = true
 	}
 
-	changed = portal.UpdateName(meta, sourceTeam) || changed
-	changed = portal.UpdateTopic(meta, sourceTeam) || changed
-
-	if changed || force {
-		portal.UpdateBridgeInfo()
-		portal.Update(nil)
+	var memberMXIDs []id.UserID
+	switch portal.Type {
+	case database.ChannelTypeDM:
+		memberMXIDs = portal.syncParticipants(ctx, source, []string{meta.User})
+	case database.ChannelTypeGroupDM:
+		memberMXIDs = portal.syncParticipants(ctx, source, meta.Members)
+	case database.ChannelTypeChannel:
+		if syncChannelParticipants && (portal.MXID == "" || !portal.bridge.Config.Bridge.ParticipantSyncOnlyOnCreate) {
+			members := portal.getChannelMembers(source, portal.bridge.Config.Bridge.ParticipantSyncCount)
+			memberMXIDs = portal.syncParticipants(ctx, source, members)
+		}
+	default:
 	}
 
-	return meta
+	changed = portal.UpdateName(ctx, meta) || changed
+	changed = portal.UpdateTopic(ctx, meta) || changed
+
+	if changed {
+		portal.UpdateBridgeInfo(ctx)
+		err := portal.Update(ctx)
+		if err != nil {
+			portal.zlog.Err(err).Msg("Failed to save portal after updating info")
+		}
+	}
+
+	err := portal.InsertUser(ctx, source.UserTeamMXIDKey)
+	if err != nil {
+		portal.zlog.Err(err).Object("user_team_key", source.UserTeamMXIDKey).
+			Msg("Failed to insert user portal row")
+	}
+	if portal.MXID != "" {
+		portal.ensureUserInvited(ctx, source.User)
+	}
+
+	return meta, memberMXIDs
+}
+
+func (portal *Portal) handleSlackEvent(source *UserTeam, rawEvt any) {
+	log := portal.zlog.With().
+		Object("source_key", source.UserTeamMXIDKey).
+		Type("event_type", rawEvt).
+		Logger()
+	ctx := log.WithContext(context.TODO())
+	switch evt := rawEvt.(type) {
+	case *slack.ChannelJoinedEvent, *slack.GroupJoinedEvent:
+		var ch *slack.Channel
+		if joinedEvt, ok := evt.(*slack.ChannelJoinedEvent); ok {
+			ch = &joinedEvt.Channel
+		} else {
+			ch = &evt.(*slack.GroupJoinedEvent).Channel
+		}
+		if portal.MXID == "" {
+			log.Debug().Msg("Creating Matrix room from joined channel")
+			if err := portal.CreateMatrixRoom(ctx, source, ch); err != nil {
+				log.Err(err).Msg("Failed to create portal room after join event")
+			}
+		} else {
+			portal.UpdateInfo(ctx, source, ch, true)
+		}
+	case *slack.ChannelLeftEvent, *slack.GroupLeftEvent:
+		portal.DeleteUser(ctx, source)
+	case *slack.ChannelUpdateEvent:
+		portal.UpdateInfo(ctx, source, nil, true)
+	case *slack.MemberLeftChannelEvent:
+		// TODO
+	case *slack.MemberJoinedChannelEvent:
+		// TODO
+	case *slack.UserTypingEvent:
+		if portal.MXID == "" {
+			log.Warn().Msg("Ignoring typing notification in channel with no portal room")
+			return
+		}
+		log.UpdateContext(func(c zerolog.Context) zerolog.Context {
+			return c.Str("user_id", evt.User)
+		})
+		portal.HandleSlackTyping(ctx, source, evt)
+	case *slack.ChannelMarkedEvent:
+		if portal.MXID == "" {
+			log.Warn().Msg("Ignoring read receipt in channel with no portal room")
+			return
+		}
+		log.UpdateContext(func(c zerolog.Context) zerolog.Context {
+			return c.Str("message_id", evt.Timestamp).Str("sender_id", evt.User)
+		})
+		portal.HandleSlackChannelMarked(ctx, source, evt)
+	case *slack.ReactionAddedEvent:
+		if portal.MXID == "" {
+			log.Warn().Msg("Ignoring reaction removal in channel with no portal room")
+			return
+		}
+		log.UpdateContext(func(c zerolog.Context) zerolog.Context {
+			return c.Str("target_message_id", evt.Item.Timestamp).Str("sender_id", evt.User)
+		})
+		portal.HandleSlackReaction(ctx, source, evt)
+	case *slack.ReactionRemovedEvent:
+		if portal.MXID == "" {
+			log.Warn().Msg("Ignoring reaction removal in channel with no portal room")
+			return
+		}
+		log.UpdateContext(func(c zerolog.Context) zerolog.Context {
+			return c.Str("target_message_id", evt.Item.Timestamp).Str("sender_id", evt.User)
+		})
+		portal.HandleSlackReactionRemoved(ctx, source, evt)
+	case *slack.MessageEvent:
+		log.UpdateContext(func(c zerolog.Context) zerolog.Context {
+			if evt.ThreadTimestamp != "" {
+				c = c.Str("thread_id", evt.ThreadTimestamp)
+			}
+			return c.
+				Str("message_id", evt.Timestamp).
+				Str("sender_id", evt.User).
+				Str("subtype", evt.SubType)
+		})
+		if portal.MXID == "" {
+			log.Warn().Msg("Received message in channel with no portal room creating portal")
+			err := portal.CreateMatrixRoom(ctx, source, nil)
+			if err != nil {
+				log.Err(err).Msg("Failed to create room for portal")
+				return
+			}
+		}
+		portal.HandleSlackMessage(ctx, source, evt)
+	}
 }
 
 type ConvertedSlackFile struct {
@@ -1390,324 +1399,278 @@ type ConvertedSlackMessage struct {
 	SlackThread     []slack.Message
 }
 
-func (portal *Portal) HandleSlackMessage(user *User, userTeam *database.UserTeam, msg *slack.MessageEvent) {
-	portal.slackMessageLock.Lock()
-	defer portal.slackMessageLock.Unlock()
-
-	if msg.Msg.Type != "message" {
-		portal.log.Warnln("ignoring unknown message type:", msg.Msg.Type)
+func (portal *Portal) HandleSlackMessage(ctx context.Context, source *UserTeam, msg *slack.MessageEvent) {
+	log := zerolog.Ctx(ctx)
+	if msg.Type != slack.TYPE_MESSAGE {
+		log.Warn().Str("message_type", msg.Type).Msg("Ignoring message with unexpected top-level type")
 		return
 	}
-	if msg.Msg.IsEphemeral {
-		portal.log.Debugfln("Ignoring ephemeral message")
-		return
-	}
-
-	existing := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Msg.Timestamp)
-	if existing != nil && msg.Msg.SubType != "message_changed" { // Slack reuses the same message ID on message edits
-		portal.log.Debugln("Dropping duplicate message:", msg.Msg.Timestamp)
-		return
-	}
-	if msg.Msg.SubType == "message_changed" && existing == nil {
-		portal.log.Debugfln("Not sending edit for nonexistent message %s", msg.Msg.Timestamp)
+	if msg.IsEphemeral {
+		log.Debug().Msg("Ignoring ephemeral message")
 		return
 	}
 
-	if msg.Msg.User == "" {
-		portal.log.Debugfln("Starting handling of %s (no sender), subtype %s", msg.Msg.Timestamp, msg.Msg.SubType)
-	} else {
-		portal.log.Debugfln("Starting handling of %s by %s, subtype %s", msg.Msg.Timestamp, msg.Msg.User, msg.Msg.SubType)
+	existing, err := portal.bridge.DB.Message.GetBySlackID(ctx, portal.PortalKey, msg.Timestamp)
+	if err != nil {
+		log.Err(err).Msg("Failed to check if message was already bridged")
+		return
+	} else if existing != nil && msg.SubType != slack.MsgSubTypeMessageChanged {
+		log.Debug().Msg("Dropping duplicate message")
+		return
+	} else if existing == nil && msg.SubType == slack.MsgSubTypeMessageChanged {
+		log.Debug().Msg("Dropping edit for unknown message")
+		return
+	}
+	slackAuthor := msg.User
+	if slackAuthor == "" {
+		slackAuthor = msg.BotID
+	}
+	var sender *Puppet
+	if slackAuthor != "" {
+		sender = portal.Team.GetPuppetByID(slackAuthor)
+		sender.UpdateInfoIfNecessary(ctx, source)
 	}
 
-	switch msg.Msg.SubType {
-	case "", "me_message", "bot_message", "thread_broadcast": // Regular messages and /me
-		portal.HandleSlackNormalMessage(user, userTeam, &msg.Msg, nil)
-	case "huddle_thread":
-		content := &event.MessageEventContent{
-			MsgType: event.MsgNotice,
-			Body:    fmt.Sprintf("A huddle started. Go get it in https://app.slack.com/client/%s/%s", portal.Key.TeamID, portal.Key.ChannelID),
-		}
-		_, err := portal.sendMatrixMessage(portal.MainIntent(), event.EventMessage, content, nil, 0)
-		if err != nil {
-			portal.log.Warnfln("Failed to send message about the huddle:", err)
-		}
-	case "message_changed":
-		portal.HandleSlackNormalMessage(user, userTeam, msg.SubMessage, existing)
-	case "channel_topic", "channel_purpose", "channel_name", "group_topic", "group_purpose", "group_name":
-		portal.UpdateInfo(user, userTeam, nil, false)
-		portal.log.Debugfln("Received %s update, updating portal name and topic", msg.Msg.SubType)
-	case "message_deleted":
-		// Slack doesn't tell us who deleted a message, so there is no intent here
-		message := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Msg.DeletedTimestamp)
-		if message == nil {
-			portal.log.Warnfln("Failed to redact %s: Matrix event not known", msg.Msg.DeletedTimestamp)
-		} else {
-			_, err := portal.MainIntent().RedactEvent(portal.MXID, message.MatrixID)
-			if err != nil {
-				portal.log.Errorfln("Failed to redact %s: %v", message.MatrixID, err)
-			} else {
-				message.Delete()
-			}
-		}
+	log.Debug().Msg("Starting handling of Slack message")
 
-		attachments := portal.bridge.DB.Attachment.GetAllBySlackMessageID(portal.Key, msg.Msg.DeletedTimestamp)
-		for _, attachment := range attachments {
-			_, err := portal.MainIntent().RedactEvent(portal.MXID, attachment.MatrixEventID)
-			if err != nil {
-				portal.log.Errorfln("Failed to redact %s: %v", attachment.MatrixEventID, err)
-			} else {
-				attachment.Delete()
-			}
-		}
-	case "message_replied", "group_join", "group_leave", "channel_join", "channel_leave": // Not yet an exhaustive list.
-		// These subtypes are simply ignored, because they're handled elsewhere/in other ways (Slack sends multiple info of these events)
-		portal.log.Debugfln("Received message subtype %s, which is ignored", msg.Msg.SubType)
+	switch msg.SubType {
 	default:
-		portal.log.Warnfln("Received unknown message subtype %s", msg.Msg.SubType)
+		if sender == nil {
+			log.Warn().Msg("Ignoring message from unknown sender")
+			return
+		}
+		switch msg.SubType {
+		case "", slack.MsgSubTypeMeMessage, slack.MsgSubTypeBotMessage, slack.MsgSubTypeThreadBroadcast, "huddle_thread":
+			// known types
+		default:
+			log.Warn().Msg("Received unknown message subtype")
+		}
+		portal.HandleSlackNormalMessage(ctx, source, sender, &msg.Msg)
+	case slack.MsgSubTypeMessageChanged:
+		if sender == nil {
+			log.Warn().Msg("Ignoring edit from unknown sender")
+			return
+		} else if msg.SubMessage.SubType == "huddle_thread" {
+			log.Debug().Msg("Ignoring huddle thread edit")
+			return
+		}
+		portal.HandleSlackEditMessage(ctx, source, sender, msg.SubMessage, msg.PreviousMessage, existing)
+	case slack.MsgSubTypeMessageDeleted:
+		portal.HandleSlackDelete(ctx, &msg.Msg)
+	case slack.MsgSubTypeChannelTopic, slack.MsgSubTypeChannelPurpose, slack.MsgSubTypeChannelName,
+		slack.MsgSubTypeGroupTopic, slack.MsgSubTypeGroupPurpose, slack.MsgSubTypeGroupName:
+		log.Debug().Msg("Resyncing channel info due to update message")
+		portal.UpdateInfo(ctx, source, nil, false)
+	case slack.MsgSubTypeMessageReplied, slack.MsgSubTypeGroupJoin, slack.MsgSubTypeGroupLeave,
+		slack.MsgSubTypeChannelJoin, slack.MsgSubTypeChannelLeave:
+		// These subtypes are simply ignored, because they're handled elsewhere/in other ways (Slack sends multiple info of these events)
+		log.Debug().Msg("Ignoring unnecessary message")
 	}
 }
 
-func (portal *Portal) addThreadMetadata(content *event.MessageEventContent, threadTs string) (hasThread bool, hasReply bool) {
+func (portal *Portal) getThreadMetadata(ctx context.Context, threadTs string) (threadRootID, lastMessageID id.EventID) {
 	// fetch thread metadata and add to message
-	if threadTs != "" {
-		if content.RelatesTo == nil {
-			content.RelatesTo = &event.RelatesTo{}
-		}
-		latestThreadMessage := portal.bridge.DB.Message.GetLastInThread(portal.Key, threadTs)
-		rootThreadMessage := portal.bridge.DB.Message.GetBySlackID(portal.Key, threadTs)
-
-		var latestThreadMessageID id.EventID
-		if latestThreadMessage != nil {
-			latestThreadMessageID = latestThreadMessage.MatrixID
-		} else {
-			latestThreadMessageID = ""
-		}
-
-		if rootThreadMessage != nil {
-			content.RelatesTo.SetThread(rootThreadMessage.MatrixID, latestThreadMessageID)
-			return true, true
-		} else if latestThreadMessage != nil {
-			content.RelatesTo.SetReplyTo(latestThreadMessage.MatrixID)
-			return false, true
-		}
-	}
-	return false, false
-}
-
-func (portal *Portal) ConvertSlackMessage(userTeam *database.UserTeam, msg *slack.Msg) (converted ConvertedSlackMessage) {
-	if msg.User != "" {
-		converted.SlackAuthor = msg.User
-	} else if msg.BotID != "" {
-		converted.SlackAuthor = msg.BotID
-	} else {
-		portal.log.Errorfln("Couldn't convert text message %s: no user or bot ID in message", msg.Timestamp)
+	if threadTs == "" {
 		return
 	}
-	converted.SlackTimestamp = msg.Timestamp
-	var text string
-	if msg.Text != "" {
-		text = msg.Text
+	rootThreadMessage, err := portal.bridge.DB.Message.GetFirstPartBySlackID(ctx, portal.PortalKey, threadTs)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to get thread root message from database")
 	}
-	for _, attachment := range msg.Attachments {
-		if text != "" {
-			text += "\n"
-		}
-		if attachment.Text != "" {
-			text += attachment.Text
-		} else if attachment.Fallback != "" {
-			text += attachment.Fallback
-		}
+	latestThreadMessage, err := portal.bridge.DB.Message.GetLastInThread(ctx, portal.PortalKey, threadTs)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to get last message in thread from database")
 	}
 
-	if len(msg.Blocks.BlockSet) != 0 || len(msg.Attachments) != 0 {
-		var err error
-		converted.Event, err = portal.SlackBlocksToMatrix(msg.Blocks, msg.Attachments, userTeam)
-		if err != nil {
-			portal.log.Warnfln("Error rendering Slack blocks: %v", err)
-			converted.Event = nil
-		}
-	} else if text != "" {
-		converted.Event = portal.renderSlackMarkdown(text)
+	if latestThreadMessage != nil && rootThreadMessage != nil {
+		threadRootID = rootThreadMessage.MXID
+		lastMessageID = latestThreadMessage.MXID
+	} else if latestThreadMessage != nil {
+		threadRootID = latestThreadMessage.MXID
+		lastMessageID = latestThreadMessage.MXID
+	} else if rootThreadMessage != nil {
+		threadRootID = rootThreadMessage.MXID
+		lastMessageID = rootThreadMessage.MXID
 	}
-
-	for _, file := range msg.Files {
-		fileInfo := file
-		if file.FileAccess == "check_file_info" {
-			connectFile, _, _, err := userTeam.Client.GetFileInfo(file.ID, 0, 0)
-			if err != nil || connectFile == nil {
-				portal.log.Errorln("Error fetching slack connect file info", err)
-				continue
-			}
-			fileInfo = *connectFile
-		}
-		if fileInfo.Size > int(portal.bridge.MediaConfig.UploadSize) {
-			portal.log.Errorfln("%d is too large to upload to Matrix, not bridging file %s", fileInfo.Size, fileInfo.ID)
-			continue
-		}
-		convertedFile := ConvertedSlackFile{
-			SlackFileID: fileInfo.ID,
-		}
-		content := portal.renderSlackFile(fileInfo)
-		portal.addThreadMetadata(&content, msg.ThreadTimestamp)
-		var data bytes.Buffer
-		var err error
-		var url string
-		if fileInfo.URLPrivateDownload != "" {
-			url = fileInfo.URLPrivateDownload
-		} else if fileInfo.URLPrivate != "" {
-			url = fileInfo.URLPrivate
-		}
-		portal.log.Debugfln("File download URLs: urlPrivate=%s, urlPrivateDownload=%s", fileInfo.URLPrivate, fileInfo.URLPrivateDownload)
-		if url != "" {
-			portal.log.Debugfln("Downloading private file from Slack: %s", url)
-			err = userTeam.Client.GetFile(url, &data)
-			if bytes.HasPrefix(data.Bytes(), []byte("<!DOCTYPE html>")) {
-				portal.log.Warnfln("Received HTML file from Slack (URL %s), trying again in 5 seconds", url)
-				time.Sleep(5 * time.Second)
-				data.Reset()
-				err = userTeam.Client.GetFile(fileInfo.URLPrivate, &data)
-			} else {
-				portal.log.Debugfln("Download success, expectedSize=%d, downloadedSize=%d", fileInfo.Size, data.Len())
-			}
-		} else if fileInfo.PermalinkPublic != "" {
-			portal.log.Debugfln("Downloading public file from Slack: %s", fileInfo.PermalinkPublic)
-			client := http.Client{}
-			var resp *http.Response
-			resp, err = client.Get(fileInfo.PermalinkPublic)
-			if err != nil {
-				portal.log.Errorfln("Error downloading Slack file %s: %v", fileInfo.ID, err)
-				continue
-			}
-			_, err = data.ReadFrom(resp.Body)
-		} else {
-			portal.log.Errorln("No usable URL found in file object, not bridging file")
-			continue
-		}
-		if err != nil {
-			portal.log.Errorfln("Error downloading Slack file %s: %v", fileInfo.ID, err)
-			continue
-		}
-		err = portal.uploadMedia(portal.MainIntent(), data.Bytes(), &content)
-		if err != nil {
-			if errors.Is(err, mautrix.MTooLarge) {
-				portal.log.Errorfln("File %s too large for Matrix server: %v", fileInfo.ID, err)
-				continue
-			} else if httpErr, ok := err.(mautrix.HTTPError); ok && httpErr.IsStatus(413) {
-				portal.log.Errorfln("Proxy rejected too large file %s: %v", fileInfo.ID, err)
-				continue
-			} else {
-				portal.log.Errorfln("Error uploading file %s to Matrix: %v", fileInfo.ID, err)
-				continue
-			}
-		}
-		convertedFile.Event = &content
-		converted.FileAttachments = append(converted.FileAttachments, convertedFile)
-	}
-
-	converted.SlackThreadTs = msg.ThreadTimestamp
-
-	return converted
+	return
 }
 
-func (portal *Portal) HandleSlackNormalMessage(user *User, userTeam *database.UserTeam, msg *slack.Msg, editExisting *database.Message) {
+func (portal *Portal) HandleSlackEditMessage(ctx context.Context, source *UserTeam, sender *Puppet, msg, oldMsg *slack.Msg, editTarget []*database.Message) {
+	log := zerolog.Ctx(ctx)
+	intent := sender.IntentFor(portal)
+
 	ts := parseSlackTimestamp(msg.Timestamp)
-	e := portal.ConvertSlackMessage(userTeam, msg)
-
-	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, e.SlackAuthor)
-	if puppet == nil {
-		portal.log.Errorfln("Can't find puppet for %s", e.SlackAuthor)
-		return
+	ctx = context.WithValue(ctx, convertContextKeySource, source)
+	ctx = context.WithValue(ctx, convertContextKeyIntent, intent)
+	converted := portal.MsgConv.ToMatrix(ctx, msg)
+	// Don't merge caption if there's more than one part in the database
+	// (because it means the original didn't have a merged caption)
+	if len(editTarget) == 1 {
+		converted.MergeCaption()
 	}
-	puppet.UpdateInfo(userTeam, true, nil)
-	intent := puppet.IntentFor(portal)
 
-	for _, file := range e.FileAttachments {
-		if editExisting == nil {
-			portal.addThreadMetadata(file.Event, msg.ThreadTimestamp)
+	editTargetPartMap := make(map[database.PartID]*database.Message, len(editTarget))
+	for _, editTargetPart := range editTarget {
+		editTargetPartMap[editTargetPart.Part] = editTargetPart
+	}
+	for _, part := range converted.Parts {
+		editTargetPart, ok := editTargetPartMap[part.PartID]
+		if !ok {
+			log.Warn().Stringer("part_id", &part.PartID).Msg("Failed to find part to edit")
+			continue
 		}
+		delete(editTargetPartMap, part.PartID)
+		part.Content.SetEdit(editTargetPart.MXID)
+		// Never actually ping users in edits, only update the list in the edited content
+		part.Content.Mentions = nil
+		if part.Extra != nil {
+			part.Extra = map[string]any{
+				"m.new_content": part.Extra,
+			}
+		}
+		resp, err := portal.sendMatrixMessage(ctx, intent, part.Type, part.Content, part.Extra, ts.UnixMilli())
+		if err != nil {
+			log.Err(err).
+				Stringer("part_id", &part.PartID).
+				Stringer("part_mxid", editTargetPart.MXID).
+				Msg("Failed to edit message part")
+		} else {
+			log.Debug().
+				Stringer("part_id", &part.PartID).
+				Stringer("part_mxid", editTargetPart.MXID).
+				Stringer("edit_mxid", resp.EventID).
+				Msg("Edited message part")
+		}
+	}
+	for _, deletedPart := range editTargetPartMap {
+		resp, err := portal.MainIntent().RedactEvent(ctx, portal.MXID, deletedPart.MXID, mautrix.ReqRedact{Reason: "Part removed in edit"})
+		if err != nil {
+			log.Err(err).
+				Stringer("part_id", &deletedPart.Part).
+				Stringer("part_mxid", deletedPart.MXID).
+				Msg("Failed to redact message part deleted in edit")
+		} else if err = deletedPart.Delete(ctx); err != nil {
+			log.Err(err).
+				Stringer("part_id", &deletedPart.Part).
+				Msg("Failed to delete message part from database")
+		} else {
+			log.Debug().
+				Stringer("part_id", &deletedPart.Part).
+				Stringer("part_mxid", deletedPart.MXID).
+				Stringer("redaction_mxid", resp.EventID).
+				Msg("Redacted message part that was deleted in edit")
+		}
+	}
+}
 
-		resp, err := portal.sendMatrixMessage(intent, event.EventMessage, file.Event, nil, ts.UnixMilli())
+func (portal *Portal) HandleSlackDelete(ctx context.Context, msg *slack.Msg) {
+	log := zerolog.Ctx(ctx)
+	log.UpdateContext(func(c zerolog.Context) zerolog.Context {
+		return c.Str("deleted_message_id", msg.DeletedTimestamp)
+	})
+	messageParts, err := portal.bridge.DB.Message.GetBySlackID(ctx, portal.PortalKey, msg.DeletedTimestamp)
+	if err != nil {
+		log.Err(err).Msg("Failed to get delete target message")
+	} else if messageParts == nil {
+		log.Warn().Msg("Received message deletion event for unknown message")
+	} else {
+		for _, part := range messageParts {
+			if _, err = portal.MainIntent().RedactEvent(ctx, portal.MXID, part.MXID); err != nil {
+				log.Err(err).
+					Stringer("part_mxid", part.MXID).
+					Stringer("part_id", &part.Part).
+					Msg("Failed to redact deleted message part")
+			} else if err = part.Delete(ctx); err != nil {
+				log.Err(err).
+					Stringer("part_mxid", part.MXID).
+					Stringer("part_id", &part.Part).
+					Msg("Failed to delete deleted message part from database")
+			}
+		}
+	}
+}
+
+func (portal *Portal) HandleSlackNormalMessage(ctx context.Context, source *UserTeam, sender *Puppet, msg *slack.Msg) {
+	intent := sender.IntentFor(portal)
+
+	hasThread := msg.ThreadTimestamp != ""
+	threadRootID, threadLastMessageID := portal.getThreadMetadata(ctx, msg.ThreadTimestamp)
+
+	ts := parseSlackTimestamp(msg.Timestamp)
+	ctx = context.WithValue(ctx, convertContextKeySource, source)
+	ctx = context.WithValue(ctx, convertContextKeyIntent, intent)
+	converted := portal.MsgConv.ToMatrix(ctx, msg)
+
+	var lastEventID id.EventID
+	for _, part := range converted.Parts {
+		if threadRootID != "" {
+			part.Content.GetRelatesTo().SetThread(threadRootID, threadLastMessageID)
+		}
+		resp, err := portal.sendMatrixMessage(ctx, intent, part.Type, part.Content, part.Extra, ts.UnixMilli())
 		if err != nil {
 			portal.log.Warnfln("Failed to send media message %s to matrix: %v", ts, err)
 			continue
 		}
-		go portal.sendDeliveryReceipt(resp.EventID)
-		attachment := portal.bridge.DB.Attachment.New()
-		attachment.Channel = portal.Key
-		attachment.SlackFileID = file.SlackFileID
-		attachment.SlackMessageID = msg.Timestamp
-		attachment.MatrixEventID = resp.EventID
-		attachment.SlackThreadID = msg.ThreadTimestamp
-		attachment.Insert(nil)
-	}
-
-	if e.Event != nil {
-		// set m.emote if it's a /me message
-		if msg.SubType == "me_message" {
-			e.Event.MsgType = event.MsgEmote
-		}
-
-		if editExisting != nil {
-			e.Event.SetEdit(editExisting.MatrixID)
-		} else {
-			portal.addThreadMetadata(e.Event, msg.ThreadTimestamp)
-		}
-
-		resp, err := portal.sendMatrixMessage(intent, event.EventMessage, e.Event, nil, ts.UnixMilli())
+		dbMessage := portal.bridge.DB.Message.New()
+		dbMessage.PortalKey = portal.PortalKey
+		dbMessage.MessageID = msg.Timestamp
+		dbMessage.Part = part.PartID
+		dbMessage.ThreadID = msg.ThreadTimestamp
+		dbMessage.AuthorID = sender.UserID
+		dbMessage.MXID = resp.EventID
+		err = dbMessage.Insert(ctx)
 		if err != nil {
-			portal.log.Warnfln("Failed to send message %s to matrix: %v", msg.Timestamp, err)
-			return
+			zerolog.Ctx(ctx).Err(err).
+				Stringer("part_id", &part.PartID).
+				Msg("Failed to insert message part to database")
 		}
 
-		portal.markMessageHandled(nil, msg.Timestamp, msg.ThreadTimestamp, resp.EventID, e.SlackAuthor)
-		go portal.sendDeliveryReceipt(resp.EventID)
-		return
+		if hasThread {
+			threadLastMessageID = resp.EventID
+			if threadRootID == "" {
+				threadRootID = resp.EventID
+			}
+		}
+		lastEventID = resp.EventID
 	}
+	go portal.sendDeliveryReceipt(ctx, lastEventID)
 }
 
-func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTeam, msg *slack.ReactionAddedEvent) {
-	portal.slackMessageLock.Lock()
-	defer portal.slackMessageLock.Unlock()
-
-	if msg.Type != "reaction_added" {
-		portal.log.Warnln("ignoring unknown message type:", msg.Type)
-		return
-	}
-
-	portal.log.Debugfln("Handling Slack reaction: %v %s %s", portal.Key, msg.Item.Timestamp, msg.Reaction)
-
-	if portal.MXID == "" {
-		portal.log.Warnfln("No Matrix portal created for room %s %s, not bridging reaction")
-	}
-
-	existing := portal.bridge.DB.Reaction.GetBySlackID(portal.Key, msg.User, msg.Item.Timestamp, msg.Reaction)
-	if existing != nil {
-		portal.log.Warnfln("Dropping duplicate reaction: %s %s %s", portal.Key, msg.Item.Timestamp, msg.Reaction)
-		return
-	}
-
-	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.User)
+func (portal *Portal) HandleSlackReaction(ctx context.Context, source *UserTeam, msg *slack.ReactionAddedEvent) {
+	puppet := portal.Team.GetPuppetByID(msg.User)
 	if puppet == nil {
-		portal.log.Errorfln("Not sending reaction: can't find puppet for Slack user %s", msg.User)
 		return
 	}
-	puppet.UpdateInfo(userTeam, true, nil)
+	puppet.UpdateInfoIfNecessary(ctx, source)
+
+	log := zerolog.Ctx(ctx)
+	existing, err := portal.bridge.DB.Reaction.GetBySlackID(ctx, portal.PortalKey, msg.Item.Timestamp, msg.User, msg.Reaction)
+	if err != nil {
+		log.Err(err).Msg("Failed to check if reaction is duplicate")
+		return
+	} else if existing != nil {
+		log.Debug().Msg("Dropping duplicate reaction")
+		return
+	}
 	intent := puppet.IntentFor(portal)
 
-	targetMessage := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Item.Timestamp)
-	if targetMessage == nil {
-		portal.log.Errorfln("Not sending reaction: can't find Matrix message for %s %s %s", portal.Key.TeamID, portal.Key.ChannelID, msg.Item.Timestamp)
+	targetMessage, err := portal.bridge.DB.Message.GetFirstPartBySlackID(ctx, portal.PortalKey, msg.Item.Timestamp)
+	if err != nil {
+		log.Err(err).Msg("Failed to get reaction target from database")
+		return
+	} else if targetMessage == nil {
+		log.Warn().Msg("Dropping reaction to unknown message")
 		return
 	}
 
 	slackReaction := strings.Trim(msg.Reaction, ":")
 
-	key := portal.bridge.GetEmoji(slackReaction, userTeam)
+	key := source.GetEmoji(ctx, slackReaction)
 
 	var content event.ReactionEventContent
 	content.RelatesTo = event.RelatesTo{
 		Type:    event.RelAnnotation,
-		EventID: targetMessage.MatrixID,
+		EventID: targetMessage.MXID,
 		Key:     key,
 	}
 	extraContent := map[string]any{}
@@ -1716,104 +1679,99 @@ func (portal *Portal) HandleSlackReaction(user *User, userTeam *database.UserTea
 			"name": slackReaction,
 			"mxc":  key,
 		}
+		extraContent["com.beeper.reaction.shortcode"] = msg.Reaction
 		if !portal.bridge.Config.Bridge.CustomEmojiReactions {
 			content.RelatesTo.Key = slackReaction
 		}
 	}
 
-	resp, err := intent.SendMassagedMessageEvent(portal.MXID, event.EventReaction, &event.Content{
+	resp, err := intent.SendMassagedMessageEvent(ctx, portal.MXID, event.EventReaction, &event.Content{
 		Parsed: &content,
 		Raw:    extraContent,
 	}, parseSlackTimestamp(msg.EventTimestamp).UnixMilli())
 	if err != nil {
-		portal.log.Errorfln("Failed to bridge reaction: %v", err)
+		log.Err(err).Msg("Failed to send Slack reaction to Matrix")
 		return
 	}
 
 	dbReaction := portal.bridge.DB.Reaction.New()
-	dbReaction.Channel = portal.Key
-	dbReaction.SlackMessageID = msg.Item.Timestamp
-	dbReaction.MatrixEventID = resp.EventID
+	dbReaction.PortalKey = portal.PortalKey
+	dbReaction.MessageID = msg.Item.Timestamp
+	dbReaction.MessageFirstPart = targetMessage.Part
+	dbReaction.MXID = resp.EventID
 	dbReaction.AuthorID = msg.User
-	dbReaction.MatrixName = key
-	dbReaction.SlackName = msg.Reaction
-	dbReaction.Insert(nil)
-}
-
-func (portal *Portal) HandleSlackReactionRemoved(user *User, userTeam *database.UserTeam, msg *slack.ReactionRemovedEvent) {
-	if portal.MXID == "" {
-		return
-	}
-	portal.slackMessageLock.Lock()
-	defer portal.slackMessageLock.Unlock()
-
-	if msg.Type != "reaction_removed" {
-		portal.log.Warnln("ignoring unknown message type:", msg.Type)
-		return
-	}
-
-	dbReaction := portal.bridge.DB.Reaction.GetBySlackID(portal.Key, msg.User, msg.Item.Timestamp, msg.Reaction)
-	if dbReaction == nil {
-		portal.log.Errorfln("Failed to redact reaction %v %s %s %s: reaction not found in database", portal.Key, msg.User, msg.Item.Timestamp, msg.Reaction)
-		return
-	}
-
-	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.User)
-	if puppet == nil {
-		portal.log.Errorfln("Not redacting reaction: can't find puppet for Slack user %s %s", portal.Key.TeamID, msg.User)
-		return
-	}
-	puppet.UpdateInfo(userTeam, true, nil)
-	intent := puppet.IntentFor(portal)
-
-	_, err := intent.RedactEvent(portal.MXID, dbReaction.MatrixEventID)
+	dbReaction.EmojiID = msg.Reaction
+	err = dbReaction.Insert(ctx)
 	if err != nil {
-		portal.log.Errorfln("Failed to redact reaction %v %s %s %s: %v", portal.Key, msg.User, msg.Item.Timestamp, msg.Reaction, err)
-		return
-	}
-
-	dbReaction.Delete()
-}
-
-func (portal *Portal) HandleSlackTyping(user *User, userTeam *database.UserTeam, msg *slack.UserTypingEvent) {
-	if portal.MXID == "" {
-		return
-	}
-	puppet := portal.bridge.GetPuppetByID(portal.Key.TeamID, msg.User)
-	if puppet == nil {
-		portal.log.Errorfln("Not sending typing status: can't find puppet for Slack user %s", msg.User)
-		return
-	}
-	puppet.UpdateInfo(userTeam, true, nil)
-	intent := puppet.IntentFor(portal)
-
-	_, err := intent.UserTyping(portal.MXID, true, time.Duration(time.Second*5))
-	if err != nil {
-		portal.log.Warnfln("Error sending typing status to Matrix: %v", err)
+		log.Err(err).Msg("Failed to save reaction to database")
 	}
 }
 
-func (portal *Portal) HandleSlackChannelMarked(user *User, userTeam *database.UserTeam, msg *slack.ChannelMarkedEvent) {
-	if portal.MXID == "" {
-		return
-	}
-	puppet := portal.bridge.GetPuppetByCustomMXID(user.MXID)
+func (portal *Portal) HandleSlackReactionRemoved(ctx context.Context, source *UserTeam, msg *slack.ReactionRemovedEvent) {
+	puppet := portal.Team.GetPuppetByID(msg.User)
 	if puppet == nil {
-		portal.log.Errorfln("Not marking room as read: can't find puppet for Slack user %s", msg.User)
 		return
 	}
-	puppet.UpdateInfo(userTeam, true, nil)
-	intent := puppet.IntentFor(portal)
+	puppet.UpdateInfoIfNecessary(ctx, source)
 
-	message := portal.bridge.DB.Message.GetBySlackID(portal.Key, msg.Timestamp)
-
-	if message == nil {
-		portal.log.Debugfln("Couldn't mark portal %s as read: no Matrix room", portal.Key)
-		return
-	}
-
-	err := intent.MarkRead(portal.MXID, message.MatrixID)
+	log := zerolog.Ctx(ctx)
+	dbReaction, err := portal.bridge.DB.Reaction.GetBySlackID(ctx, portal.PortalKey, msg.Item.Timestamp, msg.User, msg.Reaction)
 	if err != nil {
-		portal.log.Warnfln("Error marking Matrix room %s as read by %s: %v", portal.MXID, intent.UserID, err)
+		log.Err(err).Msg("Failed to get removed reaction info from database")
+		return
+	} else if dbReaction == nil {
+		log.Warn().Msg("Ignoring removal of unknown reaction")
+		return
+	}
+
+	_, err = puppet.IntentFor(portal).RedactEvent(ctx, portal.MXID, dbReaction.MXID)
+	if err != nil {
+		log.Err(err).Msg("Failed to redact reaction")
+	}
+	err = dbReaction.Delete(ctx)
+	if err != nil {
+		log.Err(err).Msg("Failed to remove reaction from database")
+	}
+}
+
+func (portal *Portal) HandleSlackTyping(ctx context.Context, source *UserTeam, msg *slack.UserTypingEvent) {
+	puppet := portal.Team.GetPuppetByID(msg.User)
+	if puppet == nil {
+		return
+	}
+	puppet.UpdateInfoIfNecessary(ctx, source)
+	log := zerolog.Ctx(ctx)
+	intent := puppet.IntentFor(portal)
+	err := intent.EnsureJoined(ctx, portal.MXID)
+	if err != nil {
+		log.Err(err).Msg("Failed to ensure ghost is joined to room to bridge typing notification")
+	}
+	_, err = intent.UserTyping(ctx, portal.MXID, true, 5*time.Second)
+	if err != nil {
+		log.Err(err).Msg("Failed to bridge typing notification to Matrix")
+	}
+}
+
+func (portal *Portal) HandleSlackChannelMarked(ctx context.Context, source *UserTeam, msg *slack.ChannelMarkedEvent) {
+	if source.User.DoublePuppetIntent == nil {
+		return
+	}
+	log := zerolog.Ctx(ctx)
+	message, err := portal.bridge.DB.Message.GetLastPartBySlackID(ctx, portal.PortalKey, msg.Timestamp)
+	if err != nil {
+		log.Err(err).Msg("Failed to get read receipt target message")
+		return
+	} else if message == nil {
+		log.Debug().Msg("Ignoring read receipt for unknown message")
+		return
+	}
+	log.UpdateContext(func(c zerolog.Context) zerolog.Context {
+		return c.Stringer("message_mxid", message.MXID)
+	})
+	err = source.User.DoublePuppetIntent.MarkRead(ctx, portal.MXID, message.MXID)
+	if err != nil {
+		log.Err(err).Msg("Failed to mark message as read on Matrix after Slack read receipt")
+	} else {
+		log.Debug().Msg("Marked message as read on Matrix after Slack read receipt")
 	}
 }

@@ -1,5 +1,5 @@
 // mautrix-slack - A Matrix-Slack puppeting bridge.
-// Copyright (C) 2022 Tulir Asokan
+// Copyright (C) 2024 Tulir Asokan
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -17,16 +17,18 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
-	log "maunium.net/go/maulogger/v2"
+	"github.com/rs/zerolog"
+	"maunium.net/go/mautrix"
 
 	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/bridge"
-	"maunium.net/go/mautrix/bridge/bridgeconfig"
 	"maunium.net/go/mautrix/id"
 
 	"github.com/slack-go/slack"
@@ -38,153 +40,135 @@ type Puppet struct {
 	*database.Puppet
 
 	bridge *SlackBridge
-	log    log.Logger
+	zlog   zerolog.Logger
 
 	MXID id.UserID
 
-	customIntent *appservice.IntentAPI
-	customUser   *User
-
+	lastSync time.Time
 	syncLock sync.Mutex
 }
 
 var _ bridge.Ghost = (*Puppet)(nil)
 
+func (puppet *Puppet) SwitchCustomMXID(accessToken string, userID id.UserID) error {
+	return fmt.Errorf("puppets don't support custom MXIDs here")
+}
+
+func (puppet *Puppet) ClearCustomMXID() {}
+
+func (puppet *Puppet) CustomIntent() *appservice.IntentAPI {
+	return nil
+}
+
 func (puppet *Puppet) GetMXID() id.UserID {
 	return puppet.MXID
 }
 
-func (puppet *Puppet) GetCustomOrGhostMXID() id.UserID {
-	if puppet.CustomMXID != "" {
-		return puppet.CustomMXID
-	} else {
-		return puppet.MXID
+func (br *SlackBridge) loadPuppet(ctx context.Context, dbPuppet *database.Puppet, key *database.UserTeamKey) *Puppet {
+	if dbPuppet == nil {
+		if key == nil {
+			return nil
+		}
+		dbPuppet = br.DB.Puppet.New()
+		dbPuppet.UserTeamKey = *key
+		err := dbPuppet.Insert(ctx)
+		if err != nil {
+			br.ZLog.Err(err).Object("puppet_id", key).Msg("Failed to insert new puppet")
+			return nil
+		}
 	}
+
+	puppet := br.newPuppet(dbPuppet)
+	br.puppets[puppet.UserTeamKey] = puppet
+	return puppet
+}
+
+func (br *SlackBridge) newPuppet(dbPuppet *database.Puppet) *Puppet {
+	log := br.ZLog.With().Object("puppet_id", dbPuppet.UserTeamKey).Logger()
+	return &Puppet{
+		Puppet: dbPuppet,
+		bridge: br,
+		zlog:   log,
+		MXID:   br.FormatPuppetMXID(dbPuppet.UserTeamKey),
+	}
+}
+
+func (br *SlackBridge) FormatPuppetMXID(utk database.UserTeamKey) id.UserID {
+	return id.NewUserID(
+		br.Config.Bridge.FormatUsername(fmt.Sprintf("%s-%s", strings.ToLower(utk.TeamID), strings.ToLower(utk.UserID))),
+		br.Config.Homeserver.Domain,
+	)
 }
 
 var userIDRegex *regexp.Regexp
 
-func (br *SlackBridge) NewPuppet(dbPuppet *database.Puppet) *Puppet {
-	return &Puppet{
-		Puppet: dbPuppet,
-		bridge: br,
-		log:    br.Log.Sub(fmt.Sprintf("Puppet/%s-%s", dbPuppet.TeamID, dbPuppet.UserID)),
-
-		MXID: br.FormatPuppetMXID(dbPuppet.TeamID + "-" + dbPuppet.UserID),
-	}
-}
-
-func (br *SlackBridge) ParsePuppetMXID(mxid id.UserID) (string, string, bool) {
+func (br *SlackBridge) ParsePuppetMXID(mxid id.UserID) (database.UserTeamKey, bool) {
 	if userIDRegex == nil {
-		pattern := fmt.Sprintf(
-			"^@%s:%s$",
-			br.Config.Bridge.FormatUsername("([A-Za-z0-9]+)-([A-Za-z0-9]+)"),
-			br.Config.Homeserver.Domain,
-		)
-
-		userIDRegex = regexp.MustCompile(pattern)
+		userIDRegex = br.Config.MakeUserIDRegex("([a-z0-9]+)-([a-z0-9]+)")
 	}
 
 	match := userIDRegex.FindStringSubmatch(string(mxid))
 	if len(match) == 3 {
-		return match[1], match[2], true
+		return database.UserTeamKey{TeamID: strings.ToUpper(match[1]), UserID: strings.ToUpper(match[2])}, true
 	}
 
-	return "", "", false
+	return database.UserTeamKey{}, false
 }
 
 func (br *SlackBridge) GetPuppetByMXID(mxid id.UserID) *Puppet {
-	team, id, ok := br.ParsePuppetMXID(mxid)
+	key, ok := br.ParsePuppetMXID(mxid)
 	if !ok {
 		return nil
 	}
 
-	return br.GetPuppetByID(team, id)
+	return br.GetPuppetByID(key)
 }
 
-func (br *SlackBridge) GetPuppetByID(teamID, userID string) *Puppet {
-	br.puppetsLock.Lock()
-	defer br.puppetsLock.Unlock()
-
-	puppet, ok := br.puppets[teamID+"-"+userID]
-	if !ok {
-		dbPuppet := br.DB.Puppet.Get(teamID, userID)
-		if dbPuppet == nil {
-			dbPuppet = br.DB.Puppet.New()
-			dbPuppet.TeamID = teamID
-			dbPuppet.UserID = userID
-			dbPuppet.Insert()
-		}
-
-		puppet = br.NewPuppet(dbPuppet)
-		br.puppets[puppet.Key()] = puppet
+func (br *SlackBridge) GetPuppetByID(key database.UserTeamKey) *Puppet {
+	if key.TeamID == "" || key.UserID == "" {
+		return nil
 	}
-
-	return puppet
-}
-
-func (br *SlackBridge) GetPuppetByCustomMXID(mxid id.UserID) *Puppet {
 	br.puppetsLock.Lock()
 	defer br.puppetsLock.Unlock()
 
-	puppet, ok := br.puppetsByCustomMXID[mxid]
+	puppet, ok := br.puppets[key]
 	if !ok {
-		dbPuppet := br.DB.Puppet.GetByCustomMXID(mxid)
-		if dbPuppet == nil {
+		ctx := context.TODO()
+		dbPuppet, err := br.DB.Puppet.Get(ctx, key)
+		if err != nil {
+			br.ZLog.Err(err).Object("puppet_id", key).Msg("Failed to get puppet from database")
 			return nil
 		}
-
-		puppet = br.NewPuppet(dbPuppet)
-		br.puppets[puppet.Key()] = puppet
-		br.puppetsByCustomMXID[puppet.CustomMXID] = puppet
+		return br.loadPuppet(ctx, dbPuppet, &key)
 	}
 
 	return puppet
-}
-
-func (br *SlackBridge) GetAllPuppetsWithCustomMXID() []*Puppet {
-	return br.dbPuppetsToPuppets(br.DB.Puppet.GetAllWithCustomMXID())
-}
-
-func (br *SlackBridge) GetAllPuppets() []*Puppet {
-	return br.dbPuppetsToPuppets(br.DB.Puppet.GetAll())
 }
 
 func (br *SlackBridge) GetAllPuppetsForTeam(teamID string) []*Puppet {
-	return br.dbPuppetsToPuppets(br.DB.Puppet.GetAllForTeam(teamID))
+	return br.dbPuppetsToPuppets(br.DB.Puppet.GetAllForTeam(context.TODO(), teamID))
 }
 
-func (br *SlackBridge) dbPuppetsToPuppets(dbPuppets []*database.Puppet) []*Puppet {
+func (br *SlackBridge) dbPuppetsToPuppets(dbPuppets []*database.Puppet, err error) []*Puppet {
+	if err != nil {
+		br.ZLog.Err(err).Msg("Failed to load puppets")
+		return nil
+	}
 	br.puppetsLock.Lock()
 	defer br.puppetsLock.Unlock()
 
 	output := make([]*Puppet, len(dbPuppets))
-	for index, dbPuppet := range dbPuppets {
-		if dbPuppet == nil {
-			continue
+	ctx := context.TODO()
+	for i, dbPuppet := range dbPuppets {
+		puppet, ok := br.puppets[dbPuppet.UserTeamKey]
+		if ok {
+			output[i] = puppet
+		} else {
+			output[i] = br.loadPuppet(ctx, dbPuppet, nil)
 		}
-
-		puppet, ok := br.puppets[dbPuppet.TeamID+"-"+dbPuppet.UserID]
-		if !ok {
-			puppet = br.NewPuppet(dbPuppet)
-			br.puppets[puppet.Key()] = puppet
-
-			if dbPuppet.CustomMXID != "" {
-				br.puppetsByCustomMXID[dbPuppet.CustomMXID] = puppet
-			}
-		}
-
-		output[index] = puppet
 	}
 
 	return output
-}
-
-func (br *SlackBridge) FormatPuppetMXID(did string) id.UserID {
-	return id.NewUserID(
-		br.Config.Bridge.FormatUsername(strings.ToLower(did)),
-		br.Config.Homeserver.Domain,
-	)
 }
 
 func (puppet *Puppet) DefaultIntent() *appservice.IntentAPI {
@@ -192,23 +176,104 @@ func (puppet *Puppet) DefaultIntent() *appservice.IntentAPI {
 }
 
 func (puppet *Puppet) IntentFor(portal *Portal) *appservice.IntentAPI {
-	if puppet.customIntent == nil {
-		return puppet.DefaultIntent()
+	if puppet.UserID != portal.DMUserID {
+		userTeam := puppet.bridge.GetCachedUserTeamByID(puppet.UserTeamKey)
+		if userTeam != nil && userTeam.User.DoublePuppetIntent != nil {
+			return userTeam.User.DoublePuppetIntent
+		}
+	}
+	return puppet.DefaultIntent()
+}
+
+const minPuppetSyncInterval = 4 * time.Hour
+
+func (puppet *Puppet) UpdateInfoIfNecessary(ctx context.Context, source *UserTeam) {
+	puppet.syncLock.Lock()
+	defer puppet.syncLock.Unlock()
+	if puppet.Name != "" && time.Since(puppet.lastSync) > minPuppetSyncInterval {
+		return
+	}
+	puppet.unlockedUpdateInfo(ctx, source, nil, nil)
+}
+
+func (puppet *Puppet) UpdateInfo(ctx context.Context, userTeam *UserTeam, info *slack.User, botInfo *slack.Bot) {
+	puppet.syncLock.Lock()
+	defer puppet.syncLock.Unlock()
+	puppet.unlockedUpdateInfo(ctx, userTeam, info, botInfo)
+}
+
+func (puppet *Puppet) unlockedUpdateInfo(ctx context.Context, userTeam *UserTeam, info *slack.User, botInfo *slack.Bot) {
+	puppet.lastSync = time.Now()
+
+	err := puppet.DefaultIntent().EnsureRegistered(ctx)
+	if err != nil {
+		puppet.zlog.Err(err).Msg("Failed to ensure registered")
 	}
 
-	return puppet.customIntent
+	if info == nil && botInfo == nil {
+		if strings.ToLower(puppet.UserID[0:1]) == "b" {
+			botInfo, err = userTeam.Client.GetBotInfo(puppet.UserID)
+		} else {
+			info, err = userTeam.Client.GetUserInfo(puppet.UserID)
+		}
+		if err != nil {
+			puppet.zlog.Err(err).Object("fetch_via_id", userTeam.UserTeamMXIDKey).
+				Msg("Failed to fetch info to update ghost")
+			return
+		}
+	}
+
+	changed := false
+
+	if !puppet.IsBot && (strings.ToLower(puppet.UserID) == "uslackbot" || botInfo != nil) {
+		puppet.IsBot = true
+		changed = true
+	}
+	if info != nil {
+		newName := puppet.bridge.Config.Bridge.FormatDisplayname(info)
+		changed = puppet.UpdateName(ctx, newName) || changed
+		changed = puppet.UpdateAvatar(ctx, info.Profile.ImageOriginal) || changed
+
+		if (info.IsBot || info.IsAppUser) && !puppet.IsBot {
+			puppet.IsBot = true
+			changed = true
+		}
+	} else if botInfo != nil {
+		newName := puppet.bridge.Config.Bridge.FormatBotDisplayname(botInfo)
+		changed = puppet.UpdateName(ctx, newName) || changed
+		changed = puppet.UpdateAvatar(ctx, botInfo.Icons.Image72) || changed
+	}
+	changed = puppet.UpdateContactInfo(ctx, puppet.IsBot) || changed
+
+	if changed {
+		err = puppet.Update(ctx)
+		if err != nil {
+			puppet.zlog.Err(err).Msg("Failed to save info to database")
+		}
+	}
 }
 
-func (puppet *Puppet) CustomIntent() *appservice.IntentAPI {
-	return puppet.customIntent
-}
-
-func (puppet *Puppet) Key() string {
-	return puppet.TeamID + "-" + puppet.UserID
+func (puppet *Puppet) UpdateName(ctx context.Context, newName string) bool {
+	if puppet.Name == newName && puppet.NameSet {
+		return false
+	}
+	puppet.zlog.Debug().Str("old_name", puppet.Name).Str("new_name", newName).Msg("Updating displayname")
+	puppet.Name = newName
+	puppet.NameSet = false
+	err := puppet.DefaultIntent().SetDisplayName(ctx, newName)
+	if err != nil {
+		puppet.zlog.Err(err).Msg("Failed to update displayname")
+	} else {
+		go puppet.updatePortalMeta(func(portal *Portal) {
+			portal.UpdateNameFromPuppet(ctx, puppet)
+		})
+		puppet.NameSet = true
+	}
+	return true
 }
 
 func (puppet *Puppet) updatePortalMeta(meta func(portal *Portal)) {
-	for _, portal := range puppet.bridge.GetDMPortalsWith(puppet.UserID) {
+	for _, portal := range puppet.bridge.GetDMPortalsWith(puppet.UserTeamKey) {
 		// Get room create lock to prevent races between receiving contact info and room creation.
 		portal.roomCreateLock.Lock()
 		meta(portal)
@@ -216,259 +281,51 @@ func (puppet *Puppet) updatePortalMeta(meta func(portal *Portal)) {
 	}
 }
 
-func (puppet *Puppet) updateName(source *User) bool {
-	userTeam := source.GetUserTeam(puppet.TeamID)
-	user, err := userTeam.Client.GetUserInfo(puppet.UserID)
-	if err != nil {
-		puppet.log.Warnln("failed to get user from id:", err)
-		return false
-	}
-
-	newName := puppet.bridge.Config.Bridge.FormatDisplayname(user)
-
-	if puppet.Name != newName {
-		err := puppet.DefaultIntent().SetDisplayName(newName)
-		if err == nil {
-			puppet.Name = newName
-			puppet.Update()
-		} else {
-			puppet.log.Warnln("failed to set display name:", err)
-		}
-
-		return true
-	}
-
-	return false
-}
-
-func (puppet *Puppet) updateAvatar(source *User) bool {
-	// TODO
-	return false
-	// user, err := source.Client.GetUserInfo(puppet.ID)
-	// if err != nil {
-	// 	puppet.log.Warnln("Failed to get user:", err)
-
-	// 	return false
-	// }
-
-	// if puppet.Avatar == user.Avatar {
-	// 	return false
-	// }
-
-	// if user.Avatar == "" {
-	// 	puppet.log.Warnln("User does not have an avatar")
-
-	// 	return false
-	// }
-
-	// url, err := uploadAvatar(puppet.DefaultIntent(), user.AvatarURL(""))
-	// if err != nil {
-	// 	puppet.log.Warnln("Failed to upload user avatar:", err)
-
-	// 	return false
-	// }
-
-	// puppet.AvatarURL = url
-
-	// err = puppet.DefaultIntent().SetAvatarURL(puppet.AvatarURL)
-	// if err != nil {
-	// 	puppet.log.Warnln("Failed to set avatar:", err)
-	// }
-
-	// puppet.log.Debugln("Updated avatar", puppet.Avatar, "->", user.Avatar)
-	// puppet.Avatar = user.Avatar
-	// go puppet.updatePortalAvatar()
-
-	// return true
-}
-
-func (puppet *Puppet) updatePortalAvatar() {
-	puppet.updatePortalMeta(func(portal *Portal) {
-		if portal.MXID != "" {
-			_, err := portal.MainIntent().SetRoomAvatar(portal.MXID, puppet.AvatarURL)
-			if err != nil {
-				portal.log.Warnln("Failed to set avatar:", err)
-			}
-		}
-
-		portal.AvatarURL = puppet.AvatarURL
-		portal.Avatar = puppet.Avatar
-		portal.Update(nil)
-	})
-
-}
-
-func (puppet *Puppet) SyncContact(source *User) {
-	puppet.syncLock.Lock()
-	defer puppet.syncLock.Unlock()
-
-	puppet.log.Debugln("syncing contact", puppet.Name)
-
-	err := puppet.DefaultIntent().EnsureRegistered()
-	if err != nil {
-		puppet.log.Errorln("Failed to ensure registered:", err)
-	}
-
-	update := false
-
-	update = puppet.updateName(source) || update
-
-	if puppet.Avatar == "" {
-		update = puppet.updateAvatar(source) || update
-		puppet.log.Debugln("update avatar returned", update)
-	}
-
-	if update {
-		puppet.Update()
-	}
-}
-
-func (puppet *Puppet) UpdateName(newName string) bool {
-	if puppet.Name == newName && puppet.NameSet {
-		return false
-	}
-	puppet.Name = newName
-	puppet.NameSet = false
-	err := puppet.DefaultIntent().SetDisplayName(newName)
-	if err != nil {
-		puppet.log.Warnln("Failed to update displayname:", err)
-	} else {
-		go puppet.updatePortalMeta(func(portal *Portal) {
-			if portal.UpdateNameDirect(puppet.Name) {
-				portal.Update(nil)
-				portal.UpdateBridgeInfo()
-			}
-		})
-		puppet.NameSet = true
-	}
-	return true
-}
-
-func (puppet *Puppet) UpdateAvatar(url string) bool {
+func (puppet *Puppet) UpdateAvatar(ctx context.Context, url string) bool {
 	if puppet.Avatar == url && puppet.AvatarSet {
 		return false
 	}
 	avatarChanged := url != puppet.Avatar
 	puppet.Avatar = url
 	puppet.AvatarSet = false
-	puppet.AvatarURL = id.ContentURI{}
+	puppet.AvatarMXC = id.ContentURI{}
 
-	// TODO should we just use slack's default avatars for users with no avatar?
-	if puppet.Avatar != "" && (puppet.AvatarURL.IsEmpty() || avatarChanged) {
-		url, err := uploadPlainFile(puppet.DefaultIntent(), url)
+	if puppet.Avatar != "" && (puppet.AvatarMXC.IsEmpty() || avatarChanged) {
+		url, err := uploadPlainFile(ctx, puppet.DefaultIntent(), url)
 		if err != nil {
-			puppet.log.Warnfln("Failed to reupload user avatar %s: %v", puppet.Avatar, err)
+			puppet.zlog.Err(err).Msg("Failed to reupload new avatar")
 			return true
 		}
-		puppet.AvatarURL = url
+		puppet.AvatarMXC = url
 	}
 
-	err := puppet.DefaultIntent().SetAvatarURL(puppet.AvatarURL)
+	err := puppet.DefaultIntent().SetAvatarURL(ctx, puppet.AvatarMXC)
 	if err != nil {
-		puppet.log.Warnln("Failed to update avatar:", err)
+		puppet.zlog.Err(err).Msg("Failed to update avatar")
 	} else {
 		go puppet.updatePortalMeta(func(portal *Portal) {
-			if portal.UpdateAvatarFromPuppet(puppet) {
-				portal.Update(nil)
-				portal.UpdateBridgeInfo()
-			}
+			portal.UpdateAvatarFromPuppet(ctx, puppet)
 		})
 		puppet.AvatarSet = true
 	}
 	return true
 }
 
-func (puppet *Puppet) UpdateInfo(userTeam *database.UserTeam, fetch bool, info *slack.User) {
-	if strings.HasPrefix(strings.ToLower(puppet.UserID), "b") {
-		puppet.UpdateInfoBot(userTeam)
-		return
-	}
-
-	puppet.syncLock.Lock()
-	defer puppet.syncLock.Unlock()
-
-	if info == nil && fetch {
-		var err error
-		puppet.log.Debugfln("Fetching info through team %s to update", userTeam.Key.TeamID)
-
-		info, err = userTeam.Client.GetUserInfo(puppet.UserID)
-		if err != nil {
-			puppet.log.Errorfln("Failed to fetch info through %s: %v", userTeam.Key.TeamID, err)
-			return
-		}
-	}
-
-	err := puppet.DefaultIntent().EnsureRegistered()
-	if err != nil {
-		puppet.log.Errorln("Failed to ensure registered:", err)
-	}
-
-	changed := false
-
-	if info != nil {
-		newName := puppet.bridge.Config.Bridge.FormatDisplayname(info)
-		changed = puppet.UpdateName(newName) || changed
-		changed = puppet.UpdateAvatar(info.Profile.ImageOriginal) || changed
-
-		if (info.IsBot || info.IsAppUser) && !puppet.IsBot {
-			puppet.IsBot = true
-			changed = true
-		}
-	}
-	changed = puppet.UpdateContactInfo(puppet.IsBot || strings.ToLower(puppet.UserID) == "uslackbot") || changed
-
-	if changed {
-		puppet.Update()
-	}
-}
-
-func (puppet *Puppet) UpdateContactInfo(isBot bool) bool {
-	if puppet.bridge.Config.Homeserver.Software != bridgeconfig.SoftwareHungry {
+func (puppet *Puppet) UpdateContactInfo(ctx context.Context, isBot bool) bool {
+	if puppet.bridge.SpecVersions.Supports(mautrix.BeeperFeatureArbitraryProfileMeta) || puppet.ContactInfoSet {
 		return false
 	}
-	if !puppet.ContactInfoSet {
-		contactInfo := map[string]any{
-			"com.beeper.bridge.remote_id":      puppet.UserID,
-			"com.beeper.bridge.service":        "slackgo",
-			"com.beeper.bridge.network":        "slack",
-			"com.beeper.bridge.is_network_bot": isBot,
-		}
-		err := puppet.DefaultIntent().BeeperUpdateProfile(contactInfo)
-		if err != nil {
-			puppet.log.Warnln("Failed to store custom contact info in profile:", err)
-			return false
-		} else {
-			puppet.ContactInfoSet = true
-			return true
-		}
-	}
-	return false
-}
-
-func (puppet *Puppet) UpdateInfoBot(userTeam *database.UserTeam) {
-	puppet.syncLock.Lock()
-	defer puppet.syncLock.Unlock()
-
-	puppet.log.Debugfln("Fetching bot info through team %s to update", userTeam.Key.TeamID)
-	info, err := userTeam.Client.GetBotInfo(puppet.UserID)
+	err := puppet.DefaultIntent().BeeperUpdateProfile(ctx, map[string]any{
+		"com.beeper.bridge.remote_id":      puppet.UserID,
+		"com.beeper.bridge.service":        "slackgo",
+		"com.beeper.bridge.network":        "slack",
+		"com.beeper.bridge.is_network_bot": isBot,
+	})
 	if err != nil {
-		puppet.log.Errorfln("Failed to fetch bot info through %s: %v", userTeam.Key.TeamID, err)
-		return
-	}
-
-	err = puppet.DefaultIntent().EnsureRegistered()
-	if err != nil {
-		puppet.log.Errorfln("Failed to ensure bot %s registered: %v", puppet.UserID, err)
-	}
-
-	changed := false
-
-	newName := puppet.bridge.Config.Bridge.FormatBotDisplayname(info)
-	changed = puppet.UpdateName(newName) || changed
-	changed = puppet.UpdateAvatar(info.Icons.Image72) || changed
-	changed = puppet.UpdateContactInfo(true) || changed
-
-	if changed {
-		puppet.Update()
+		puppet.zlog.Err(err).Msg("Failed to store custom contact info in profile")
+		return false
+	} else {
+		puppet.ContactInfoSet = true
+		return true
 	}
 }
