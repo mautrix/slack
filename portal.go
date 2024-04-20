@@ -68,10 +68,10 @@ type Portal struct {
 	// Deprecated
 	log log.Logger
 
-	roomCreateLock          sync.Mutex
-	encryptLock             sync.Mutex
-	backfillLock            sync.Mutex
-	latestEventBackfillLock sync.Mutex
+	roomCreateLock      sync.Mutex
+	encryptLock         sync.Mutex
+	backfillLock        sync.Mutex
+	forwardBackfillLock sync.Mutex
 
 	matrixMessages chan portalMatrixMessage
 	slackMessages  chan portalSlackMessage
@@ -396,11 +396,13 @@ func (portal *Portal) CreateMatrixRoom(ctx context.Context, source *UserTeam, ch
 		portal.log.Warnln("Failed to create room:", err)
 		return err
 	}
+	portal.forwardBackfillLock.Lock()
 
 	portal.NameSet = req.Name != ""
 	portal.AvatarSet = avatarSet
 	portal.TopicSet = true
 	portal.MXID = resp.RoomID
+	portal.MoreToBackfill = true
 	portal.bridge.portalsLock.Lock()
 	portal.bridge.portalsByMXID[portal.MXID] = portal
 	portal.bridge.portalsLock.Unlock()
@@ -445,6 +447,7 @@ func (portal *Portal) CreateMatrixRoom(ctx context.Context, source *UserTeam, ch
 		source.User.updateChatMute(ctx, portal, true)
 	}
 
+	go portal.PostCreateForwardBackfill(ctx, source)
 	/*if portal.bridge.Config.Bridge.Backfill.Enable {
 		portal.log.Debugln("Performing initial backfill batch")
 		initialMessages, err := source.Client.GetConversationHistory(&slack.GetConversationHistoryParameters{
@@ -1328,13 +1331,16 @@ func (portal *Portal) UpdateInfo(ctx context.Context, source *UserTeam, meta *sl
 		}
 	}
 
-	err := portal.InsertUser(ctx, source.UserTeamMXIDKey)
+	err := portal.InsertUser(ctx, source.UserTeamMXIDKey, !portal.MoreToBackfill)
 	if err != nil {
 		portal.zlog.Err(err).Object("user_team_key", source.UserTeamMXIDKey).
 			Msg("Failed to insert user portal row")
 	}
 	if portal.MXID != "" {
 		portal.ensureUserInvited(ctx, source.User)
+		if meta.Latest != nil {
+			go portal.MissedForwardBackfill(ctx, source, meta.Latest.Timestamp)
+		}
 	}
 
 	return meta, memberMXIDs
@@ -1425,6 +1431,9 @@ func (portal *Portal) handleSlackEvent(source *UserTeam, rawEvt any) {
 				return
 			}
 		}
+		// Ensure that messages aren't bridged if they come in between the portal being created and forward backfill happening.
+		portal.forwardBackfillLock.Lock()
+		defer portal.forwardBackfillLock.Unlock()
 		portal.HandleSlackMessage(ctx, source, evt)
 	}
 }

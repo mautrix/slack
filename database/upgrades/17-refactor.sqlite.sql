@@ -78,6 +78,14 @@ ALTER TABLE portal RENAME COLUMN avatar_url TO avatar_mxc;
 ALTER TABLE portal DROP COLUMN first_event_id;
 ALTER TABLE portal DROP COLUMN next_batch_id;
 ALTER TABLE portal ADD COLUMN receiver TEXT NOT NULL DEFAULT '';
+ALTER TABLE portal ADD COLUMN more_to_backfill BOOLEAN NOT NULL DEFAULT false;
+UPDATE portal SET more_to_backfill=true WHERE more_to_backfill=false AND EXISTS(
+    SELECT 1 FROM backfill_state bs
+    WHERE bs.team_id=portal.team_id
+      AND bs.channel_id=portal.channel_id
+      AND backfill_complete=false
+);
+
 UPDATE puppet SET avatar='' WHERE avatar IS NULL;
 ALTER TABLE puppet RENAME COLUMN avatar_url TO avatar_mxc;
 ALTER TABLE puppet DROP COLUMN enable_presence;
@@ -149,6 +157,14 @@ CREATE TABLE user_team_portal (
     user_id    TEXT NOT NULL,
     channel_id TEXT NOT NULL,
     user_mxid  TEXT NOT NULL,
+
+    backfill_finished       BOOLEAN NOT NULL DEFAULT false,
+    backfill_priority       INTEGER NOT NULL DEFAULT 0,
+    backfilled_count        INTEGER NOT NULL DEFAULT 0,
+    backfill_dispatched_at  BIGINT,
+    backfill_completed_at   BIGINT,
+    backfill_cooldown_until BIGINT,
+
     PRIMARY KEY (team_id, user_id, channel_id),
     CONSTRAINT utp_user_fkey FOREIGN KEY (user_mxid) REFERENCES "user" (mxid)
         ON DELETE CASCADE ON UPDATE CASCADE,

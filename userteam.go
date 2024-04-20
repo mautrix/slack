@@ -188,7 +188,11 @@ type slackgoZerolog struct {
 }
 
 func (l slackgoZerolog) Output(i int, s string) error {
-	l.Debug().Msg(strings.TrimSpace(s))
+	level := zerolog.DebugLevel
+	if strings.HasPrefix(s, "Sending PING ") {
+		level = zerolog.TraceLevel
+	}
+	l.WithLevel(level).Msg(strings.TrimSpace(s))
 	return nil
 }
 

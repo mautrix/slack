@@ -16,26 +16,27 @@ CREATE TABLE team_portal (
 );
 
 CREATE TABLE portal (
-    team_id        TEXT    NOT NULL,
-    channel_id     TEXT    NOT NULL,
-    receiver       TEXT    NOT NULL, -- TODO add receiver to primary key
-    mxid           TEXT,
+    team_id          TEXT    NOT NULL,
+    channel_id       TEXT    NOT NULL,
+    receiver         TEXT    NOT NULL, -- TODO add receiver to primary key
+    mxid             TEXT,
 
-    type           INT     NOT NULL DEFAULT 0,
-    dm_user_id     TEXT,
+    type             INT     NOT NULL DEFAULT 0,
+    dm_user_id       TEXT,
 
-    plain_name     TEXT    NOT NULL,
-    name           TEXT    NOT NULL,
-    name_set       BOOLEAN NOT NULL DEFAULT false,
-    topic          TEXT    NOT NULL,
-    topic_set      BOOLEAN NOT NULL DEFAULT false,
-    avatar         TEXT    NOT NULL,
-    avatar_mxc     TEXT,
-    avatar_set     BOOLEAN NOT NULL DEFAULT false,
-    encrypted      BOOLEAN NOT NULL DEFAULT false,
-    in_space       BOOLEAN NOT NULL DEFAULT false,
+    plain_name       TEXT    NOT NULL,
+    name             TEXT    NOT NULL,
+    name_set         BOOLEAN NOT NULL DEFAULT false,
+    topic            TEXT    NOT NULL,
+    topic_set        BOOLEAN NOT NULL DEFAULT false,
+    avatar           TEXT    NOT NULL,
+    avatar_mxc       TEXT,
+    avatar_set       BOOLEAN NOT NULL DEFAULT false,
+    encrypted        BOOLEAN NOT NULL DEFAULT false,
+    in_space         BOOLEAN NOT NULL DEFAULT false,
 
-    first_slack_id TEXT,
+    first_slack_id   TEXT,
+    more_to_backfill BOOLEAN NOT NULL DEFAULT false,
 
     PRIMARY KEY (team_id, channel_id),
     CONSTRAINT portal_mxid_unique UNIQUE (mxid),
@@ -87,10 +88,18 @@ CREATE TABLE user_team (
 CREATE INDEX user_team_user_idx ON user_team (user_mxid);
 
 CREATE TABLE user_team_portal (
-    team_id    TEXT NOT NULL,
-    user_id    TEXT NOT NULL,
-    channel_id TEXT NOT NULL,
-    user_mxid  TEXT NOT NULL,
+    team_id                 TEXT    NOT NULL,
+    user_id                 TEXT    NOT NULL,
+    channel_id              TEXT    NOT NULL,
+    user_mxid               TEXT    NOT NULL,
+
+    backfill_finished       BOOLEAN NOT NULL DEFAULT false,
+    backfill_priority       INTEGER NOT NULL DEFAULT 0,
+    backfilled_count        INTEGER NOT NULL DEFAULT 0,
+    backfill_dispatched_at  BIGINT,
+    backfill_completed_at   BIGINT,
+    backfill_cooldown_until BIGINT,
+
     PRIMARY KEY (team_id, user_id, channel_id),
     CONSTRAINT utp_user_fkey FOREIGN KEY (user_mxid) REFERENCES "user" (mxid)
         ON DELETE CASCADE ON UPDATE CASCADE,
@@ -135,17 +144,6 @@ CREATE TABLE reaction (
     CONSTRAINT reaction_message_fkey FOREIGN KEY (team_id, channel_id, message_id, msg_first_part_id)
         REFERENCES message (team_id, channel_id, message_id, part_id)
         ON DELETE CASCADE ON UPDATE CASCADE
-);
-
-CREATE TABLE backfill_state (
-    team_id            TEXT,
-    channel_id         TEXT,
-    backfill_complete  BOOLEAN,
-    dispatched         BOOLEAN,
-    message_count      INTEGER,
-    immediate_complete BOOLEAN,
-    PRIMARY KEY (team_id, channel_id),
-    FOREIGN KEY (team_id, channel_id) REFERENCES portal (team_id, channel_id) ON DELETE CASCADE
 );
 
 CREATE TABLE emoji (

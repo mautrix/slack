@@ -53,8 +53,8 @@ const (
 		WHERE team_id=$1 AND channel_id=$2
 		ORDER BY message_id ASC LIMIT 1
 	`
-	getLastMessageInChannelQuery = getMessageBaseQuery + `
-		WHERE team_id=$1 AND channel_id=$2
+	getLastNonThreadMessageInChannelQuery = getMessageBaseQuery + `
+		WHERE team_id=$1 AND channel_id=$2 AND thread_id=''
 		ORDER BY message_id DESC LIMIT 1
 	`
 	getFirstMessageInThreadQuery = getMessageBaseQuery + `
@@ -94,8 +94,8 @@ func (mq *MessageQuery) GetFirstInChannel(ctx context.Context, key PortalKey) (*
 	return mq.QueryOne(ctx, getFirstMessageInChannelQuery, key.TeamID, key.ChannelID)
 }
 
-func (mq *MessageQuery) GetLastInChannel(ctx context.Context, key PortalKey) (*Message, error) {
-	return mq.QueryOne(ctx, getLastMessageInChannelQuery, key.TeamID, key.ChannelID)
+func (mq *MessageQuery) GetLastNonThreadInChannel(ctx context.Context, key PortalKey) (*Message, error) {
+	return mq.QueryOne(ctx, getLastNonThreadMessageInChannelQuery, key.TeamID, key.ChannelID)
 }
 
 func (mq *MessageQuery) GetFirstInThread(ctx context.Context, key PortalKey, threadID string) (*Message, error) {

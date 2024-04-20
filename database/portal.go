@@ -36,7 +36,7 @@ const (
 	getAllPortalsQuery = `
 		SELECT team_id, channel_id, receiver, mxid, type, dm_user_id,
 		       plain_name, name, name_set, topic, topic_set, avatar, avatar_mxc, avatar_set,
-		       encrypted, in_space, first_slack_id
+		       encrypted, in_space, first_slack_id, more_to_backfill
 		FROM portal
 	`
 	getPortalByIDQuery        = getAllPortalsQuery + `WHERE team_id=$1 AND channel_id=$2`
@@ -68,14 +68,6 @@ const (
 	`
 	deletePortalQuery = `
 		DELETE FROM portal WHERE team_id=$1 AND channel_id=$2
-	`
-	insertUserTeamPortalQuery = `
-		INSERT INTO user_team_portal (team_id, user_id, channel_id, user_mxid)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT DO NOTHING
-	`
-	deleteUserTeamPortalQuery = `
-		DELETE FROM user_team_portal WHERE team_id=$1 AND user_id=$2 AND channel_id=$3
 	`
 )
 
@@ -142,7 +134,8 @@ type Portal struct {
 	Encrypted bool
 	InSpace   bool
 
-	FirstSlackID string
+	OldestSlackMessageID string
+	MoreToBackfill       bool
 }
 
 func (p *Portal) Scan(row dbutil.Scannable) (*Portal, error) {
@@ -165,6 +158,7 @@ func (p *Portal) Scan(row dbutil.Scannable) (*Portal, error) {
 		&p.Encrypted,
 		&p.InSpace,
 		&firstSlackID,
+		&p.MoreToBackfill,
 	)
 	if err != nil {
 		return nil, err
@@ -172,7 +166,7 @@ func (p *Portal) Scan(row dbutil.Scannable) (*Portal, error) {
 	p.MXID = id.RoomID(mxid.String)
 	p.DMUserID = dmUserID.String
 	p.AvatarMXC, _ = id.ParseContentURI(avatarMXC.String)
-	p.FirstSlackID = firstSlackID.String
+	p.OldestSlackMessageID = firstSlackID.String
 	return p, nil
 }
 
@@ -180,7 +174,7 @@ func (p *Portal) sqlVariables() []any {
 	return []any{
 		p.TeamID, p.ChannelID, p.Receiver, dbutil.StrPtr(p.MXID), p.Type, dbutil.StrPtr(p.DMUserID),
 		p.PlainName, p.Name, p.NameSet, p.Topic, p.TopicSet, p.Avatar, dbutil.StrPtr(p.AvatarMXC.String()), p.AvatarSet,
-		p.Encrypted, p.InSpace, p.FirstSlackID,
+		p.Encrypted, p.InSpace, p.OldestSlackMessageID, p.MoreToBackfill,
 	}
 
 }
@@ -195,12 +189,4 @@ func (p *Portal) Update(ctx context.Context) error {
 
 func (p *Portal) Delete(ctx context.Context) error {
 	return p.qh.Exec(ctx, deletePortalQuery, p.TeamID, p.ChannelID)
-}
-
-func (p *Portal) InsertUser(ctx context.Context, utk UserTeamMXIDKey) error {
-	return p.qh.Exec(ctx, insertUserTeamPortalQuery, utk.TeamID, utk.UserID, p.ChannelID, utk.UserMXID)
-}
-
-func (p *Portal) DeleteUser(ctx context.Context, utk UserTeamMXIDKey) error {
-	return p.qh.Exec(ctx, deleteUserTeamPortalQuery, utk.TeamID, utk.UserID, p.ChannelID)
 }

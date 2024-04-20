@@ -67,6 +67,13 @@ ALTER TABLE portal ALTER COLUMN in_space SET NOT NULL;
 ALTER TABLE portal RENAME CONSTRAINT portal_mxid_key TO portal_mxid_unique;
 ALTER TABLE portal ADD COLUMN receiver TEXT NOT NULL DEFAULT '';
 ALTER TABLE portal ALTER COLUMN receiver DROP DEFAULT;
+ALTER TABLE portal ADD COLUMN more_to_backfill BOOLEAN NOT NULL DEFAULT false;
+UPDATE portal SET more_to_backfill=true WHERE more_to_backfill=false AND EXISTS(
+    SELECT 1 FROM backfill_state bs
+    WHERE bs.team_id=portal.team_id
+      AND bs.channel_id=portal.channel_id
+      AND backfill_complete=false
+);
 
 ALTER TABLE portal DROP COLUMN first_event_id;
 ALTER TABLE portal DROP COLUMN next_batch_id;
@@ -152,6 +159,12 @@ ALTER TABLE user_team_portal ADD CONSTRAINT utp_portal_fkey FOREIGN KEY (team_id
 CREATE INDEX user_team_user_idx ON user_team (user_mxid);
 CREATE INDEX user_team_portal_user_idx ON user_team_portal (user_mxid);
 CREATE INDEX user_team_portal_portal_idx ON user_team_portal (team_id, channel_id);
+ALTER TABLE user_team_portal ADD COLUMN backfill_finished BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE user_team_portal ADD COLUMN backfill_priority INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE user_team_portal ADD COLUMN backfilled_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE user_team_portal ADD COLUMN backfill_dispatched_at BIGINT;
+ALTER TABLE user_team_portal ADD COLUMN backfill_completed_at BIGINT;
+ALTER TABLE user_team_portal ADD COLUMN backfill_cooldown_until BIGINT;
 
 ALTER TABLE emoji RENAME COLUMN slack_team TO team_id;
 ALTER TABLE emoji RENAME COLUMN slack_id TO emoji_id;

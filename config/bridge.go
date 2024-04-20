@@ -29,26 +29,20 @@ import (
 	"go.mau.fi/mautrix-slack/database"
 )
 
-type IncrementalConfig struct {
-	MessagesPerBatch int         `yaml:"messages_per_batch"`
-	PostBatchDelay   int         `yaml:"post_batch_delay"`
-	MaxMessages      MaxMessages `yaml:"max_messages"`
-}
-
 type MaxMessages struct {
 	Channel int `yaml:"channel"`
-	GroupDm int `yaml:"group_dm"`
-	Dm      int `yaml:"dm"`
+	GroupDM int `yaml:"group_dm"`
+	DM      int `yaml:"dm"`
 }
 
-func (mb *MaxMessages) GetMaxMessagesFor(t database.ChannelType) int {
+func (mb *MaxMessages) LimitFor(t database.ChannelType) int {
 	switch t {
 	case database.ChannelTypeChannel:
 		return mb.Channel
 	case database.ChannelTypeGroupDM:
-		return mb.GroupDm
+		return mb.GroupDM
 	case database.ChannelTypeDM:
-		return mb.Dm
+		return mb.DM
 	default:
 		return 0
 	}
@@ -95,15 +89,18 @@ type BridgeConfig struct {
 	Permissions bridgeconfig.PermissionConfig `yaml:"permissions"`
 
 	Backfill struct {
-		Enable bool `yaml:"enable"`
-
 		ConversationsCount int `yaml:"conversations_count"`
 
-		UnreadHoursThreshold int `yaml:"unread_hours_threshold"`
+		Enable               bool `yaml:"enable"`
+		UnreadHoursThreshold int  `yaml:"unread_hours_threshold"`
+		InitialMessages      int  `yaml:"initial_messages"`
+		MissedMessages       int  `yaml:"missed_messages"`
 
-		ImmediateMessages int `yaml:"immediate_messages"`
-
-		Incremental IncrementalConfig `yaml:"incremental"`
+		Incremental struct {
+			MessagesPerBatch int         `yaml:"messages_per_batch"`
+			PostBatchDelay   int         `yaml:"post_batch_delay"`
+			MaxMessages      MaxMessages `yaml:"max_messages"`
+		} `yaml:"incremental"`
 	} `yaml:"backfill"`
 
 	usernameTemplate       *template.Template `yaml:"-"`

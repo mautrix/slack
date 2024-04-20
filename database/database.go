@@ -50,7 +50,7 @@ func New(db *dbutil.Database) *Database {
 		Message:    &MessageQuery{dbutil.MakeQueryHelper(db, newMessage)},
 		Reaction:   &ReactionQuery{dbutil.MakeQueryHelper(db, newReaction)},
 		TeamPortal: &TeamPortalQuery{dbutil.MakeQueryHelper(db, newTeamPortal)},
-		Backfill:   &BackfillQuery{dbutil.MakeQueryHelper(db, newBackfill)},
+		Backfill:   &BackfillQuery{dbutil.MakeQueryHelper(db, newBackfillTask)},
 		Emoji:      &EmojiQuery{dbutil.MakeQueryHelper(db, newEmoji)},
 	}
 }
