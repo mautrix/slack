@@ -191,9 +191,10 @@ func (bc *BridgeConfig) FormatBotDisplayname(bot *slack.Bot) string {
 
 type ChannelNameParams struct {
 	*slack.Channel
-	Type       database.ChannelType
-	TeamName   string
-	TeamDomain string
+	Type         database.ChannelType
+	TeamName     string
+	TeamDomain   string
+	IsNoteToSelf bool
 }
 
 func (bc *BridgeConfig) FormatChannelName(params ChannelNameParams) string {

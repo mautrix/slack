@@ -25,6 +25,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
@@ -98,10 +100,15 @@ func (portal *Portal) MarkEncrypted() {
 	portal.Update(context.TODO())
 }
 
+func (portal *Portal) IsNoteToSelf() bool {
+	return portal.Type == database.ChannelTypeDM && portal.DMUserID != "" && portal.DMUserID == portal.Receiver
+}
+
 func (portal *Portal) shouldSetDMRoomMetadata() bool {
 	if portal.Type == database.ChannelTypeDM {
 		return portal.bridge.Config.Bridge.PrivateChatPortalMeta == "always" ||
-			(portal.IsEncrypted() && portal.bridge.Config.Bridge.PrivateChatPortalMeta != "never")
+			(portal.IsEncrypted() && portal.bridge.Config.Bridge.PrivateChatPortalMeta != "never") ||
+			portal.IsNoteToSelf()
 	} else if portal.Type == database.ChannelTypeGroupDM {
 		return portal.bridge.Config.Bridge.PrivateChatPortalMeta != "never"
 	} else {
@@ -1065,16 +1072,45 @@ func (portal *Portal) updateChannelType(channel *slack.Channel) bool {
 	return true
 }
 
+func compareStringFold(a, b string) int {
+	for {
+		if a == "" {
+			if b == "" {
+				return 0
+			}
+			return -1
+		} else if b == "" {
+			return 1
+		}
+		aRune, aSize := utf8.DecodeRuneInString(a)
+		bRune, bSize := utf8.DecodeRuneInString(b)
+
+		aLower := unicode.ToLower(aRune)
+		bLower := unicode.ToLower(bRune)
+		if aLower < bLower {
+			return -1
+		} else if bLower > aLower {
+			return 1
+		}
+		a = a[aSize:]
+		b = b[bSize:]
+	}
+}
+
 func (portal *Portal) GetPlainName(meta *slack.Channel) string {
 	switch portal.Type {
 	case database.ChannelTypeDM:
 		return portal.GetDMPuppet().Name
 	case database.ChannelTypeGroupDM:
-		puppetNames := make([]string, len(meta.Members))
-		for i, member := range meta.Members {
+		puppetNames := make([]string, 0, len(meta.Members))
+		for _, member := range meta.Members {
+			if member == portal.Receiver {
+				continue
+			}
 			puppet := portal.Team.GetPuppetByID(member)
-			puppetNames[i] = puppet.Name
+			puppetNames = append(puppetNames, puppet.Name)
 		}
+		slices.SortFunc(puppetNames, compareStringFold)
 		return strings.Join(puppetNames, ", ")
 	default:
 		return meta.Name
@@ -1107,10 +1143,11 @@ func (portal *Portal) UpdateName(ctx context.Context, meta *slack.Channel) bool 
 	plainNameChanged := portal.PlainName != meta.Name
 	portal.PlainName = meta.Name
 	formattedName := portal.bridge.Config.Bridge.FormatChannelName(config.ChannelNameParams{
-		Channel:    meta,
-		Type:       portal.Type,
-		TeamName:   portal.Team.Name,
-		TeamDomain: portal.Team.Domain,
+		Channel:      meta,
+		Type:         portal.Type,
+		TeamName:     portal.Team.Name,
+		TeamDomain:   portal.Team.Domain,
+		IsNoteToSelf: portal.IsNoteToSelf(),
 	})
 
 	return portal.UpdateNameDirect(ctx, formattedName) || plainNameChanged
