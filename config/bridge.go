@@ -77,7 +77,6 @@ type BridgeConfig struct {
 
 	PortalMessageBuffer int `yaml:"portal_message_buffer"`
 
-	SyncWithCustomPuppets bool `yaml:"sync_with_custom_puppets"`
 	SyncDirectChatList    bool `yaml:"sync_direct_chat_list"`
 	FederateRooms         bool `yaml:"federate_rooms"`
 	DefaultBridgeReceipts bool `yaml:"default_bridge_receipts"`

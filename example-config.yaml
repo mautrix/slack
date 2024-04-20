@@ -65,7 +65,6 @@ appservice:
 
     # Whether or not to receive ephemeral events via appservice transactions.
     # Requires MSC2409 support (i.e. Synapse 1.22+).
-    # You should disable bridge -> sync_with_custom_puppets when this is enabled.
     ephemeral_events: true
 
     # Should incoming events be handled asynchronously?
@@ -145,8 +144,6 @@ bridge:
     # If you want participants to always be accurately synced, set participant_sync_count to a high value and this to false.
     participant_sync_only_on_create: true
 
-    # Should the bridge sync with double puppeting to receive EDUs that aren't normally sent to appservices.
-    sync_with_custom_puppets: false
     # Should the bridge update the m.direct account data event when double puppeting is enabled.
     # Note that updating the m.direct event is not atomic (except with mautrix-asmux)
     # and is therefore prone to race conditions.
@@ -167,15 +164,6 @@ bridge:
     # manually.
     login_shared_secret_map:
         example.com: foobar
-
-    message_handling_timeout:
-        # Send an error message after this timeout, but keep waiting for the response until the deadline.
-        # This is counted from the origin_server_ts, so the warning time is consistent regardless of the source of delay.
-        # If the message is older than this when it reaches the bridge, the message won't be handled at all.
-        error_after: 10s
-        # Drop messages after this timeout. They may still go through if the message got sent to the servers.
-        # This is counted from the time the bridge starts handling the message.
-        deadline: 60s
 
     # The prefix for commands. Only required in non-management rooms.
     command_prefix: '!slack'
