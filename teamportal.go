@@ -369,8 +369,10 @@ func (team *Team) RemoveMXID(ctx context.Context) {
 // }
 
 func (team *Team) AddPortalToSpace(ctx context.Context, portal *Portal) bool {
-	if len(team.MXID) == 0 {
-		team.log.Error().Msg("Tried to add portal to team that has no matrix ID")
+	if team.MXID == "" || portal.MXID == "" {
+		if team.MXID == "" {
+			team.log.Error().Str("portal_channel_id", portal.ChannelID).Msg("Tried to add portal to team that has no matrix ID")
+		}
 		if portal.InSpace {
 			portal.InSpace = false
 			return true
@@ -380,6 +382,7 @@ func (team *Team) AddPortalToSpace(ctx context.Context, portal *Portal) bool {
 		return false
 	}
 
+	team.log.Info().Stringer("room_mxid", portal.MXID).Str("portal_channel_id", portal.ChannelID).Msg("Adding portal to space")
 	_, err := team.bridge.Bot.SendStateEvent(ctx, team.MXID, event.StateSpaceChild, portal.MXID.String(), &event.SpaceChildEventContent{
 		Via: []string{team.bridge.AS.HomeserverDomain},
 	})

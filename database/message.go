@@ -127,6 +127,9 @@ func (pid *PartID) Scan(i any) error {
 	if !ok {
 		return fmt.Errorf("invalid type %T for PartID.Scan", i)
 	}
+	if strVal == "" {
+		return nil
+	}
 	parts := strings.Split(strVal, ":")
 	if len(parts) != 3 {
 		return fmt.Errorf("invalid PartID format: %q", strVal)

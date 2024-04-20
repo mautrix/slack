@@ -276,7 +276,9 @@ func (ut *UserTeam) syncPortals(ctx context.Context) {
 				if channel.IsIM && (channel.Latest == nil || channel.Latest.SubType == "") {
 					continue
 				}
-				serverInfo[channel.ID] = &channel
+				// TODO remove this after switching to Go 1.22 with loop var fix
+				channelCopy := channel
+				serverInfo[channel.ID] = &channelCopy
 			}
 			if nextCursor == "" || len(channelsChunk) == 0 {
 				break
@@ -288,7 +290,8 @@ func (ut *UserTeam) syncPortals(ctx context.Context) {
 	existingPortals := ut.bridge.GetAllPortalsForUserTeam(ut.UserTeamMXIDKey)
 	for _, portal := range existingPortals {
 		if portal.MXID != "" {
-			portal.UpdateInfo(ctx, ut, serverInfo[portal.ChannelID], true)
+			// Don't actually use the fetched metadata, it doesn't have enough info
+			portal.UpdateInfo(ctx, ut, nil, true)
 			delete(serverInfo, portal.ChannelID)
 		}
 	}
@@ -306,7 +309,7 @@ func (ut *UserTeam) syncPortals(ctx context.Context) {
 		if portal == nil {
 			continue
 		}
-		err := portal.CreateMatrixRoom(ctx, ut, ch)
+		err := portal.CreateMatrixRoom(ctx, ut, nil)
 		if err != nil {
 			ut.Log.Err(err).Str("channel_id", ch.ID).Msg("Failed to create Matrix room for channel")
 		}

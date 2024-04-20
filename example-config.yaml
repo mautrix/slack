@@ -82,9 +82,10 @@ bridge:
     # {{.}} is replaced with the internal ID of the Slack user.
     username_template: slack_{{.}}
     # Displayname template for Slack users. Available variables:
-    #  .Name - The displayname of the user
+    #  .Name - The username of the user
     #  .ID - The internal ID of the user
     #  .IsBot - Whether the user is a bot
+    #  .Profile.DisplayName - The username or real name of the user (depending on settings)
     # Variables only available for users (not bots):
     #  .TeamID - The internal ID of the workspace the user is in
     #  .TZ - The timezone region of the user (e.g. Europe/London)
@@ -97,7 +98,7 @@ bridge:
     #  .Profile.Pronouns - The pronouns of the user
     #  .Profile.Email - The email address of the user
     #  .Profile.Phone - The formatted phone number of the user
-    displayname_template: '{{.Name}}{{if .IsBot}} (bot){{end}}'
+    displayname_template: '{{.Profile.DisplayName}}{{if .IsBot}} (bot){{end}}'
     # Channel name template for Slack channels (all types). Available variables:
     #  .Name - The name of the channel
     #  .TeamName - The name of the team the channel is in

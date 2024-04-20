@@ -1059,7 +1059,7 @@ func (portal *Portal) updateChannelType(channel *slack.Channel) bool {
 		portal.zlog.Debug().Stringer("channel_type", newType).Msg("Found channel type")
 		portal.Type = newType
 	} else if portal.Type != newType {
-		portal.zlog.Warn().Stringer("channel_type", newType).Msg("Channel type changed")
+		portal.zlog.Warn().Stringer("old_type", portal.Type).Stringer("channel_type", newType).Msg("Channel type changed")
 		portal.Type = newType
 	} else {
 		return false
@@ -1253,6 +1253,8 @@ func (portal *Portal) UpdateInfo(ctx context.Context, source *UserTeam, meta *sl
 		}
 	}
 
+	portal.zlog.Trace().Any("channel_info", meta).Msg("Syncing channel")
+
 	changed := portal.updateChannelType(meta)
 
 	if portal.DMUserID == "" && portal.IsPrivateChat() {
@@ -1323,6 +1325,7 @@ func (portal *Portal) handleSlackEvent(source *UserTeam, rawEvt any) {
 				log.Err(err).Msg("Failed to create portal room after join event")
 			}
 		} else {
+			log.Debug().Msg("Syncing Matrix room from joined channel event")
 			portal.UpdateInfo(ctx, source, ch, true)
 		}
 	case *slack.ChannelLeftEvent, *slack.GroupLeftEvent:

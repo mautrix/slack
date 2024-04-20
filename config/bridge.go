@@ -177,9 +177,14 @@ func (bc *BridgeConfig) FormatDisplayname(user *slack.User) string {
 
 func (bc *BridgeConfig) FormatBotDisplayname(bot *slack.Bot) string {
 	return bc.FormatDisplayname(&slack.User{
-		ID:    bot.ID,
-		Name:  bot.Name,
-		IsBot: true,
+		ID:      bot.ID,
+		Name:    bot.Name,
+		IsBot:   true,
+		Deleted: bot.Deleted,
+		Updated: bot.Updated,
+		Profile: slack.UserProfile{
+			DisplayName: bot.Name,
+		},
 	})
 }
 
