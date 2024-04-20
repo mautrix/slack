@@ -368,7 +368,7 @@ func (team *Team) RemoveMXID(ctx context.Context) {
 
 // }
 
-func (team *Team) AddPortal(ctx context.Context, portal *Portal) bool {
+func (team *Team) AddPortalToSpace(ctx context.Context, portal *Portal) bool {
 	if len(team.MXID) == 0 {
 		team.log.Error().Msg("Tried to add portal to team that has no matrix ID")
 		if portal.InSpace {

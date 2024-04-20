@@ -122,6 +122,10 @@ func (br *SlackBridge) loadPortal(ctx context.Context, dbPortal *database.Portal
 		if key == nil {
 			return nil
 		}
+		// Get team beforehand to ensure it exists in the database
+		if br.GetTeamByID(key.TeamID) == nil {
+			br.ZLog.Warn().Str("team_id", key.TeamID).Msg("Failed to get team by ID before inserting portal")
+		}
 
 		dbPortal = br.DB.Portal.New()
 		dbPortal.PortalKey = *key
@@ -147,6 +151,7 @@ func (br *SlackBridge) newPortal(dbPortal *database.Portal) *Portal {
 		bridge: br,
 
 		matrixMessages: make(chan portalMatrixMessage, br.Config.Bridge.PortalMessageBuffer),
+		slackMessages:  make(chan portalSlackMessage, br.Config.Bridge.PortalMessageBuffer),
 
 		Team: br.GetTeamByID(dbPortal.TeamID),
 	}
@@ -396,6 +401,7 @@ func (portal *Portal) CreateMatrixRoom(ctx context.Context, source *UserTeam, ch
 	portal.bridge.portalsLock.Unlock()
 	portal.updateLogger()
 	portal.zlog.Info().Msg("Matrix room created")
+	portal.Team.AddPortalToSpace(ctx, portal)
 
 	err = portal.Update(ctx)
 	if err != nil {
@@ -1275,6 +1281,7 @@ func (portal *Portal) UpdateInfo(ctx context.Context, source *UserTeam, meta *sl
 
 	changed = portal.UpdateName(ctx, meta) || changed
 	changed = portal.UpdateTopic(ctx, meta) || changed
+	changed = portal.Team.AddPortalToSpace(ctx, portal) || changed
 
 	if changed {
 		portal.UpdateBridgeInfo(ctx)

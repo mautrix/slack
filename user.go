@@ -47,10 +47,11 @@ type User struct {
 
 	teams map[string]*UserTeam
 
-	spaceCreateLock    sync.Mutex
-	PermissionLevel    bridgeconfig.PermissionLevel
-	DoublePuppetIntent *appservice.IntentAPI
-	CommandState       *commands.CommandState
+	spaceCreateLock      sync.Mutex
+	autoDoublePuppetLock sync.Mutex
+	PermissionLevel      bridgeconfig.PermissionLevel
+	DoublePuppetIntent   *appservice.IntentAPI
+	CommandState         *commands.CommandState
 }
 
 func (user *User) GetPermissionLevel() bridgeconfig.PermissionLevel {
@@ -402,7 +403,7 @@ func (user *User) GetSpaceRoom(ctx context.Context) (id.RoomID, error) {
 	if err != nil {
 		user.zlog.Err(err).Msg("Failed to save user after creating space room")
 	}
-	user.ensureInvited(ctx, nil, user.SpaceRoom, false)
+	user.ensureInvited(ctx, user.bridge.Bot, user.SpaceRoom, false)
 	return user.SpaceRoom, nil
 }
 

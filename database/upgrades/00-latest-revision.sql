@@ -18,7 +18,7 @@ CREATE TABLE team_portal (
 CREATE TABLE portal (
     team_id        TEXT    NOT NULL,
     channel_id     TEXT    NOT NULL,
-    receiver       TEXT    NOT NULL,
+    receiver       TEXT    NOT NULL, -- TODO add receiver to primary key
     mxid           TEXT,
 
     type           INT     NOT NULL DEFAULT 0,
@@ -37,7 +37,7 @@ CREATE TABLE portal (
 
     first_slack_id TEXT,
 
-    PRIMARY KEY (team_id, channel_id, receiver),
+    PRIMARY KEY (team_id, channel_id),
     CONSTRAINT portal_mxid_unique UNIQUE (mxid),
     CONSTRAINT portal_team_fkey FOREIGN KEY (team_id) REFERENCES team_portal (id)
         ON DELETE CASCADE ON UPDATE CASCADE

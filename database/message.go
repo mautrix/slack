@@ -75,15 +75,15 @@ const (
 )
 
 func (mq *MessageQuery) GetBySlackID(ctx context.Context, key PortalKey, slackID string) ([]*Message, error) {
-	return mq.QueryMany(ctx, getMessageBySlackIDQuery, key, slackID)
+	return mq.QueryMany(ctx, getMessageBySlackIDQuery, key.TeamID, key.ChannelID, slackID)
 }
 
 func (mq *MessageQuery) GetFirstPartBySlackID(ctx context.Context, key PortalKey, slackID string) (*Message, error) {
-	return mq.QueryOne(ctx, getFirstMessagePartBySlackIDQuery, key, slackID)
+	return mq.QueryOne(ctx, getFirstMessagePartBySlackIDQuery, key.TeamID, key.ChannelID, slackID)
 }
 
 func (mq *MessageQuery) GetLastPartBySlackID(ctx context.Context, key PortalKey, slackID string) (*Message, error) {
-	return mq.QueryOne(ctx, getLastMessagePartBySlackIDQuery, key, slackID)
+	return mq.QueryOne(ctx, getLastMessagePartBySlackIDQuery, key.TeamID, key.ChannelID, slackID)
 }
 
 func (mq *MessageQuery) GetByMXID(ctx context.Context, eventID id.EventID) (*Message, error) {
@@ -91,19 +91,19 @@ func (mq *MessageQuery) GetByMXID(ctx context.Context, eventID id.EventID) (*Mes
 }
 
 func (mq *MessageQuery) GetFirstInChannel(ctx context.Context, key PortalKey) (*Message, error) {
-	return mq.QueryOne(ctx, getFirstMessageInChannelQuery, key)
+	return mq.QueryOne(ctx, getFirstMessageInChannelQuery, key.TeamID, key.ChannelID)
 }
 
 func (mq *MessageQuery) GetLastInChannel(ctx context.Context, key PortalKey) (*Message, error) {
-	return mq.QueryOne(ctx, getLastMessageInChannelQuery, key)
+	return mq.QueryOne(ctx, getLastMessageInChannelQuery, key.TeamID, key.ChannelID)
 }
 
 func (mq *MessageQuery) GetFirstInThread(ctx context.Context, key PortalKey, threadID string) (*Message, error) {
-	return mq.QueryOne(ctx, getFirstMessageInThreadQuery, key, threadID)
+	return mq.QueryOne(ctx, getFirstMessageInThreadQuery, key.TeamID, key.ChannelID, threadID)
 }
 
 func (mq *MessageQuery) GetLastInThread(ctx context.Context, key PortalKey, threadID string) (*Message, error) {
-	return mq.QueryOne(ctx, getLastMessageInThreadQuery, key, threadID)
+	return mq.QueryOne(ctx, getLastMessageInThreadQuery, key.TeamID, key.ChannelID, threadID)
 }
 
 type PartType string
@@ -196,7 +196,7 @@ func (m *Message) SlackURLPath() string {
 }
 
 func (m *Message) sqlVariables() []any {
-	return []any{m.TeamID, m.ChannelID, m.MessageID, m.Part, dbutil.StrPtr(m.ThreadID), m.AuthorID, m.MXID}
+	return []any{m.TeamID, m.ChannelID, m.MessageID, m.Part, m.ThreadID, m.AuthorID, m.MXID}
 }
 
 func (m *Message) Insert(ctx context.Context) error {

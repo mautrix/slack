@@ -65,10 +65,18 @@ func (ut *UserTeam) GetRemoteName() string {
 }
 
 func (br *SlackBridge) loadUserTeam(ctx context.Context, dbUserTeam *database.UserTeam, key *database.UserTeamMXIDKey) *UserTeam {
+	var team *Team
+	var user *User
 	if dbUserTeam == nil {
 		if key == nil {
 			return nil
 		}
+		// Get team and user beforehand to ensure they exist in the database
+		team = br.unlockedGetTeamByID(key.TeamID, false)
+		if team == nil {
+			br.ZLog.Warn().Str("team_id", key.TeamID).Msg("Failed to get team by ID before inserting user team")
+		}
+		user = br.unlockedGetUserByMXID(key.UserMXID, false)
 		dbUserTeam = br.DB.UserTeam.New()
 		dbUserTeam.UserTeamMXIDKey = *key
 		err := dbUserTeam.Insert(ctx)
@@ -90,8 +98,12 @@ func (br *SlackBridge) loadUserTeam(ctx context.Context, dbUserTeam *database.Us
 	}
 	br.userTeamsByID[userTeam.UserTeamKey] = userTeam
 
-	userTeam.Team = br.unlockedGetTeamByID(dbUserTeam.TeamID, true)
-	userTeam.User = br.unlockedGetUserByMXID(dbUserTeam.UserMXID, true)
+	if team == nil || user == nil {
+		team = br.unlockedGetTeamByID(dbUserTeam.TeamID, false)
+		user = br.unlockedGetUserByMXID(dbUserTeam.UserMXID, false)
+	}
+	userTeam.Team = team
+	userTeam.User = user
 
 	existingUT, alreadyExists = userTeam.User.teams[userTeam.TeamID]
 	if alreadyExists {
@@ -176,11 +188,12 @@ type slackgoZerolog struct {
 }
 
 func (l slackgoZerolog) Output(i int, s string) error {
-	l.Debug().Msg(s)
+	l.Debug().Msg(strings.TrimSpace(s))
 	return nil
 }
 
 func (ut *UserTeam) Connect() {
+	ut.User.tryAutomaticDoublePuppeting()
 	evt := ut.Log.Trace()
 	hasTraceLog := evt.Enabled()
 	evt.Discard()
@@ -234,7 +247,7 @@ func (ut *UserTeam) Sync(ctx context.Context, meta *slack.TeamInfo) {
 		}
 	}
 	ut.AddToSpace(ctx)
-	ut.User.ensureInvited(ctx, nil, ut.Team.MXID, false)
+	ut.User.ensureInvited(ctx, ut.bridge.Bot, ut.Team.MXID, false)
 	ut.syncPortals(ctx)
 	ut.SyncEmojis(ctx)
 }

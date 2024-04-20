@@ -86,7 +86,7 @@ func (p *Puppet) Scan(row dbutil.Scannable) (*Puppet, error) {
 	var avatarURL sql.NullString
 	err := row.Scan(
 		&p.TeamID, &p.UserID,
-		&p.Name, &p.NameSet, &p.Avatar, &avatarURL, &p.IsBot,
+		&p.Name, &p.Avatar, &avatarURL, &p.IsBot,
 		&p.NameSet, &p.AvatarSet, &p.ContactInfoSet,
 	)
 	if err != nil {

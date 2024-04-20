@@ -72,6 +72,8 @@ func (user *User) CustomIntent() *appservice.IntentAPI {
 }
 
 func (user *User) tryAutomaticDoublePuppeting() {
+	user.autoDoublePuppetLock.Lock()
+	defer user.autoDoublePuppetLock.Unlock()
 	if !user.bridge.Config.CanAutoDoublePuppet(user.MXID) || user.DoublePuppetIntent != nil {
 		return
 	}

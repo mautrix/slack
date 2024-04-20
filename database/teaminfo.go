@@ -73,7 +73,7 @@ type TeamPortal struct {
 
 func (tp *TeamPortal) Scan(row dbutil.Scannable) (*TeamPortal, error) {
 	var mxid, avatarMXC sql.NullString
-	err := row.Scan(&tp.ID, &mxid, &tp.Domain, &tp.URL, &tp.NameSet, &tp.AvatarSet, &avatarMXC, &tp.NameSet, &tp.AvatarSet)
+	err := row.Scan(&tp.ID, &mxid, &tp.Domain, &tp.URL, &tp.Name, &tp.Avatar, &avatarMXC, &tp.NameSet, &tp.AvatarSet)
 	if err != nil {
 		return nil, err
 	}

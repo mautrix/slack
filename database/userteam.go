@@ -70,7 +70,7 @@ const (
 			token=$5,
 			cookie_token=$6,
 			in_space=$7
-		WHERE team_id=$1 AND user_id=$2
+		WHERE team_id=$1 AND user_id=$2 AND user_mxid=$3
 	`
 	deleteUserTeamQuery = `
 		DELETE FROM user_team WHERE team_id=$1 AND user_id=$2
