@@ -72,6 +72,7 @@ type BridgeConfig struct {
 	WorkspaceAvatarInRooms      bool `yaml:"workspace_avatar_in_rooms"`
 	ParticipantSyncCount        int  `yaml:"participant_sync_count"`
 	ParticipantSyncOnlyOnCreate bool `yaml:"participant_sync_only_on_create"`
+	CaptionInMessage            bool `yaml:"caption_in_message"`
 
 	ManagementRoomText bridgeconfig.ManagementRoomTexts `yaml:"management_room_text"`
 

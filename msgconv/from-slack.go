@@ -107,6 +107,10 @@ func (mc *MessageConverter) ToMatrix(ctx context.Context, msg *slack.Msg) *Conve
 		output.Parts = append(output.Parts, textPart)
 	}
 	for i, file := range msg.Files {
+		// mode=tombstone seems to mean the file was deleted
+		if file.Mode == "tombstone" {
+			continue
+		}
 		partID := database.PartID{
 			Type:  database.PartTypeFile,
 			Index: i,

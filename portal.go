@@ -27,15 +27,11 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/slack-go/slack"
 	"go.mau.fi/util/exslices"
 	"golang.org/x/exp/slices"
 	log "maunium.net/go/maulogger/v2"
 	"maunium.net/go/maulogger/v2/maulogadapt"
-
-	"github.com/slack-go/slack"
-	"go.mau.fi/mautrix-slack/msgconv"
-	"go.mau.fi/mautrix-slack/msgconv/emoji"
-
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/bridge"
@@ -45,6 +41,8 @@ import (
 
 	"go.mau.fi/mautrix-slack/config"
 	"go.mau.fi/mautrix-slack/database"
+	"go.mau.fi/mautrix-slack/msgconv"
+	"go.mau.fi/mautrix-slack/msgconv/emoji"
 )
 
 type portalMatrixMessage struct {
@@ -555,7 +553,7 @@ func (portal *Portal) handleMatrixMessages(msg portalMatrixMessage) {
 	})
 
 	switch msg.evt.Type {
-	case event.EventMessage:
+	case event.EventMessage, event.EventSticker:
 		portal.handleMatrixMessage(ctx, ut, msg.evt, &ms)
 	case event.EventRedaction:
 		portal.handleMatrixRedaction(ctx, ut, msg.evt)
@@ -570,7 +568,7 @@ func (portal *Portal) handleMatrixMessage(ctx context.Context, sender *UserTeam,
 	log := zerolog.Ctx(ctx)
 	ctx = context.WithValue(ctx, convertContextKeySource, sender)
 	start := time.Now()
-	sendOpts, fileUpload, threadID, err := portal.MsgConv.ToSlack(ctx, evt)
+	sendOpts, fileUpload, threadID, editTarget, err := portal.MsgConv.ToSlack(ctx, evt)
 	ms.timings.convert = time.Since(start)
 
 	start = time.Now()
@@ -611,7 +609,7 @@ func (portal *Portal) handleMatrixMessage(ctx context.Context, sender *UserTeam,
 	}
 	ms.timings.totalSend = time.Since(start)
 	go ms.sendMessageMetrics(ctx, evt, err, "Error sending", true)
-	if timestamp != "" {
+	if timestamp != "" && editTarget == nil {
 		dbMsg := portal.bridge.DB.Message.New()
 		dbMsg.PortalKey = portal.PortalKey
 		dbMsg.MessageID = timestamp
@@ -1435,6 +1433,9 @@ func (portal *Portal) HandleSlackMessage(ctx context.Context, source *UserTeam, 
 	if slackAuthor == "" {
 		slackAuthor = msg.BotID
 	}
+	if slackAuthor == "" && msg.SubMessage != nil {
+		slackAuthor = msg.SubMessage.User
+	}
 	var sender *Puppet
 	if slackAuthor != "" {
 		sender = portal.Team.GetPuppetByID(slackAuthor)
@@ -1512,10 +1513,11 @@ func (portal *Portal) HandleSlackEditMessage(ctx context.Context, source *UserTe
 	ts := parseSlackTimestamp(msg.Timestamp)
 	ctx = context.WithValue(ctx, convertContextKeySource, source)
 	ctx = context.WithValue(ctx, convertContextKeyIntent, intent)
+	// TODO avoid reuploading files when editing messages
 	converted := portal.MsgConv.ToMatrix(ctx, msg)
 	// Don't merge caption if there's more than one part in the database
 	// (because it means the original didn't have a merged caption)
-	if len(editTarget) == 1 {
+	if len(editTarget) == 1 && portal.bridge.Config.Bridge.CaptionInMessage {
 		converted.MergeCaption()
 	}
 
@@ -1610,6 +1612,9 @@ func (portal *Portal) HandleSlackNormalMessage(ctx context.Context, source *User
 	ctx = context.WithValue(ctx, convertContextKeySource, source)
 	ctx = context.WithValue(ctx, convertContextKeyIntent, intent)
 	converted := portal.MsgConv.ToMatrix(ctx, msg)
+	if portal.bridge.Config.Bridge.CaptionInMessage {
+		converted.MergeCaption()
+	}
 
 	var lastEventID id.EventID
 	for _, part := range converted.Parts {
@@ -1673,9 +1678,7 @@ func (portal *Portal) HandleSlackReaction(ctx context.Context, source *UserTeam,
 		return
 	}
 
-	slackReaction := strings.Trim(msg.Reaction, ":")
-
-	key := source.GetEmoji(ctx, slackReaction)
+	key := source.GetEmoji(ctx, msg.Reaction)
 
 	var content event.ReactionEventContent
 	content.RelatesTo = event.RelatesTo{
@@ -1686,12 +1689,12 @@ func (portal *Portal) HandleSlackReaction(ctx context.Context, source *UserTeam,
 	extraContent := map[string]any{}
 	if strings.HasPrefix(key, "mxc://") {
 		extraContent["fi.mau.slack.reaction"] = map[string]any{
-			"name": slackReaction,
+			"name": msg.Reaction,
 			"mxc":  key,
 		}
-		extraContent["com.beeper.reaction.shortcode"] = msg.Reaction
+		extraContent["com.beeper.reaction.shortcode"] = fmt.Sprintf(":%s:", msg.Reaction)
 		if !portal.bridge.Config.Bridge.CustomEmojiReactions {
-			content.RelatesTo.Key = slackReaction
+			content.RelatesTo.Key = msg.Reaction
 		}
 	}
 

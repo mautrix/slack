@@ -38,6 +38,7 @@ func DoUpgrade(helper *up.Helper) {
 	helper.Copy(up.Bool, "bridge", "workspace_avatar_in_rooms")
 	helper.Copy(up.Int, "bridge", "participant_sync_count")
 	helper.Copy(up.Bool, "bridge", "participant_sync_only_on_create")
+	helper.Copy(up.Bool, "bridge", "caption_in_message")
 	helper.Copy(up.Bool, "bridge", "sync_direct_chat_list")
 	helper.Copy(up.Bool, "bridge", "federate_rooms")
 	if legacyPrivateChatPortalMeta, ok := helper.Get(up.Bool, "bridge", "private_chat_portal_meta"); ok {

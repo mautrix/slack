@@ -19,12 +19,13 @@ package main
 import (
 	"context"
 	_ "embed"
+	"fmt"
 	"strings"
 
 	"github.com/rs/zerolog"
+	"github.com/slack-go/slack"
 	"maunium.net/go/mautrix/id"
 
-	"github.com/slack-go/slack"
 	"go.mau.fi/mautrix-slack/database"
 	"go.mau.fi/mautrix-slack/msgconv/emoji"
 )
@@ -176,6 +177,7 @@ func (ut *UserTeam) syncEmojis(ctx context.Context, onlyIfCountMismatch bool) er
 		dbEmoji := ut.bridge.DB.Emoji.New()
 		dbEmoji.EmojiID = key
 		dbEmoji.TeamID = ut.TeamID
+		dbEmoji.Value = fmt.Sprintf("alias:%s", alias)
 		if uri, ok := uploaded[alias]; ok {
 			dbEmoji.Alias = alias
 			dbEmoji.ImageMXC = uri

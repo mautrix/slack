@@ -51,7 +51,7 @@ const (
 )
 
 func (rq *ReactionQuery) GetBySlackID(ctx context.Context, key PortalKey, messageID, authorID, emojiID string) (*Reaction, error) {
-	return rq.QueryOne(ctx, getReactionBySlackIDQuery, key.ChannelID, key.TeamID, messageID, authorID, emojiID)
+	return rq.QueryOne(ctx, getReactionBySlackIDQuery, key.TeamID, key.ChannelID, messageID, authorID, emojiID)
 }
 
 func (rq *ReactionQuery) GetByMXID(ctx context.Context, eventID id.EventID) (*Reaction, error) {

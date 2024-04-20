@@ -67,7 +67,7 @@ func (eq *EmojiQuery) GetBySlackID(ctx context.Context, teamID, emojiID string) 
 }
 
 func (eq *EmojiQuery) GetByMXC(ctx context.Context, mxc id.ContentURI) (*Emoji, error) {
-	return eq.QueryOne(ctx, getEmojiByMXCQuery, mxc)
+	return eq.QueryOne(ctx, getEmojiByMXCQuery, &mxc)
 }
 
 func buildSQLiteEmojiDeleteQuery(baseQuery string, teamID string, emojiIDs ...string) (string, []any) {

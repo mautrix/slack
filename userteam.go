@@ -426,10 +426,7 @@ func (ut *UserTeam) handleSlackEvent(ctx context.Context, rawEvt any) {
 	case *slack.InvalidAuthEvent:
 		ut.Logout(context.TODO(), status.BridgeState{StateEvent: status.StateBadCredentials, Error: "slack-invalid-auth"})
 		return
-	case *slack.LatencyReport:
-		ut.Log.Trace().Dur("latency", evt.Value).Msg("Latency report")
 	case *slack.MessageEvent:
-		ut.Log.Trace().Any("event_content", evt).Msg("Received Slack message event")
 		ut.pushPortalEvent(evt.Channel, evt)
 	case *slack.ReactionAddedEvent:
 		ut.pushPortalEvent(evt.Item.Channel, evt)
@@ -466,7 +463,7 @@ func (ut *UserTeam) handleSlackEvent(ctx context.Context, rawEvt any) {
 			Error:      status.BridgeStateErrorCode(fmt.Sprintf("slack-rtm-error-%d", evt.Code)),
 			Message:    fmt.Sprintf("%d: %s", evt.Code, evt.Msg),
 		})
-	case *slack.FileSharedEvent, *slack.FilePublicEvent, *slack.FilePrivateEvent, *slack.FileCreatedEvent, *slack.FileChangeEvent, *slack.FileDeletedEvent, *slack.DesktopNotificationEvent:
+	case *slack.FileSharedEvent, *slack.FilePublicEvent, *slack.FilePrivateEvent, *slack.FileCreatedEvent, *slack.FileChangeEvent, *slack.FileDeletedEvent, *slack.DesktopNotificationEvent, *slack.ReconnectUrlEvent, *slack.LatencyReport:
 		// ignored intentionally, these are duplicates or do not contain useful information
 	default:
 		ut.Log.Warn().Any("event_data", evt).Msg("Unrecognized Slack event type")

@@ -30,6 +30,8 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"github.com/slack-go/slack"
+
+	"go.mau.fi/mautrix-slack/database"
 )
 
 var (
@@ -41,11 +43,16 @@ var (
 	ErrThreadRootNotFound          = errors.New("thread root message not found")
 )
 
-func (mc *MessageConverter) ToSlack(ctx context.Context, evt *event.Event) (sendReq slack.MsgOption, fileUpload *slack.FileUploadParameters, threadRootID string, err error) {
+func (mc *MessageConverter) ToSlack(ctx context.Context, evt *event.Event) (sendReq slack.MsgOption, fileUpload *slack.FileUploadParameters, threadRootID string, editTarget *database.Message, err error) {
 	log := zerolog.Ctx(ctx)
 	content, ok := evt.Content.Parsed.(*event.MessageEventContent)
 	if !ok {
-		return nil, nil, "", ErrUnexpectedParsedContentType
+		return nil, nil, "", nil, ErrUnexpectedParsedContentType
+	}
+
+	if evt.Type == event.EventSticker {
+		// Slack doesn't have stickers, just bridge stickers as images
+		content.MsgType = event.MsgImage
 	}
 
 	var editTargetID string
@@ -53,11 +60,12 @@ func (mc *MessageConverter) ToSlack(ctx context.Context, evt *event.Event) (send
 		existing, err := mc.GetMessageInfo(ctx, replaceEventID)
 		if err != nil {
 			log.Err(err).Msg("Failed to get edit target message")
-			return nil, nil, "", fmt.Errorf("failed to get edit target message: %w", err)
+			return nil, nil, "", nil, fmt.Errorf("failed to get edit target message: %w", err)
 		} else if existing == nil {
-			return nil, nil, "", ErrEditTargetNotFound
+			return nil, nil, "", nil, ErrEditTargetNotFound
 		} else {
 			editTargetID = existing.MessageID
+			editTarget = existing
 			if content.NewContent != nil {
 				content = content.NewContent
 			}
@@ -71,9 +79,9 @@ func (mc *MessageConverter) ToSlack(ctx context.Context, evt *event.Event) (send
 		if threadMXID != "" {
 			rootMessage, err := mc.GetMessageInfo(ctx, threadMXID)
 			if err != nil {
-				return nil, nil, "", fmt.Errorf("failed to get thread root message: %w", err)
+				return nil, nil, "", nil, fmt.Errorf("failed to get thread root message: %w", err)
 			} else if rootMessage == nil {
-				return nil, nil, "", ErrThreadRootNotFound
+				return nil, nil, "", nil, ErrThreadRootNotFound
 			} else if rootMessage.ThreadID != "" {
 				threadRootID = rootMessage.ThreadID
 			} else {
@@ -85,7 +93,7 @@ func (mc *MessageConverter) ToSlack(ctx context.Context, evt *event.Event) (send
 	if editTargetID != "" && isMediaMsgtype(content.MsgType) {
 		content.MsgType = event.MsgText
 		if content.FileName == "" || content.FileName == content.Body {
-			return nil, nil, "", ErrMediaOnlyEditCaption
+			return nil, nil, "", editTarget, ErrMediaOnlyEditCaption
 		}
 	}
 
@@ -107,12 +115,12 @@ func (mc *MessageConverter) ToSlack(ctx context.Context, evt *event.Event) (send
 		if content.MsgType == event.MsgEmote {
 			options = append(options, slack.MsgOptionMeMessage())
 		}
-		return slack.MsgOptionCompose(options...), nil, threadRootID, nil
+		return slack.MsgOptionCompose(options...), nil, threadRootID, editTarget, nil
 	case event.MsgAudio, event.MsgFile, event.MsgImage, event.MsgVideo:
 		data, err := mc.downloadMatrixAttachment(ctx, content)
 		if err != nil {
 			log.Err(err).Msg("Failed to download Matrix attachment")
-			return nil, nil, "", ErrMediaDownloadFailed
+			return nil, nil, "", editTarget, ErrMediaDownloadFailed
 		}
 
 		var filename, caption string
@@ -132,9 +140,9 @@ func (mc *MessageConverter) ToSlack(ctx context.Context, evt *event.Event) (send
 		if caption != "" {
 			fileUpload.InitialComment = caption
 		}
-		return nil, fileUpload, threadRootID, nil
+		return nil, fileUpload, threadRootID, editTarget, nil
 	default:
-		return nil, nil, "", ErrUnknownMsgType
+		return nil, nil, "", editTarget, ErrUnknownMsgType
 	}
 }
 
