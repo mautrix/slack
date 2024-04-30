@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -150,7 +151,7 @@ func (portal *Portal) sendDeliveryReceipt(eventID id.EventID) {
 	}
 }
 
-func (portal *Portal) sendMessageMetrics(evt *event.Event, err error, part string, ms *metricSender) {
+func (portal *Portal) sendMessageMetrics(user *User, evt *event.Event, err error, part string, ms *metricSender) {
 	var msgType string
 	switch evt.Type {
 	case event.EventMessage:
@@ -176,6 +177,17 @@ func (portal *Portal) sendMessageMetrics(evt *event.Event, err error, part strin
 			level = log.LevelDebug
 		}
 		portal.log.Logfln(level, "%s %s %s from %s: %v", part, msgType, evtDescription, evt.Sender, err)
+
+		// Detect two_factor_setup_required errors and also set the user's
+		// state to BAD_CREDENTIALS.
+		if strings.Contains(err.Error(), "two_factor_setup_required") {
+			user.BridgeStates[portal.Key.TeamID].Send(status.BridgeState{
+				StateEvent: status.StateBadCredentials,
+				Error:      status.BridgeStateErrorCode(err.Error()),
+				Message:    "Two-factor setup is required",
+			})
+		}
+
 		reason, statusCode, isCertain, sendNotice, _ := errorToStatusReason(err)
 		checkpointStatus := status.ReasonToCheckpointStatus(reason, statusCode)
 		portal.bridge.SendMessageCheckpoint(evt, status.MsgStepRemote, err, checkpointStatus, ms.getRetryNum())
@@ -237,6 +249,7 @@ func (mt *messageTimings) String() string {
 
 type metricSender struct {
 	portal         *Portal
+	sender         *User
 	previousNotice id.EventID
 	lock           sync.Mutex
 	completed      bool
@@ -279,7 +292,7 @@ func (ms *metricSender) sendMessageMetrics(evt *event.Event, err error, part str
 	if !completed && ms.completed {
 		return
 	}
-	ms.portal.sendMessageMetrics(evt, err, part, ms)
+	ms.portal.sendMessageMetrics(ms.sender, evt, err, part, ms)
 	ms.retryNum++
 	ms.completed = completed
 }

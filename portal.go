@@ -586,7 +586,7 @@ func (portal *Portal) handleMatrixMessages(msg portalMatrixMessage) {
 		portalQueue:  time.Since(msg.receivedAt),
 		totalReceive: time.Since(evtTS),
 	}
-	ms := metricSender{portal: portal, timings: &timings}
+	ms := metricSender{portal: portal, sender: msg.user, timings: &timings}
 
 	switch msg.evt.Type {
 	case event.EventMessage:
@@ -906,7 +906,7 @@ func (portal *Portal) handleMatrixRedaction(user *User, evt *event.Event) {
 
 	userTeam := user.GetUserTeam(portal.Key.TeamID)
 	if userTeam == nil {
-		go portal.sendMessageMetrics(evt, errUserNotLoggedIn, "Ignoring", nil)
+		go portal.sendMessageMetrics(user, evt, errUserNotLoggedIn, "Ignoring", nil)
 		return
 	}
 	portal.log.Debugfln("Received redaction %s from %s", evt.ID, evt.Sender)
@@ -921,9 +921,9 @@ func (portal *Portal) handleMatrixRedaction(user *User, evt *event.Event) {
 			} else {
 				message.Delete()
 			}
-			go portal.sendMessageMetrics(evt, err, "Error sending", nil)
+			go portal.sendMessageMetrics(user, evt, err, "Error sending", nil)
 		} else {
-			go portal.sendMessageMetrics(evt, errTargetNotFound, "Error sending", nil)
+			go portal.sendMessageMetrics(user, evt, errTargetNotFound, "Error sending", nil)
 		}
 		return
 	}
@@ -945,15 +945,15 @@ func (portal *Portal) handleMatrixRedaction(user *User, evt *event.Event) {
 			} else {
 				reaction.Delete()
 			}
-			go portal.sendMessageMetrics(evt, err, "Error sending", nil)
+			go portal.sendMessageMetrics(user, evt, err, "Error sending", nil)
 		} else {
-			go portal.sendMessageMetrics(evt, errUnknownEmoji, "Error sending", nil)
+			go portal.sendMessageMetrics(user, evt, errUnknownEmoji, "Error sending", nil)
 		}
 		return
 	}
 
 	portal.log.Warnfln("Failed to redact %s@%s: no event found", portal.Key, evt.Redacts)
-	go portal.sendMessageMetrics(evt, errReactionTargetNotFound, "Error sending", nil)
+	go portal.sendMessageMetrics(user, evt, errReactionTargetNotFound, "Error sending", nil)
 }
 
 func typingDiff(prev, new []id.UserID) (started []id.UserID) {
