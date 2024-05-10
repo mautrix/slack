@@ -75,7 +75,7 @@ func (u *User) SyncTeams() {
 	}
 
 	// Delete not logged in teams from the database.
-	query := "DELETE FROM user_team WHERE mxid=$1 AND token=NULL"
+	query := "DELETE FROM user_team WHERE mxid=$1 AND token IS NULL"
 
 	_, err := u.db.Exec(query, u.MXID)
 	if err != nil {
