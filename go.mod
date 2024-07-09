@@ -7,13 +7,13 @@ require (
 	github.com/gorilla/mux v1.8.0
 	github.com/lib/pq v1.10.9
 	github.com/mattn/go-sqlite3 v1.14.22
-	github.com/rs/zerolog v1.32.0
+	github.com/rs/zerolog v1.33.0
 	github.com/slack-go/slack v0.10.3
-	github.com/yuin/goldmark v1.7.1
-	go.mau.fi/util v0.4.2-0.20240318211948-d27d5a4cda9e
-	golang.org/x/exp v0.0.0-20240314144324-c7f7c6466f7f
+	github.com/yuin/goldmark v1.7.4
+	go.mau.fi/util v0.5.1-0.20240708204011-043c35cda49c
+	golang.org/x/exp v0.0.0-20240707233637-46b078467d37
 	maunium.net/go/maulogger/v2 v2.4.1
-	maunium.net/go/mautrix v0.18.1-0.20240413105730-423d32ddf6d6
+	maunium.net/go/mautrix v0.19.0-beta.1.0.20240706124659-b4057a26c3ed
 )
 
 require (
@@ -27,9 +27,9 @@ require (
 	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	go.mau.fi/zeroconfig v0.1.2 // indirect
-	golang.org/x/crypto v0.21.0 // indirect
-	golang.org/x/net v0.22.0 // indirect
-	golang.org/x/sys v0.18.0 // indirect
+	golang.org/x/crypto v0.24.0 // indirect
+	golang.org/x/net v0.26.0 // indirect
+	golang.org/x/sys v0.21.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	maunium.net/go/mauflag v1.0.0 // indirect

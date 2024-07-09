@@ -224,7 +224,7 @@ func (team *Team) CreateMatrixRoom(ctx context.Context) error {
 		initialState = append(initialState, &event.Event{
 			Type: event.StateRoomAvatar,
 			Content: event.Content{Parsed: &event.RoomAvatarEventContent{
-				URL: team.AvatarMXC,
+				URL: team.AvatarMXC.CUString(),
 			}},
 		})
 	}

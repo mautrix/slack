@@ -352,7 +352,7 @@ func (portal *Portal) CreateMatrixRoom(ctx context.Context, source *UserTeam, ch
 		avatarSet = true
 		initialState = append(initialState, &event.Event{
 			Type:    event.StateRoomAvatar,
-			Content: event.Content{Parsed: &event.RoomAvatarEventContent{URL: portal.AvatarMXC}},
+			Content: event.Content{Parsed: &event.RoomAvatarEventContent{URL: portal.AvatarMXC.CUString()}},
 		})
 	}
 
