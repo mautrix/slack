@@ -27,7 +27,7 @@ import (
 
 type SlackConnector struct {
 	br      *bridgev2.Bridge
-	Config  *Config
+	Config  Config
 	DB      *slackdb.SlackDB
 	MsgConv *msgconv.MessageConverter
 }
@@ -38,7 +38,6 @@ var (
 )
 
 func (s *SlackConnector) Init(bridge *bridgev2.Bridge) {
-	s.Config = &Config{}
 	s.br = bridge
 	s.DB = slackdb.New(bridge.DB.Database, bridge.Log.With().Str("db_section", "slack").Logger())
 	s.MsgConv = msgconv.New(bridge)

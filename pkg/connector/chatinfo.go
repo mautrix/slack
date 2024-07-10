@@ -67,6 +67,7 @@ func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, fetch
 		return nil, err
 	}
 	var members bridgev2.ChatMemberList
+	var avatar *bridgev2.Avatar
 	switch {
 	case info.IsMpIM:
 		members.IsFull = true
@@ -97,6 +98,16 @@ func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, fetch
 			members.Members = append(members.Members, bridgev2.ChatMember{EventSender: s.makeEventSender(s.UserID)})
 		}
 		members.IsFull = len(members.Members) >= info.NumMembers
+	default:
+		return nil, fmt.Errorf("unrecognized channel type")
+	}
+	if s.Main.Config.WorkspaceAvatarInRooms && (info.Name != "" || info.IsMpIM) {
+		avatar = &bridgev2.Avatar{
+			ID:     s.TeamPortal.AvatarID,
+			Remove: s.TeamPortal.AvatarID == "",
+			MXC:    s.TeamPortal.AvatarMXC,
+			Hash:   s.TeamPortal.AvatarHash,
+		}
 	}
 	members.TotalMemberCount = info.NumMembers
 	name := s.Main.Config.FormatChannelName(&ChannelNameParams{
@@ -108,6 +119,7 @@ func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, fetch
 	return &bridgev2.ChatInfo{
 		Name:         ptr.Ptr(name),
 		Topic:        ptr.Ptr(info.Topic.Value),
+		Avatar:       avatar,
 		Members:      &members,
 		IsDirectChat: ptr.Ptr(info.IsIM),
 		IsSpace:      ptr.Ptr(false),
@@ -173,6 +185,9 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string) (*bridge
 	if info != nil {
 		name = ptr.Ptr(s.Main.Config.FormatDisplayname(info))
 		avatarURL = info.Profile.ImageOriginal
+		if avatarURL == "" && info.Profile.Image512 != "" {
+			avatarURL = info.Profile.Image512
+		}
 		isBot = isBot || info.IsBot || info.IsAppUser
 	} else if botInfo != nil {
 		name = ptr.Ptr(s.Main.Config.FormatBotDisplayname(botInfo))
@@ -189,6 +204,6 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string) (*bridge
 }
 
 func (s *SlackClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*bridgev2.UserInfo, error) {
-	userID, _ := slackid.ParseUserID(ghost.ID)
+	_, userID := slackid.ParseUserID(ghost.ID)
 	return s.fetchUserInfo(ctx, userID)
 }

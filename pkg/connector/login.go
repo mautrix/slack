@@ -113,12 +113,10 @@ func (s *SlackTokenLogin) SubmitCookies(ctx context.Context, input map[string]st
 		return nil, err
 	}
 	sc := ul.Client.(*SlackClient)
-	sc.BootResp = info
-	err = sc.syncTeamPortal(ctx)
+	err = sc.connect(ctx, info)
 	if err != nil {
-		return nil, fmt.Errorf("failed to sync team portal: %w", err)
+		return nil, fmt.Errorf("failed to connect after login: %w", err)
 	}
-	go sc.RTM.ManageConnection()
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeComplete,
 		StepID:       "fi.mau.slack.login.complete",

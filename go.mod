@@ -1,6 +1,6 @@
 module go.mau.fi/mautrix-slack
 
-go 1.21
+go 1.22
 
 require (
 	github.com/rs/zerolog v1.33.0
@@ -8,7 +8,7 @@ require (
 	github.com/yuin/goldmark v1.7.4
 	go.mau.fi/util v0.5.1-0.20240708204011-043c35cda49c
 	gopkg.in/yaml.v3 v3.0.1
-	maunium.net/go/mautrix v0.19.0-beta.1.0.20240710101752-e9097ad3a2c9
+	maunium.net/go/mautrix v0.19.0-beta.1.0.20240710111541-2675993fc233
 )
 
 require (

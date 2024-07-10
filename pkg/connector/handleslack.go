@@ -102,11 +102,15 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 	var meta SlackEventMeta
 	var metaErr error
 	var wrapped bridgev2.RemoteEvent
+	meta.LogContext = func(c zerolog.Context) zerolog.Context { return c }
 	switch evt := rawEvt.(type) {
 	case *slack.MessageEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, evt.User, evt.Timestamp)
 		meta.Type = bridgev2.RemoteEventMessage
 		meta.CreatePortal = true
+		meta.LogContext = func(c zerolog.Context) zerolog.Context {
+			return c.Str("message_ts", evt.Timestamp).Str("message_sender", evt.User)
+		}
 		wrapped = &SlackMessage{
 			SlackEventMeta: &meta,
 			Data:           evt,
@@ -181,15 +185,19 @@ func (s *SlackClient) wrapReaction(ctx context.Context, meta *SlackEventMeta, re
 	} else {
 		meta.Type = bridgev2.RemoteEventReactionRemove
 	}
+	shortcode := fmt.Sprintf(":%s:", reaction)
 	slackReactionInfo := map[string]any{
 		"name": reaction,
 	}
 	emoji, isImage := s.GetEmoji(ctx, reaction)
 	if isImage {
 		slackReactionInfo["mxc"] = emoji
+		if !s.Main.Config.CustomEmojiReactions {
+			emoji = shortcode
+		}
 	}
 	extraContent := map[string]any{
-		"com.beeper.reaction.shortcode": fmt.Sprintf(":%s:", reaction),
+		"com.beeper.reaction.shortcode": shortcode,
 		"fi.mau.slack.reaction":         slackReactionInfo,
 	}
 	return &SlackReaction{

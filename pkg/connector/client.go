@@ -17,8 +17,10 @@
 package connector
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -75,6 +77,7 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 	if err != nil {
 		return fmt.Errorf("failed to get team portal: %w", err)
 	}
+	login.Client = sc
 	return nil
 }
 
@@ -98,8 +101,7 @@ func (s *SlackClient) GetClient() *slack.Client {
 }
 
 func (s *SlackClient) Connect(ctx context.Context) error {
-	var err error
-	s.BootResp, err = s.Client.ClientBootContext(ctx)
+	bootResp, err := s.Client.ClientBootContext(ctx)
 	if err != nil {
 		if err.Error() == "user_removed_from_team" || err.Error() == "invalid_auth" {
 			s.invalidateSession(ctx, status.BridgeState{
@@ -115,11 +117,19 @@ func (s *SlackClient) Connect(ctx context.Context) error {
 		}
 		return err
 	}
-	err = s.syncTeamPortal(ctx)
+	return s.connect(ctx, bootResp)
+}
+
+func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientBootResponse) error {
+	s.BootResp = bootResp
+	err := s.syncTeamPortal(ctx)
 	if err != nil {
 		return err
 	}
+	go s.consumeEvents()
 	go s.RTM.ManageConnection()
+	go s.SyncEmojis(ctx)
+	go s.SyncChannels(ctx)
 	return nil
 }
 
@@ -136,7 +146,93 @@ func (s *SlackClient) syncTeamPortal(ctx context.Context) error {
 	return nil
 }
 
-func (s *SlackClient) consumeEvents(ctx context.Context) {
+func (s *SlackClient) SyncChannels(ctx context.Context) {
+	log := zerolog.Ctx(ctx)
+	serverInfo := make(map[string]*slack.Channel)
+	token, _ := s.UserLogin.Metadata.Extra["token"].(string)
+	if !strings.HasPrefix(token, "xoxs") {
+		totalLimit := s.Main.Config.Backfill.ConversationCount
+		var cursor string
+		log.Debug().Int("total_limit", totalLimit).Msg("Fetching conversation list for sync")
+		for totalLimit > 0 {
+			reqLimit := totalLimit
+			if totalLimit > 200 {
+				reqLimit = 100
+			}
+			channelsChunk, nextCursor, err := s.Client.GetConversationsForUserContext(ctx, &slack.GetConversationsForUserParameters{
+				Types:  []string{"public_channel", "private_channel", "mpim", "im"},
+				Limit:  reqLimit,
+				Cursor: cursor,
+			})
+			if err != nil {
+				log.Err(err).Msg("Failed to fetch conversations for sync")
+				return
+			}
+			log.Debug().Int("chunk_size", len(channelsChunk)).Msg("Fetched chunk of conversations")
+			for _, channel := range channelsChunk {
+				// Skip non-"open" DMs
+				if channel.IsIM && (channel.Latest == nil || channel.Latest.SubType == "") {
+					continue
+				}
+				serverInfo[channel.ID] = &channel
+			}
+			if nextCursor == "" || len(channelsChunk) == 0 {
+				break
+			}
+			totalLimit -= len(channelsChunk)
+			cursor = nextCursor
+		}
+	}
+	userPortals, err := s.UserLogin.Bridge.DB.UserPortal.GetAllForLogin(ctx, s.UserLogin.UserLogin)
+	if err != nil {
+		log.Err(err).Msg("Failed to fetch existing portals for sync")
+		return
+	}
+	for _, userPortal := range userPortals {
+		_, channelID := slackid.ParsePortalID(userPortal.Portal.ID)
+		if channelID == "" {
+			continue
+		}
+		portal, err := s.UserLogin.Bridge.GetExistingPortalByID(ctx, userPortal.Portal)
+		if err != nil {
+			log.Err(err).Stringer("portal_key", userPortal.Portal).Msg("Failed to get existing portal for sync")
+			continue
+		} else {
+			if portal.MXID != "" {
+				// Refetch metadata because the list output doesn't have enough info
+				info, err := s.GetChatInfo(ctx, portal)
+				if err != nil {
+					log.Err(err).Stringer("portal_key", portal.PortalKey).Msg("Failed to fetch chat info for existing portal")
+				} else {
+					portal.UpdateInfo(ctx, info, s.UserLogin, nil, time.Time{})
+				}
+				delete(serverInfo, channelID)
+			}
+		}
+	}
+	remainingChannels := make([]*slack.Channel, len(serverInfo))
+	i := 0
+	for _, channel := range serverInfo {
+		remainingChannels[i] = channel
+		i++
+	}
+	slices.SortFunc(remainingChannels, func(a, b *slack.Channel) int {
+		return cmp.Compare(a.LastRead, b.LastRead)
+	})
+	for _, ch := range remainingChannels {
+		portal, err := s.UserLogin.Bridge.GetPortalByID(ctx, s.makePortalKey(ch))
+		if err != nil {
+			log.Err(err).Str("channel_id", ch.ID).Msg("Failed to get portal for channel")
+			continue
+		}
+		err = portal.CreateMatrixRoom(ctx, s.UserLogin, nil)
+		if err != nil {
+			log.Err(err).Str("channel_id", ch.ID).Msg("Failed to create Matrix room for channel")
+		}
+	}
+}
+
+func (s *SlackClient) consumeEvents() {
 	for evt := range s.RTM.IncomingEvents {
 		s.HandleSlackEvent(evt.Data)
 	}
@@ -148,6 +244,7 @@ func (s *SlackClient) Disconnect() {
 		if err != nil {
 			s.UserLogin.Log.Err(err).Msg("Failed to disconnect RTM")
 		}
+		// TODO stop consumeEvents?
 		s.RTM = nil
 	}
 	s.Client = nil

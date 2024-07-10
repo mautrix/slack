@@ -39,9 +39,16 @@ type Config struct {
 	ParticipantSyncCount        int  `yaml:"participant_sync_count"`
 	ParticipantSyncOnlyOnCreate bool `yaml:"participant_sync_only_on_create"`
 
+	Backfill BackfillConfig `yaml:"backfill"`
+
 	displaynameTemplate *template.Template `yaml:"-"`
 	channelNameTemplate *template.Template `yaml:"-"`
 	teamNameTemplate    *template.Template `yaml:"-"`
+}
+
+type BackfillConfig struct {
+	ConversationCount int  `yaml:"conversation_count"`
+	Enabled           bool `yaml:"enabled"`
 }
 
 type umConfig Config
@@ -106,7 +113,7 @@ func (c *Config) FormatTeamName(params *slack.TeamInfo) string {
 }
 
 func (s *SlackConnector) GetConfig() (example string, data any, upgrader up.Upgrader) {
-	return ExampleConfig, s.Config, up.SimpleUpgrader(upgradeConfig)
+	return ExampleConfig, &s.Config, up.SimpleUpgrader(upgradeConfig)
 }
 
 func upgradeConfig(helper up.Helper) {
@@ -117,4 +124,5 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Bool, "workspace_avatar_in_rooms")
 	helper.Copy(up.Int, "participant_sync_count")
 	helper.Copy(up.Bool, "participant_sync_only_on_create")
+	helper.Copy(up.Int, "backfill", "conversation_count")
 }

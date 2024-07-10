@@ -47,3 +47,8 @@ participant_sync_count: 5
 # Should channel participants only be synced when creating the room?
 # If you want participants to always be accurately synced, set participant_sync_count to a high value and this to false.
 participant_sync_only_on_create: true
+
+backfill:
+    # Number of conversations to fetch from Slack when syncing workspace.
+    # This option applies even if message backfill is disabled below.
+    conversation_count: 200
