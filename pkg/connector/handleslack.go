@@ -411,10 +411,7 @@ func (s *SlackMessage) ConvertMessage(ctx context.Context, portal *bridgev2.Port
 }
 
 func (s *SlackMessage) ConvertEdit(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, existing []*database.Message) (*bridgev2.ConvertedEdit, error) {
-	//msg := s.Data.SubMessage
-	//oldMsg := s.Data.PreviousMessage
-	//TODO implement me
-	panic("implement me")
+	return s.Client.Main.MsgConv.EditToMatrix(ctx, portal, intent, s.Client.UserLogin, s.Data.SubMessage, s.Data.PreviousMessage, existing), nil
 }
 
 func (s *SlackMessage) GetTimestamp() time.Time {
@@ -433,8 +430,6 @@ func (s *SlackMessage) GetTargetMessage() networkid.MessageID {
 }
 
 func (s *SlackMessage) GetChatInfoChange(ctx context.Context) (*bridgev2.ChatInfoChange, error) {
-	switch s.Data.SubType {
-	// TODO
-	}
-	return nil, nil
+	// TODO implement
+	return &bridgev2.ChatInfoChange{}, nil
 }

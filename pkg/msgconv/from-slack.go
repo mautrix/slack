@@ -30,6 +30,7 @@ import (
 	"go.mau.fi/util/exmime"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/format"
@@ -37,10 +38,70 @@ import (
 	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
 
-func (mc *MessageConverter) ToMatrix(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, source *bridgev2.UserLogin, msg *slack.Msg) *bridgev2.ConvertedMessage {
+func (mc *MessageConverter) ToMatrix(
+	ctx context.Context,
+	portal *bridgev2.Portal,
+	intent bridgev2.MatrixAPI,
+	source *bridgev2.UserLogin,
+	msg *slack.Msg,
+) *bridgev2.ConvertedMessage {
 	ctx = context.WithValue(ctx, contextKeyPortal, portal)
 	ctx = context.WithValue(ctx, contextKeySource, source)
 	client := source.Client.(SlackClientProvider).GetClient()
+	output := &bridgev2.ConvertedMessage{}
+	textPart := mc.makeTextPart(ctx, msg, portal, intent)
+	if textPart != nil {
+		output.Parts = append(output.Parts, textPart)
+	}
+	for i, file := range msg.Files {
+		// mode=tombstone seems to mean the file was deleted
+		if file.Mode == "tombstone" {
+			continue
+		}
+		partID := slackid.MakePartID(slackid.PartTypeFile, i, file.ID)
+		output.Parts = append(output.Parts, mc.slackFileToMatrix(ctx, portal, intent, client, partID, &file))
+	}
+	return output
+}
+
+func (mc *MessageConverter) EditToMatrix(
+	ctx context.Context,
+	portal *bridgev2.Portal,
+	intent bridgev2.MatrixAPI,
+	source *bridgev2.UserLogin,
+	msg *slack.Msg,
+	origMsg *slack.Msg,
+	existing []*database.Message,
+) *bridgev2.ConvertedEdit {
+	ctx = context.WithValue(ctx, contextKeyPortal, portal)
+	ctx = context.WithValue(ctx, contextKeySource, source)
+	existingMap := make(map[networkid.PartID]*database.Message, len(existing))
+	for _, part := range existing {
+		existingMap[part.PartID] = part
+	}
+	output := &bridgev2.ConvertedEdit{}
+	textPart := mc.makeTextPart(ctx, msg, portal, intent)
+	if textPart != nil {
+		output.ModifiedParts = append(output.ModifiedParts, &bridgev2.ConvertedEditPart{
+			Part:    existingMap[""],
+			Type:    textPart.Type,
+			Content: textPart.Content,
+			Extra:   textPart.Extra,
+		})
+	}
+	for i, file := range msg.Files {
+		if file.Mode == "tombstone" {
+			partID := slackid.MakePartID(slackid.PartTypeFile, i, file.ID)
+			deletedPart, ok := existingMap[partID]
+			if ok {
+				output.DeletedParts = append(output.DeletedParts, deletedPart)
+			}
+		}
+	}
+	return output
+}
+
+func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, portal *bridgev2.Portal, intent bridgev2.MatrixAPI) *bridgev2.ConvertedMessagePart {
 	var text string
 	if msg.Text != "" {
 		text = msg.Text
@@ -55,7 +116,6 @@ func (mc *MessageConverter) ToMatrix(ctx context.Context, portal *bridgev2.Porta
 			text += attachment.Fallback
 		}
 	}
-	output := &bridgev2.ConvertedMessage{}
 	var textPart *bridgev2.ConvertedMessagePart
 	if len(msg.Blocks.BlockSet) != 0 || len(msg.Attachments) != 0 {
 		textPart = mc.trySlackBlocksToMatrix(ctx, portal, intent, msg.Blocks, msg.Attachments)
@@ -72,17 +132,8 @@ func (mc *MessageConverter) ToMatrix(ctx context.Context, portal *bridgev2.Porta
 			textPart.Content.Body += fmt.Sprintf("\n\nJoin via the Slack app: https://app.slack.com/client/%s/%s", teamID, channelID)
 			textPart.Content.FormattedBody += fmt.Sprintf(`<p><a href="https://app.slack.com/client/%s/%s">Click here to join via the Slack app</a></p>`, teamID, channelID)
 		}
-		output.Parts = append(output.Parts, textPart)
 	}
-	for i, file := range msg.Files {
-		// mode=tombstone seems to mean the file was deleted
-		if file.Mode == "tombstone" {
-			continue
-		}
-		partID := slackid.MakePartID(slackid.PartTypeFile, i, file.ID)
-		output.Parts = append(output.Parts, mc.slackFileToMatrix(ctx, portal, intent, client, partID, &file))
-	}
-	return output
+	return textPart
 }
 
 func (mc *MessageConverter) slackTextToMatrix(ctx context.Context, text string) *bridgev2.ConvertedMessagePart {
