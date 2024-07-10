@@ -77,7 +77,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 func executeTemplate(tpl *template.Template, data any) string {
 	var buffer strings.Builder
 	_ = tpl.Execute(&buffer, data)
-	return buffer.String()
+	return strings.TrimSpace(buffer.String())
 }
 
 func (c *Config) FormatDisplayname(user *slack.User) string {
