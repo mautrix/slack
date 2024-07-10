@@ -28,6 +28,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
 	"go.mau.fi/util/exmime"
+	"go.mau.fi/util/ptr"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
@@ -49,6 +50,10 @@ func (mc *MessageConverter) ToMatrix(
 	ctx = context.WithValue(ctx, contextKeySource, source)
 	client := source.Client.(SlackClientProvider).GetClient()
 	output := &bridgev2.ConvertedMessage{}
+	if msg.ThreadTimestamp != "" {
+		teamID, channelID := slackid.ParsePortalID(portal.ID)
+		output.ThreadRoot = ptr.Ptr(slackid.MakeMessageID(teamID, channelID, msg.ThreadTimestamp))
+	}
 	textPart := mc.makeTextPart(ctx, msg, portal, intent)
 	if textPart != nil {
 		output.Parts = append(output.Parts, textPart)

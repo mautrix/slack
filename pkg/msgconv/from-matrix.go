@@ -25,7 +25,6 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog"
-
 	"github.com/slack-go/slack"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
@@ -74,8 +73,12 @@ func (mc *MessageConverter) ToSlack(
 		}
 	}
 	if threadRoot != nil {
+		threadRootMessageID := threadRoot.ID
+		if threadRoot.ThreadRoot != "" {
+			threadRootMessageID = threadRoot.ThreadRoot
+		}
 		var ok bool
-		_, _, threadRootID, ok = slackid.ParseMessageID(threadRoot.ID)
+		_, _, threadRootID, ok = slackid.ParseMessageID(threadRootMessageID)
 		if !ok {
 			return nil, nil, fmt.Errorf("failed to parse thread root ID")
 		}
