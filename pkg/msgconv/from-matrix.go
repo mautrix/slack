@@ -20,86 +20,54 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"image"
 	"strings"
 
 	"github.com/rs/zerolog"
+
+	"github.com/slack-go/slack"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/event"
-	"maunium.net/go/mautrix/id"
-
-	"github.com/slack-go/slack"
 
 	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
 
 var (
-	ErrUnexpectedParsedContentType = errors.New("unexpected parsed content type")
-	ErrUnknownMsgType              = errors.New("unknown msgtype")
-	ErrMediaDownloadFailed         = errors.New("failed to download media")
-	ErrMediaOnlyEditCaption        = errors.New("only media message caption can be edited")
-	ErrEditTargetNotFound          = errors.New("edit target message not found")
-	ErrThreadRootNotFound          = errors.New("thread root message not found")
+	ErrUnknownMsgType       = errors.New("unknown msgtype")
+	ErrMediaDownloadFailed  = errors.New("failed to download media")
+	ErrMediaOnlyEditCaption = errors.New("only media message caption can be edited")
 )
 
 func isMediaMsgtype(msgType event.MessageType) bool {
 	return msgType == event.MsgImage || msgType == event.MsgAudio || msgType == event.MsgVideo || msgType == event.MsgFile
 }
 
-func (mc *MessageConverter) ToSlack(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, evt *event.Event) (sendReq slack.MsgOption, fileUpload *slack.FileUploadParameters, threadRootID string, editTarget *database.Message, err error) {
+func (mc *MessageConverter) ToSlack(
+	ctx context.Context,
+	portal *bridgev2.Portal,
+	content *event.MessageEventContent,
+	evt *event.Event,
+	threadRoot *database.Message,
+	editTarget []*database.Message,
+) (sendReq slack.MsgOption, fileUpload *slack.FileUploadParameters, err error) {
 	log := zerolog.Ctx(ctx)
-	content, ok := evt.Content.Parsed.(*event.MessageEventContent)
-	if !ok {
-		return nil, nil, "", nil, ErrUnexpectedParsedContentType
-	}
 
 	if evt.Type == event.EventSticker {
 		// Slack doesn't have stickers, just bridge stickers as images
 		content.MsgType = event.MsgImage
 	}
 
-	var editTargetID string
-	if replaceEventID := content.RelatesTo.GetReplaceID(); replaceEventID != "" {
-		existing, err := mc.Bridge.DB.Message.GetPartByMXID(ctx, replaceEventID)
-		if err != nil {
-			log.Err(err).Msg("Failed to get edit target message")
-			return nil, nil, "", nil, fmt.Errorf("failed to get edit target message: %w", err)
-		} else if existing == nil {
-			return nil, nil, "", nil, ErrEditTargetNotFound
-		} else {
-			_, _, editTargetID, _ = slackid.ParseMessageID(existing.ID)
-			editTarget = existing
-			if content.NewContent != nil {
-				content = content.NewContent
-			}
-		}
-	} else {
-		var threadMXID id.EventID
-		threadMXID = content.RelatesTo.GetThreadParent()
-		if threadMXID == "" {
-			threadMXID = content.RelatesTo.GetReplyTo()
-		}
-		if threadMXID != "" {
-			rootMessage, err := mc.Bridge.DB.Message.GetPartByMXID(ctx, threadMXID)
-			if err != nil {
-				return nil, nil, "", nil, fmt.Errorf("failed to get thread root message: %w", err)
-			} else if rootMessage == nil {
-				return nil, nil, "", nil, ErrThreadRootNotFound
-			} else if rootMessage.RelatesToRowID != 0 {
-				// TODO get real thread root
-			} else {
-				_, _, threadRootID, _ = slackid.ParseMessageID(rootMessage.ID)
-			}
-		}
-	}
-
-	if editTargetID != "" && isMediaMsgtype(content.MsgType) {
+	var editTargetID, threadRootID string
+	if editTarget != nil && isMediaMsgtype(content.MsgType) {
 		content.MsgType = event.MsgText
 		if content.FileName == "" || content.FileName == content.Body {
-			return nil, nil, "", editTarget, ErrMediaOnlyEditCaption
+			return nil, nil, ErrMediaOnlyEditCaption
 		}
+		_, _, editTargetID, _ = slackid.ParseMessageID(editTarget[0].ID)
+	}
+	if threadRoot != nil {
+		_, _, threadRootID, _ = slackid.ParseMessageID(threadRoot.ID)
 	}
 
 	switch content.MsgType {
@@ -120,12 +88,12 @@ func (mc *MessageConverter) ToSlack(ctx context.Context, portal *bridgev2.Portal
 		if content.MsgType == event.MsgEmote {
 			options = append(options, slack.MsgOptionMeMessage())
 		}
-		return slack.MsgOptionCompose(options...), nil, threadRootID, editTarget, nil
+		return slack.MsgOptionCompose(options...), nil, nil
 	case event.MsgAudio, event.MsgFile, event.MsgImage, event.MsgVideo:
-		data, err := intent.DownloadMedia(ctx, content.URL, content.File)
+		data, err := mc.Bridge.Bot.DownloadMedia(ctx, content.URL, content.File)
 		if err != nil {
 			log.Err(err).Msg("Failed to download Matrix attachment")
-			return nil, nil, "", editTarget, ErrMediaDownloadFailed
+			return nil, nil, ErrMediaDownloadFailed
 		}
 
 		var filename, caption string
@@ -146,9 +114,9 @@ func (mc *MessageConverter) ToSlack(ctx context.Context, portal *bridgev2.Portal
 		if caption != "" {
 			fileUpload.InitialComment = caption
 		}
-		return nil, fileUpload, threadRootID, editTarget, nil
+		return nil, fileUpload, nil
 	default:
-		return nil, nil, "", editTarget, ErrUnknownMsgType
+		return nil, nil, ErrUnknownMsgType
 	}
 }
 

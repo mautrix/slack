@@ -23,6 +23,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
+	"maunium.net/go/mautrix/bridgev2/database"
 
 	"maunium.net/go/mautrix/bridge/status"
 	"maunium.net/go/mautrix/bridgev2"
@@ -381,8 +382,59 @@ type SlackMessage struct {
 	Client *SlackClient
 }
 
-var _ bridgev2.RemoteMessage = (*SlackMessage)(nil)
+var (
+	_ bridgev2.RemoteMessage        = (*SlackMessage)(nil)
+	_ bridgev2.RemoteEdit           = (*SlackMessage)(nil)
+	_ bridgev2.RemoteMessageRemove  = (*SlackMessage)(nil)
+	_ bridgev2.RemoteChatInfoChange = (*SlackMessage)(nil)
+)
+
+func (s *SlackMessage) GetType() bridgev2.RemoteEventType {
+	switch s.Data.SubType {
+	case slack.MsgSubTypeMessageChanged:
+		return bridgev2.RemoteEventEdit
+	case slack.MsgSubTypeMessageDeleted:
+		return bridgev2.RemoteEventMessageRemove
+	case slack.MsgSubTypeChannelTopic, slack.MsgSubTypeChannelPurpose, slack.MsgSubTypeChannelName,
+		slack.MsgSubTypeGroupTopic, slack.MsgSubTypeGroupPurpose, slack.MsgSubTypeGroupName:
+		return bridgev2.RemoteEventChatInfoChange
+	case slack.MsgSubTypeMessageReplied, slack.MsgSubTypeGroupJoin, slack.MsgSubTypeGroupLeave,
+		slack.MsgSubTypeChannelJoin, slack.MsgSubTypeChannelLeave:
+		return bridgev2.RemoteEventUnknown
+	default:
+		return bridgev2.RemoteEventMessage
+	}
+}
 
 func (s *SlackMessage) ConvertMessage(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI) (*bridgev2.ConvertedMessage, error) {
 	return s.Client.Main.MsgConv.ToMatrix(ctx, portal, intent, s.Client.UserLogin, &s.Data.Msg), nil
+}
+
+func (s *SlackMessage) ConvertEdit(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, existing []*database.Message) (*bridgev2.ConvertedEdit, error) {
+	//msg := s.Data.SubMessage
+	//oldMsg := s.Data.PreviousMessage
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *SlackMessage) GetTimestamp() time.Time {
+	switch s.Data.SubType {
+	case slack.MsgSubTypeMessageChanged:
+		return slackid.ParseSlackTimestamp(s.Data.SubMessage.Timestamp)
+	case slack.MsgSubTypeMessageDeleted:
+		return slackid.ParseSlackTimestamp(s.Data.DeletedTimestamp)
+	default:
+		return s.Timestamp
+	}
+}
+
+func (s *SlackMessage) GetTargetMessage() networkid.MessageID {
+	return s.ID
+}
+
+func (s *SlackMessage) GetChatInfoChange(ctx context.Context) (*bridgev2.ChatInfoChange, error) {
+	switch s.Data.SubType {
+	// TODO
+	}
+	return nil, nil
 }
