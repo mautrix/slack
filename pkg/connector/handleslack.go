@@ -105,11 +105,21 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 	var wrapped bridgev2.RemoteEvent
 	switch evt := rawEvt.(type) {
 	case *slack.MessageEvent:
-		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, evt.User, evt.Timestamp)
-		meta.Type = bridgev2.RemoteEventMessage
+		sender := evt.User
+		if sender == "" {
+			sender = evt.BotID
+		}
+		if sender == "" && evt.SubMessage != nil {
+			sender = evt.SubMessage.User
+		}
+		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, sender, "")
 		meta.CreatePortal = true
 		meta.LogContext = func(c zerolog.Context) zerolog.Context {
-			return c.Str("message_ts", evt.Timestamp).Str("message_sender", evt.User)
+			return c.
+				Str("message_ts", evt.Timestamp).
+				Str("message_id", string(meta.ID)).
+				Str("message_sender", sender).
+				Str("subtype", evt.SubType)
 		}
 		wrapped = &SlackMessage{
 			SlackEventMeta: &meta,
@@ -417,16 +427,25 @@ func (s *SlackMessage) ConvertEdit(ctx context.Context, portal *bridgev2.Portal,
 func (s *SlackMessage) GetTimestamp() time.Time {
 	switch s.Data.SubType {
 	case slack.MsgSubTypeMessageChanged:
-		return slackid.ParseSlackTimestamp(s.Data.SubMessage.Timestamp)
-	case slack.MsgSubTypeMessageDeleted:
-		return slackid.ParseSlackTimestamp(s.Data.DeletedTimestamp)
+		return slackid.ParseSlackTimestamp(s.Data.EventTimestamp)
 	default:
-		return s.Timestamp
+		return slackid.ParseSlackTimestamp(s.Data.Timestamp)
 	}
 }
 
+func (s *SlackMessage) GetID() networkid.MessageID {
+	return slackid.MakeMessageID(s.Client.TeamID, s.Data.Channel, s.Data.Timestamp)
+}
+
 func (s *SlackMessage) GetTargetMessage() networkid.MessageID {
-	return s.ID
+	switch s.Data.SubType {
+	case slack.MsgSubTypeMessageDeleted:
+		return slackid.MakeMessageID(s.Client.TeamID, s.Data.Channel, s.Data.DeletedTimestamp)
+	case slack.MsgSubTypeMessageChanged:
+		return s.GetID()
+	default:
+		return ""
+	}
 }
 
 func (s *SlackMessage) GetChatInfoChange(ctx context.Context) (*bridgev2.ChatInfoChange, error) {
