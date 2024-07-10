@@ -90,6 +90,12 @@ func UserLoginIDToUserID(userLoginID networkid.UserLoginID) networkid.UserID {
 	return networkid.UserID(strings.ToLower(string(userLoginID)))
 }
 
+const TeamPortalChannelID = "@"
+
+func MakeTeamPortalID(teamID string) networkid.PortalID {
+	return MakePortalID(teamID, TeamPortalChannelID)
+}
+
 func MakePortalID(teamID, channelID string) networkid.PortalID {
 	return networkid.PortalID(fmt.Sprintf("%s-%s", teamID, channelID))
 }
@@ -98,6 +104,9 @@ func ParsePortalID(id networkid.PortalID) (teamID, channelID string) {
 	parts := strings.Split(string(id), "-")
 	if len(parts) != 2 {
 		return "", ""
+	}
+	if parts[1] == TeamPortalChannelID {
+		parts[1] = ""
 	}
 	return parts[0], parts[1]
 }

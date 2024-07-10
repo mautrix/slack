@@ -98,7 +98,7 @@ func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, fetch
 		}
 		members.IsFull = len(members.Members) >= info.NumMembers
 	}
-	//members.TotalMemberCount = info.NumMembers
+	members.TotalMemberCount = info.NumMembers
 	name := s.Main.Config.FormatChannelName(&ChannelNameParams{
 		Channel:      info,
 		TeamName:     s.BootResp.Team.Name,
@@ -114,16 +114,52 @@ func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, fetch
 	}, nil
 }
 
+func (s *SlackClient) getTeamInfo() *bridgev2.ChatInfo {
+	name := s.Main.Config.FormatTeamName(&s.BootResp.Team)
+	avatarURL, _ := s.BootResp.Team.Icon["image_230"].(string)
+	if s.BootResp.Team.Icon["image_default"] == true {
+		avatarURL = ""
+	}
+	return &bridgev2.ChatInfo{
+		Name:   &name,
+		Topic:  nil,
+		Avatar: makeAvatar(avatarURL),
+		Members: &bridgev2.ChatMemberList{
+			IsFull:           false,
+			TotalMemberCount: 0,
+			Members:          []bridgev2.ChatMember{{EventSender: s.makeEventSender(s.UserID)}},
+			PowerLevels:      &bridgev2.PowerLevelChanges{EventsDefault: ptr.Ptr(100)},
+		},
+		IsSpace: ptr.Ptr(true),
+	}
+}
+
 func (s *SlackClient) GetChatInfo(ctx context.Context, portal *bridgev2.Portal) (*bridgev2.ChatInfo, error) {
-	_, channelID := slackid.ParsePortalID(portal.ID)
-	return s.fetchChatInfo(ctx, channelID, portal.MXID == "" || !s.Main.Config.ParticipantSyncOnlyOnCreate)
+	teamID, channelID := slackid.ParsePortalID(portal.ID)
+	if teamID == "" {
+		return nil, fmt.Errorf("invalid portal ID %q", portal.ID)
+	} else if channelID == "" {
+		return s.getTeamInfo(), nil
+	} else {
+		return s.fetchChatInfo(ctx, channelID, portal.MXID == "" || !s.Main.Config.ParticipantSyncOnlyOnCreate)
+	}
+}
+
+func makeAvatar(avatarURL string) *bridgev2.Avatar {
+	return &bridgev2.Avatar{
+		ID: networkid.AvatarID(avatarURL),
+		Get: func(ctx context.Context) ([]byte, error) {
+			return downloadPlainFile(ctx, avatarURL, "avatar")
+		},
+		Remove: avatarURL == "",
+	}
 }
 
 func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string) (*bridgev2.UserInfo, error) {
 	var info *slack.User
 	var botInfo *slack.Bot
 	var err error
-	if userID[0] == 'b' || userID[0] == 'B' {
+	if userID[0] == 'B' {
 		botInfo, err = s.Client.GetBotInfoContext(ctx, userID)
 	} else {
 		info, err = s.Client.GetUserInfoContext(ctx, userID)
@@ -133,7 +169,7 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string) (*bridge
 	}
 	var name *string
 	var avatarURL string
-	isBot := userID == "USLACKBOT" || botInfo != nil
+	isBot := userID == "USLACKBOT"
 	if info != nil {
 		name = ptr.Ptr(s.Main.Config.FormatDisplayname(info))
 		avatarURL = info.Profile.ImageOriginal
@@ -141,17 +177,12 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string) (*bridge
 	} else if botInfo != nil {
 		name = ptr.Ptr(s.Main.Config.FormatBotDisplayname(botInfo))
 		avatarURL = botInfo.Icons.Image72
+		isBot = true
 	}
 	return &bridgev2.UserInfo{
-		Identifiers: []string{fmt.Sprintf("slack-internal:%s", userID)},
-		Name:        name,
-		Avatar: &bridgev2.Avatar{
-			ID: networkid.AvatarID(avatarURL),
-			Get: func(ctx context.Context) ([]byte, error) {
-				return downloadPlainFile(ctx, avatarURL, "user avatar")
-			},
-			Remove: avatarURL == "",
-		},
+		Identifiers:  []string{fmt.Sprintf("slack-internal:%s", userID)},
+		Name:         name,
+		Avatar:       makeAvatar(avatarURL),
 		IsBot:        &isBot,
 		ExtraUpdates: nil,
 	}, nil

@@ -20,10 +20,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
-
 	"maunium.net/go/mautrix/bridge/status"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
@@ -54,31 +54,39 @@ func makeSlackClient(log *zerolog.Logger, token, cookieToken string) *slack.Clie
 func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.UserLogin) error {
 	teamID, userID := slackid.ParseUserLoginID(login.ID)
 	token, ok := login.Metadata.Extra["token"].(string)
+	var sc *SlackClient
 	if !ok {
-		login.Client = &SlackClient{Main: s, UserLogin: login, UserID: userID, TeamID: teamID}
-		return nil
+		sc = &SlackClient{Main: s, UserLogin: login, UserID: userID, TeamID: teamID}
+	} else {
+		cookieToken, _ := login.Metadata.Extra["cookie_token"].(string)
+		client := makeSlackClient(&login.Log, token, cookieToken)
+		sc = &SlackClient{
+			Main:      s,
+			UserLogin: login,
+			Client:    client,
+			RTM:       client.NewRTM(),
+			UserID:    userID,
+			TeamID:    teamID,
+		}
 	}
-	cookieToken, _ := login.Metadata.Extra["cookie_token"].(string)
-	client := makeSlackClient(&login.Log, token, cookieToken)
-	login.Client = &SlackClient{
-		Main:      s,
-		UserLogin: login,
-		Client:    client,
-		RTM:       client.NewRTM(),
-		UserID:    userID,
-		TeamID:    teamID,
+	teamPortalKey := networkid.PortalKey{ID: slackid.MakeTeamPortalID(teamID)}
+	var err error
+	sc.TeamPortal, err = s.br.UnlockedGetPortalByID(ctx, teamPortalKey, false)
+	if err != nil {
+		return fmt.Errorf("failed to get team portal: %w", err)
 	}
 	return nil
 }
 
 type SlackClient struct {
-	Main      *SlackConnector
-	UserLogin *bridgev2.UserLogin
-	Client    *slack.Client
-	RTM       *slack.RTM
-	UserID    string
-	TeamID    string
-	BootResp  *slack.ClientBootResponse
+	Main       *SlackConnector
+	UserLogin  *bridgev2.UserLogin
+	Client     *slack.Client
+	RTM        *slack.RTM
+	UserID     string
+	TeamID     string
+	BootResp   *slack.ClientBootResponse
+	TeamPortal *bridgev2.Portal
 }
 
 var _ bridgev2.NetworkAPI = (*SlackClient)(nil)
@@ -107,7 +115,24 @@ func (s *SlackClient) Connect(ctx context.Context) error {
 		}
 		return err
 	}
+	err = s.syncTeamPortal(ctx)
+	if err != nil {
+		return err
+	}
 	go s.RTM.ManageConnection()
+	return nil
+}
+
+func (s *SlackClient) syncTeamPortal(ctx context.Context) error {
+	info := s.getTeamInfo()
+	if s.TeamPortal.MXID == "" {
+		err := s.TeamPortal.CreateMatrixRoom(ctx, s.UserLogin, info)
+		if err != nil {
+			return err
+		}
+	} else {
+		s.TeamPortal.UpdateInfo(ctx, info, s.UserLogin, nil, time.Time{})
+	}
 	return nil
 }
 

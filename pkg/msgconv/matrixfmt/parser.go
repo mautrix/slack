@@ -62,7 +62,9 @@ func (mhp *MatrixHTMLParser) pillConverter(displayname, mxid, eventID string, ct
 			zerolog.Ctx(ctx.Ctx).Err(err).Msg("Failed to get portal by MXID to convert mention")
 		} else if portal != nil {
 			_, channelID := slackid.ParsePortalID(portal.ID)
-			return fmt.Sprintf("<#%s>", channelID)
+			if channelID != "" {
+				return fmt.Sprintf("<#%s>", channelID)
+			}
 		}
 	case '#':
 		// TODO add aliases for rooms so they can be mentioned easily
