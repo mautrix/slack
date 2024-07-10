@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -69,6 +70,8 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 			RTM:       client.NewRTM(),
 			UserID:    userID,
 			TeamID:    teamID,
+
+			chatInfoCache: make(map[string]chatInfoCacheEntry),
 		}
 	}
 	teamPortalKey := networkid.PortalKey{ID: slackid.MakeTeamPortalID(teamID)}
@@ -81,6 +84,11 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 	return nil
 }
 
+type chatInfoCacheEntry struct {
+	ts   time.Time
+	data *slack.Channel
+}
+
 type SlackClient struct {
 	Main       *SlackConnector
 	UserLogin  *bridgev2.UserLogin
@@ -90,6 +98,9 @@ type SlackClient struct {
 	TeamID     string
 	BootResp   *slack.ClientBootResponse
 	TeamPortal *bridgev2.Portal
+
+	chatInfoCache     map[string]chatInfoCacheEntry
+	chatInfoCacheLock sync.Mutex
 }
 
 var _ bridgev2.NetworkAPI = (*SlackClient)(nil)
@@ -170,10 +181,6 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 			}
 			log.Debug().Int("chunk_size", len(channelsChunk)).Msg("Fetched chunk of conversations")
 			for _, channel := range channelsChunk {
-				// Skip non-"open" DMs
-				if channel.IsIM && (channel.Latest == nil || channel.Latest.SubType == "") {
-					continue
-				}
 				serverInfo[channel.ID] = &channel
 			}
 			if nextCursor == "" || len(channelsChunk) == 0 {
@@ -225,7 +232,21 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 			log.Err(err).Str("channel_id", ch.ID).Msg("Failed to get portal for channel")
 			continue
 		}
-		err = portal.CreateMatrixRoom(ctx, s.UserLogin, nil)
+		// Fetch full info to determine if it's a non-open DM
+		ch, err = s.fetchChatInfoWithCache(ctx, ch.ID)
+		if err != nil {
+			log.Err(err).Str("channel_id", ch.ID).Msg("Failed to fetch full chat info for channel")
+			continue
+		}
+		if (ch.IsIM || ch.IsMpIM) && (ch.Latest == nil || ch.Latest.SubType == "") {
+			continue
+		}
+		info, err := s.wrapChatInfo(ctx, ch, true)
+		if err != nil {
+			log.Err(err).Str("channel_id", ch.ID).Msg("Failed to wrap chat info for channel")
+			continue
+		}
+		err = portal.CreateMatrixRoom(ctx, s.UserLogin, info)
 		if err != nil {
 			log.Err(err).Str("channel_id", ch.ID).Msg("Failed to create Matrix room for channel")
 		}

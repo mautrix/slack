@@ -19,6 +19,11 @@ package connector
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
@@ -28,6 +33,29 @@ import (
 
 	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
+
+const ChatInfoCacheExpiry = 1 * time.Hour
+
+func (s *SlackClient) fetchChatInfoWithCache(ctx context.Context, channelID string) (*slack.Channel, error) {
+	s.chatInfoCacheLock.Lock()
+	defer s.chatInfoCacheLock.Unlock()
+	if cached, ok := s.chatInfoCache[channelID]; ok && time.Since(cached.ts) < ChatInfoCacheExpiry {
+		return cached.data, nil
+	}
+	info, err := s.Client.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
+		ChannelID:         channelID,
+		IncludeLocale:     true,
+		IncludeNumMembers: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.chatInfoCache[channelID] = chatInfoCacheEntry{
+		ts:   time.Now(),
+		data: info,
+	}
+	return info, nil
+}
 
 func (s *SlackClient) fetchChannelMembers(ctx context.Context, channelID string, limit int) (output []bridgev2.ChatMember) {
 	var cursor string
@@ -57,23 +85,64 @@ func (s *SlackClient) fetchChannelMembers(ctx context.Context, channelID string,
 	return
 }
 
-func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, fetchMembers bool) (*bridgev2.ChatInfo, error) {
-	info, err := s.Client.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
-		ChannelID:         channelID,
-		IncludeLocale:     true,
-		IncludeNumMembers: true,
-	})
-	if err != nil {
-		return nil, err
+func compareStringFold(a, b string) int {
+	for {
+		if a == "" {
+			if b == "" {
+				return 0
+			}
+			return -1
+		} else if b == "" {
+			return 1
+		}
+		aRune, aSize := utf8.DecodeRuneInString(a)
+		bRune, bSize := utf8.DecodeRuneInString(b)
+
+		aLower := unicode.ToLower(aRune)
+		bLower := unicode.ToLower(bRune)
+		if aLower < bLower {
+			return -1
+		} else if bLower > aLower {
+			return 1
+		}
+		a = a[aSize:]
+		b = b[bSize:]
 	}
+}
+
+func (s *SlackClient) generateGroupDMName(ctx context.Context, members []string) (string, error) {
+	ghostNames := make([]string, 0, len(members))
+	for _, member := range members {
+		if member == s.UserID {
+			continue
+		}
+		ghost, err := s.UserLogin.Bridge.GetGhostByID(ctx, slackid.MakeUserID(s.TeamID, member))
+		if err != nil {
+			return "", err
+		}
+		ghost.UpdateInfoIfNecessary(ctx, s.UserLogin, bridgev2.RemoteEventUnknown)
+		if ghost.Name != "" {
+			ghostNames = append(ghostNames, ghost.Name)
+		}
+	}
+	slices.SortFunc(ghostNames, compareStringFold)
+	return strings.Join(ghostNames, ", "), nil
+}
+
+func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, fetchMembers bool) (*bridgev2.ChatInfo, error) {
 	var members bridgev2.ChatMemberList
 	var avatar *bridgev2.Avatar
+	var err error
 	switch {
 	case info.IsMpIM:
 		members.IsFull = true
 		members.Members = make([]bridgev2.ChatMember, len(info.Members))
 		for i, member := range info.Members {
 			members.Members[i] = bridgev2.ChatMember{EventSender: s.makeEventSender(member)}
+		}
+		info.Name, err = s.generateGroupDMName(ctx, info.Members)
+		if err != nil {
+			return nil, err
 		}
 	case info.IsIM:
 		members.IsFull = true
@@ -84,9 +153,15 @@ func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, fetch
 		} else {
 			members.Members = []bridgev2.ChatMember{selfMember, otherMember}
 		}
+		ghost, err := s.UserLogin.Bridge.GetGhostByID(ctx, slackid.MakeUserID(s.TeamID, info.User))
+		if err != nil {
+			return nil, err
+		}
+		ghost.UpdateInfoIfNecessary(ctx, s.UserLogin, bridgev2.RemoteEventUnknown)
+		info.Name = ghost.Name
 	case info.Name != "":
 		if fetchMembers {
-			members.Members = s.fetchChannelMembers(ctx, channelID, s.Main.Config.ParticipantSyncCount)
+			members.Members = s.fetchChannelMembers(ctx, info.ID, s.Main.Config.ParticipantSyncCount)
 		}
 		hasSelf := false
 		for _, mem := range members.Members {
@@ -123,7 +198,16 @@ func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, fetch
 		Members:      &members,
 		IsDirectChat: ptr.Ptr(info.IsIM),
 		IsSpace:      ptr.Ptr(false),
+		ParentID:     ptr.Ptr(slackid.MakeTeamPortalID(s.TeamID)),
 	}, nil
+}
+
+func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, fetchMembers bool) (*bridgev2.ChatInfo, error) {
+	info, err := s.fetchChatInfoWithCache(ctx, channelID)
+	if err != nil {
+		return nil, err
+	}
+	return s.wrapChatInfo(ctx, info, fetchMembers)
 }
 
 func (s *SlackClient) getTeamInfo() *bridgev2.ChatInfo {
