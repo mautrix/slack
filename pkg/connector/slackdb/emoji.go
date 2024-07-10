@@ -86,7 +86,7 @@ func (eq *EmojiQuery) GetBySlackID(ctx context.Context, teamID, emojiID string) 
 	return eq.QueryOne(ctx, getEmojiBySlackIDQuery, teamID, emojiID)
 }
 
-func (eq *EmojiQuery) GetByMXC(ctx context.Context, mxc id.ContentURI) (*Emoji, error) {
+func (eq *EmojiQuery) GetByMXC(ctx context.Context, mxc string) (*Emoji, error) {
 	return eq.QueryOne(ctx, getEmojiByMXCQuery, &mxc)
 }
 

@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"strings"
 
@@ -49,7 +50,7 @@ func (mc *MessageConverter) ToSlack(
 	content *event.MessageEventContent,
 	evt *event.Event,
 	threadRoot *database.Message,
-	editTarget []*database.Message,
+	editTarget *database.Message,
 ) (sendReq slack.MsgOption, fileUpload *slack.FileUploadParameters, err error) {
 	log := zerolog.Ctx(ctx)
 
@@ -59,15 +60,25 @@ func (mc *MessageConverter) ToSlack(
 	}
 
 	var editTargetID, threadRootID string
-	if editTarget != nil && isMediaMsgtype(content.MsgType) {
-		content.MsgType = event.MsgText
-		if content.FileName == "" || content.FileName == content.Body {
-			return nil, nil, ErrMediaOnlyEditCaption
+	if editTarget != nil {
+		if isMediaMsgtype(content.MsgType) {
+			content.MsgType = event.MsgText
+			if content.FileName == "" || content.FileName == content.Body {
+				return nil, nil, ErrMediaOnlyEditCaption
+			}
 		}
-		_, _, editTargetID, _ = slackid.ParseMessageID(editTarget[0].ID)
+		var ok bool
+		_, _, editTargetID, ok = slackid.ParseMessageID(editTarget.ID)
+		if !ok {
+			return nil, nil, fmt.Errorf("failed to parse edit target ID")
+		}
 	}
 	if threadRoot != nil {
-		_, _, threadRootID, _ = slackid.ParseMessageID(threadRoot.ID)
+		var ok bool
+		_, _, threadRootID, ok = slackid.ParseMessageID(threadRoot.ID)
+		if !ok {
+			return nil, nil, fmt.Errorf("failed to parse thread root ID")
+		}
 	}
 
 	switch content.MsgType {
