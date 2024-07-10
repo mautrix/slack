@@ -21,11 +21,11 @@ import (
 	"errors"
 
 	"github.com/rs/zerolog"
-
 	"github.com/slack-go/slack"
-	"go.mau.fi/mautrix-slack/pkg/slackid"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
+
+	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
 
 func (s *SlackClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.MatrixMessage) (*bridgev2.MatrixMessageResponse, error) {

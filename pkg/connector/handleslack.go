@@ -23,10 +23,9 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
-	"maunium.net/go/mautrix/bridgev2/database"
-
 	"maunium.net/go/mautrix/bridge/status"
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/event"
 
@@ -254,9 +253,13 @@ func (s *SlackClient) makeEventMeta(ctx context.Context, channelID string, chann
 			err = fmt.Errorf("failed to find portal receiver: %w", err)
 			return
 		} else if meta.PortalKey.IsEmpty() {
-			// TODO fetch channel meta from server?
-			err = fmt.Errorf("unknown channel %s", channelID)
-			return
+			var ch *slack.Channel
+			ch, err = s.fetchChatInfoWithCache(ctx, channelID)
+			if err != nil {
+				err = fmt.Errorf("failed to fetch channel info: %w", err)
+				return
+			}
+			meta.PortalKey = s.makePortalKey(ch)
 		}
 	}
 	if senderID != "" {
