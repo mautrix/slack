@@ -84,7 +84,7 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 			s.UserLogin.Bridge.QueueRemoteEvent(s.UserLogin, wrapped)
 		}
 	case *slack.EmojiChangedEvent:
-		//go ut.handleEmojiChange(ctx, evt)
+		go s.handleEmojiChange(ctx, evt)
 	case *slack.FileSharedEvent, *slack.FilePublicEvent, *slack.FilePrivateEvent,
 		*slack.FileCreatedEvent, *slack.FileChangeEvent, *slack.FileDeletedEvent,
 		*slack.DesktopNotificationEvent, *slack.ReconnectUrlEvent, *slack.LatencyReport:
@@ -452,6 +452,12 @@ func (s *SlackMessage) GetTargetMessage() networkid.MessageID {
 }
 
 func (s *SlackMessage) GetChatInfoChange(ctx context.Context) (*bridgev2.ChatInfoChange, error) {
-	// TODO implement
-	return &bridgev2.ChatInfoChange{}, nil
+	fullChatInfo, err := s.Client.fetchChatInfo(ctx, s.Data.Channel, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get chat info: %w", err)
+	}
+	// TODO implement deltas instead of full resync
+	return &bridgev2.ChatInfoChange{
+		ChatInfo: fullChatInfo,
+	}, nil
 }

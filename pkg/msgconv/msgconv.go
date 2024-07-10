@@ -59,9 +59,9 @@ func (mc *MessageConverter) GetMentionedUserInfo(ctx context.Context, userID str
 	if err != nil {
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to get mentioned ghost")
 	} else if ghost != nil {
-		if ghost.Name == "" {
+		/*if ghost.Name == "" {
 			// TODO update ghost info
-		}
+		}*/
 		name = ghost.Name
 		mxid = ghost.Intent.GetMXID()
 	}
