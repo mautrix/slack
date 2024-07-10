@@ -103,7 +103,6 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 	var meta SlackEventMeta
 	var metaErr error
 	var wrapped bridgev2.RemoteEvent
-	meta.LogContext = func(c zerolog.Context) zerolog.Context { return c }
 	switch evt := rawEvt.(type) {
 	case *slack.MessageEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, evt.User, evt.Timestamp)
@@ -257,6 +256,7 @@ func (s *SlackClient) makeEventMeta(ctx context.Context, channelID string, chann
 		meta.ID = slackid.MakeMessageID(s.TeamID, channelID, timestamp)
 		meta.Timestamp = slackid.ParseSlackTimestamp(timestamp)
 	}
+	meta.LogContext = func(c zerolog.Context) zerolog.Context { return c }
 	return
 }
 
