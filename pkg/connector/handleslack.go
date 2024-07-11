@@ -80,7 +80,7 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 		wrapped, err := s.wrapEvent(ctx, evt)
 		if err != nil {
 			log.Err(err).Msg("Failed to wrap Slack event")
-		} else {
+		} else if wrapped != nil {
 			s.UserLogin.Bridge.QueueRemoteEvent(s.UserLogin, wrapped)
 		}
 	case *slack.EmojiChangedEvent:
@@ -104,6 +104,9 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 	var wrapped bridgev2.RemoteEvent
 	switch evt := rawEvt.(type) {
 	case *slack.MessageEvent:
+		if evt.SubType == slack.MsgSubTypeMessageChanged && evt.SubMessage.SubType == "huddle_thread" {
+			return nil, nil
+		}
 		sender := evt.User
 		if sender == "" {
 			sender = evt.BotID
