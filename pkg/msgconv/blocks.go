@@ -74,16 +74,16 @@ func (mc *MessageConverter) renderImageBlock(ctx context.Context, portal *bridge
 	}, nil
 }
 
-func (mc *MessageConverter) mrkdwnToMatrixHtml(ctx context.Context, inputMrkdwn string) string {
-	output, _ := mc.SlackMrkdwnParser.Parse(ctx, inputMrkdwn)
+func (mc *MessageConverter) mrkdwnToMatrixHtml(ctx context.Context, inputMrkdwn string, mentions *event.Mentions) string {
+	output, _ := mc.SlackMrkdwnParser.Parse(ctx, inputMrkdwn, mentions)
 	return output
 }
 
-func (mc *MessageConverter) renderSlackTextBlock(ctx context.Context, block slack.TextBlockObject) string {
+func (mc *MessageConverter) renderSlackTextBlock(ctx context.Context, block slack.TextBlockObject, mentions *event.Mentions) string {
 	if block.Type == slack.PlainTextType {
 		return event.TextToHTML(block.Text)
 	} else if block.Type == slack.MarkdownType {
-		return mc.mrkdwnToMatrixHtml(ctx, block.Text)
+		return mc.mrkdwnToMatrixHtml(ctx, block.Text, mentions)
 	} else {
 		return ""
 	}
@@ -125,7 +125,7 @@ func closingTags(out io.StringWriter, style *slack.RichTextSectionTextStyle) {
 	}
 }
 
-func (mc *MessageConverter) renderRichTextSectionElements(ctx context.Context, elements []slack.RichTextSectionElement) string {
+func (mc *MessageConverter) renderRichTextSectionElements(ctx context.Context, elements []slack.RichTextSectionElement, mentions *event.Mentions) string {
 	var htmlText strings.Builder
 	for _, element := range elements {
 		switch e := element.(type) {
@@ -135,6 +135,7 @@ func (mc *MessageConverter) renderRichTextSectionElements(ctx context.Context, e
 			closingTags(&htmlText, e.Style)
 		case *slack.RichTextSectionUserElement:
 			mxid, name := mc.GetMentionedUserInfo(ctx, e.UserID)
+			mentions.Add(mxid)
 			openingTags(&htmlText, e.Style)
 			mrkdwn.UserMentionToHTML(&htmlText, e.UserID, mxid, name)
 			closingTags(&htmlText, e.Style)
@@ -154,6 +155,7 @@ func (mc *MessageConverter) renderRichTextSectionElements(ctx context.Context, e
 			_, _ = fmt.Fprintf(&htmlText, `<a href="%s">%s</a>`, html.EscapeString(e.URL), event.TextToHTML(linkText))
 			closingTags(&htmlText, e.Style)
 		case *slack.RichTextSectionBroadcastElement:
+			mentions.Room = true
 			htmlText.WriteString("@room")
 		case *slack.RichTextSectionEmojiElement:
 			openingTags(&htmlText, e.Style)
@@ -189,16 +191,16 @@ func (mc *MessageConverter) renderRichTextSectionElements(ctx context.Context, e
 	return htmlText.String()
 }
 
-func (mc *MessageConverter) renderSlackBlock(ctx context.Context, block slack.Block) (string, bool) {
+func (mc *MessageConverter) renderSlackBlock(ctx context.Context, block slack.Block, mentions *event.Mentions) (string, bool) {
 	switch b := block.(type) {
 	case *slack.HeaderBlock:
-		return fmt.Sprintf("<h1>%s</h1>", mc.renderSlackTextBlock(ctx, *b.Text)), false
+		return fmt.Sprintf("<h1>%s</h1>", mc.renderSlackTextBlock(ctx, *b.Text, mentions)), false
 	case *slack.DividerBlock:
 		return "<hr>", false
 	case *slack.SectionBlock:
 		var htmlParts []string
 		if b.Text != nil {
-			htmlParts = append(htmlParts, mc.renderSlackTextBlock(ctx, *b.Text))
+			htmlParts = append(htmlParts, mc.renderSlackTextBlock(ctx, *b.Text, mentions))
 		}
 		if len(b.Fields) > 0 {
 			var fieldTable strings.Builder
@@ -207,7 +209,7 @@ func (mc *MessageConverter) renderSlackBlock(ctx context.Context, block slack.Bl
 				if i%2 == 0 {
 					fieldTable.WriteString("<tr>")
 				}
-				fieldTable.WriteString(fmt.Sprintf("<td>%s</td>", mc.mrkdwnToMatrixHtml(ctx, field.Text)))
+				fieldTable.WriteString(fmt.Sprintf("<td>%s</td>", mc.mrkdwnToMatrixHtml(ctx, field.Text, mentions)))
 				if i%2 != 0 || i == len(b.Fields)-1 {
 					fieldTable.WriteString("</tr>")
 				}
@@ -219,7 +221,7 @@ func (mc *MessageConverter) renderSlackBlock(ctx context.Context, block slack.Bl
 	case *slack.RichTextBlock:
 		var htmlText strings.Builder
 		for _, element := range b.Elements {
-			htmlText.WriteString(mc.renderSlackRichTextElement(ctx, len(b.Elements), element))
+			htmlText.WriteString(mc.renderSlackRichTextElement(ctx, len(b.Elements), element, mentions))
 		}
 		return format.UnwrapSingleParagraph(htmlText.String()), false
 	case *slack.ContextBlock:
@@ -227,7 +229,7 @@ func (mc *MessageConverter) renderSlackBlock(ctx context.Context, block slack.Bl
 		var unsupported bool = false
 		for _, element := range b.ContextElements.Elements {
 			if mrkdwnElem, ok := element.(*slack.TextBlockObject); ok {
-				htmlText.WriteString(fmt.Sprintf("<sup>%s</sup>", mc.mrkdwnToMatrixHtml(ctx, mrkdwnElem.Text)))
+				htmlText.WriteString(fmt.Sprintf("<sup>%s</sup>", mc.mrkdwnToMatrixHtml(ctx, mrkdwnElem.Text, mentions)))
 			} else {
 				zerolog.Ctx(ctx).Debug().
 					Type("element_type", element).
@@ -247,7 +249,7 @@ func (mc *MessageConverter) renderSlackBlock(ctx context.Context, block slack.Bl
 	}
 }
 
-func (mc *MessageConverter) renderSlackRichTextElement(ctx context.Context, numElements int, element slack.RichTextElement) string {
+func (mc *MessageConverter) renderSlackRichTextElement(ctx context.Context, numElements int, element slack.RichTextElement, mentions *event.Mentions) string {
 	switch e := element.(type) {
 	case *slack.RichTextSection:
 		var htmlTag string
@@ -262,7 +264,7 @@ func (mc *MessageConverter) renderSlackRichTextElement(ctx context.Context, numE
 			htmlTag = "<p>"
 			htmlCloseTag = "</p>"
 		}
-		return fmt.Sprintf("%s%s%s", htmlTag, mc.renderRichTextSectionElements(ctx, e.Elements), htmlCloseTag)
+		return fmt.Sprintf("%s%s%s", htmlTag, mc.renderRichTextSectionElements(ctx, e.Elements, mentions), htmlCloseTag)
 	case *slack.RichTextList:
 		var htmlText strings.Builder
 		var htmlTag string
@@ -276,7 +278,7 @@ func (mc *MessageConverter) renderSlackRichTextElement(ctx context.Context, numE
 		}
 		htmlText.WriteString(htmlTag)
 		for _, e := range e.Elements {
-			htmlText.WriteString(fmt.Sprintf("<li>%s</li>", mc.renderSlackRichTextElement(ctx, 1, &e)))
+			htmlText.WriteString(fmt.Sprintf("<li>%s</li>", mc.renderSlackRichTextElement(ctx, 1, &e, mentions)))
 		}
 		htmlText.WriteString(htmlCloseTag)
 		return htmlText.String()
@@ -286,17 +288,17 @@ func (mc *MessageConverter) renderSlackRichTextElement(ctx context.Context, numE
 	}
 }
 
-func (mc *MessageConverter) blocksToHTML(ctx context.Context, blocks slack.Blocks, alwaysWrap bool) string {
+func (mc *MessageConverter) blocksToHTML(ctx context.Context, blocks slack.Blocks, alwaysWrap bool, mentions *event.Mentions) string {
 	var htmlText strings.Builder
 
 	if len(blocks.BlockSet) == 1 && !alwaysWrap {
 		// don't wrap in <p> tag if there's only one block
-		text, _ := mc.renderSlackBlock(ctx, blocks.BlockSet[0])
+		text, _ := mc.renderSlackBlock(ctx, blocks.BlockSet[0], mentions)
 		htmlText.WriteString(text)
 	} else {
 		var lastBlockWasUnsupported bool = false
 		for _, block := range blocks.BlockSet {
-			text, unsupported := mc.renderSlackBlock(ctx, block)
+			text, unsupported := mc.renderSlackBlock(ctx, block, mentions)
 			if !(unsupported && lastBlockWasUnsupported) {
 				htmlText.WriteString(fmt.Sprintf("<p>%s</p>", text))
 			}
@@ -331,9 +333,10 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 		return mc.renderImageBlock(ctx, portal, intent, *imageBlock)
 	}
 
+	mentions := &event.Mentions{}
 	var htmlText strings.Builder
 
-	htmlText.WriteString(mc.blocksToHTML(ctx, blocks, false))
+	htmlText.WriteString(mc.blocksToHTML(ctx, blocks, false, mentions))
 
 	if len(attachments) > 0 && htmlText.String() != "" {
 		htmlText.WriteString("<br>")
@@ -342,18 +345,18 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 	for _, attachment := range attachments {
 		if attachment.IsMsgUnfurl {
 			for _, message_block := range attachment.MessageBlocks {
-				renderedAttachment := mc.blocksToHTML(ctx, message_block.Message.Blocks, true)
+				renderedAttachment := mc.blocksToHTML(ctx, message_block.Message.Blocks, true, mentions)
 				htmlText.WriteString(fmt.Sprintf("<blockquote><b>%s</b><br>%s<a href=\"%s\"><i>%s</i></a><br></blockquote>",
 					attachment.AuthorName, renderedAttachment, attachment.FromURL, attachment.Footer))
 			}
 		} else if len(attachment.Blocks.BlockSet) > 0 {
 			for _, message_block := range attachment.Blocks.BlockSet {
-				renderedAttachment, _ := mc.renderSlackBlock(ctx, message_block)
+				renderedAttachment, _ := mc.renderSlackBlock(ctx, message_block, mentions)
 				htmlText.WriteString(fmt.Sprintf("<blockquote>%s</blockquote>", renderedAttachment))
 			}
 		} else {
 			if len(attachment.Pretext) > 0 {
-				htmlText.WriteString(fmt.Sprintf("<p>%s</p>", mc.mrkdwnToMatrixHtml(ctx, attachment.Pretext)))
+				htmlText.WriteString(fmt.Sprintf("<p>%s</p>", mc.mrkdwnToMatrixHtml(ctx, attachment.Pretext, mentions)))
 			}
 			var attachParts []string
 			if len(attachment.AuthorName) > 0 {
@@ -367,15 +370,15 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 			if len(attachment.Title) > 0 {
 				if len(attachment.TitleLink) > 0 {
 					attachParts = append(attachParts, fmt.Sprintf("<b><a href=\"%s\">%s</a></b>",
-						attachment.TitleLink, mc.mrkdwnToMatrixHtml(ctx, attachment.Title)))
+						attachment.TitleLink, mc.mrkdwnToMatrixHtml(ctx, attachment.Title, mentions)))
 				} else {
-					attachParts = append(attachParts, fmt.Sprintf("<b>%s</b>", mc.mrkdwnToMatrixHtml(ctx, attachment.Title)))
+					attachParts = append(attachParts, fmt.Sprintf("<b>%s</b>", mc.mrkdwnToMatrixHtml(ctx, attachment.Title, mentions)))
 				}
 			}
 			if len(attachment.Text) > 0 {
-				attachParts = append(attachParts, mc.mrkdwnToMatrixHtml(ctx, attachment.Text))
+				attachParts = append(attachParts, mc.mrkdwnToMatrixHtml(ctx, attachment.Text, mentions))
 			} else if len(attachment.Fallback) > 0 {
-				attachParts = append(attachParts, mc.mrkdwnToMatrixHtml(ctx, attachment.Fallback))
+				attachParts = append(attachParts, mc.mrkdwnToMatrixHtml(ctx, attachment.Fallback, mentions))
 			}
 			htmlText.WriteString(fmt.Sprintf("<blockquote>%s", strings.Join(attachParts, "<br>")))
 			if len(attachment.Fields) > 0 {
@@ -386,7 +389,7 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 						fieldBody += "<tr>"
 					}
 					fieldBody += fmt.Sprintf("<td><strong>%s</strong><br>%s</td>",
-						field.Title, mc.mrkdwnToMatrixHtml(ctx, field.Value))
+						field.Title, mc.mrkdwnToMatrixHtml(ctx, field.Value, mentions))
 					short = !short && field.Short
 					if !short {
 						fieldBody += "</tr>"
@@ -398,7 +401,7 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 			}
 			var footerParts []string
 			if len(attachment.Footer) > 0 {
-				footerParts = append(footerParts, mc.mrkdwnToMatrixHtml(ctx, attachment.Footer))
+				footerParts = append(footerParts, mc.mrkdwnToMatrixHtml(ctx, attachment.Footer, mentions))
 			}
 			if len(attachment.Ts) > 0 {
 				ts, _ := attachment.Ts.Int64()
@@ -413,6 +416,7 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 	}
 
 	content := format.HTMLToContent(htmlText.String())
+	content.Mentions = mentions
 	return &bridgev2.ConvertedMessagePart{
 		Type:    event.EventMessage,
 		Content: &content,

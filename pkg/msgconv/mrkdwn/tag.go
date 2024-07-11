@@ -32,6 +32,7 @@ import (
 	"github.com/yuin/goldmark/renderer"
 	"github.com/yuin/goldmark/text"
 	goldmarkUtil "github.com/yuin/goldmark/util"
+	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 )
 
@@ -131,7 +132,10 @@ func (s *slackTagParser) Trigger() []byte {
 	return []byte{'<'}
 }
 
-var ContextKeyContext = parser.NewContextKey()
+var (
+	ContextKeyContext  = parser.NewContextKey()
+	ContextKeyMentions = parser.NewContextKey()
+)
 
 func (s *slackTagParser) Parse(parent ast.Node, block text.Reader, pc parser.Context) ast.Node {
 	//before := block.PrecendingCharacter()
@@ -153,11 +157,17 @@ func (s *slackTagParser) Parse(parent ast.Node, block text.Reader, pc parser.Con
 	switch sigil {
 	case "@":
 		mxid, name := s.GetUserInfo(ctx, content)
+		pc.Get(ContextKeyMentions).(*event.Mentions).Add(mxid)
 		return &astSlackUserMention{astSlackTag: tag, userID: content, mxid: mxid, name: name}
 	case "#":
 		mxid, alias, name := s.GetChannelInfo(ctx, content)
 		return &astSlackChannelMention{astSlackTag: tag, channelID: content, serverName: s.ServerName, mxid: mxid, alias: alias, name: name}
 	case "!":
+		switch content {
+		case "channel", "everyone", "here":
+			pc.Get(ContextKeyMentions).(*event.Mentions).Room = true
+		default:
+		}
 		return &astSlackSpecialMention{astSlackTag: tag, content: content}
 	case "":
 		return &astSlackURL{astSlackTag: tag, url: content}

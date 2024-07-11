@@ -88,7 +88,7 @@ func (mc *MessageConverter) ToSlack(
 	case event.MsgText, event.MsgEmote, event.MsgNotice:
 		options := make([]slack.MsgOption, 0, 4)
 		if content.Format == event.FormatHTML {
-			options = append(options, slack.MsgOptionText(mc.MatrixHTMLParser.Parse(ctx, content.FormattedBody, portal), false))
+			options = append(options, slack.MsgOptionText(mc.MatrixHTMLParser.Parse(ctx, content.FormattedBody, content.Mentions, portal), false))
 		} else {
 			options = append(options,
 				slack.MsgOptionText(content.Body, false),

@@ -19,9 +19,11 @@ package matrixfmt
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/format"
 	"maunium.net/go/mautrix/id"
 
@@ -33,11 +35,20 @@ type MatrixHTMLParser struct {
 	parser *format.HTMLParser
 }
 
-const ctxPortalKey = "portal"
+const (
+	ctxPortalKey          = "portal"
+	ctxAllowedMentionsKey = "allowed_mentions"
+)
 
 func (mhp *MatrixHTMLParser) pillConverter(displayname, mxid, eventID string, ctx format.Context) string {
 	switch mxid[0] {
 	case '@':
+		allowedMentions := ctx.ReturnData[ctxAllowedMentionsKey].(*event.Mentions)
+		if allowedMentions != nil && !slices.Contains(allowedMentions.UserIDs, id.UserID(mxid)) {
+			// If `m.mentions` is set and doesn't contain this user, don't convert the mention
+			// TODO does slack have some way to do silent mentions?
+			return displayname
+		}
 		ghostID, ok := mhp.br.Matrix.ParseGhostMXID(id.UserID(mxid))
 		if ok {
 			_, userID := slackid.ParseUserID(ghostID)
@@ -90,8 +101,9 @@ func New(br *bridgev2.Bridge) *MatrixHTMLParser {
 	return mhp
 }
 
-func (mhp *MatrixHTMLParser) Parse(ctx context.Context, htmlData string, portal *bridgev2.Portal) string {
+func (mhp *MatrixHTMLParser) Parse(ctx context.Context, htmlData string, mentions *event.Mentions, portal *bridgev2.Portal) string {
 	formatCtx := format.NewContext(ctx)
 	formatCtx.ReturnData[ctxPortalKey] = portal
+	formatCtx.ReturnData[ctxAllowedMentionsKey] = mentions
 	return mhp.parser.Parse(htmlData, formatCtx)
 }

@@ -152,7 +152,9 @@ func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, po
 }
 
 func (mc *MessageConverter) slackTextToMatrix(ctx context.Context, text string) *bridgev2.ConvertedMessagePart {
-	content := format.HTMLToContent(mc.mrkdwnToMatrixHtml(ctx, text))
+	mentions := &event.Mentions{}
+	content := format.HTMLToContent(mc.mrkdwnToMatrixHtml(ctx, text, mentions))
+	content.Mentions = mentions
 	return &bridgev2.ConvertedMessagePart{
 		Type:    event.EventMessage,
 		Content: &content,

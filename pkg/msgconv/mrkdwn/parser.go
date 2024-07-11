@@ -23,6 +23,7 @@ import (
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/parser"
+	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/format"
 
 	"go.mau.fi/mautrix-slack/pkg/msgconv/emoji"
@@ -44,9 +45,10 @@ func New(options *Params) *SlackMrkdwnParser {
 
 var escapeFixer = regexp.MustCompile(`\\(__[^_]|\*\*[^*])`)
 
-func (smp *SlackMrkdwnParser) Parse(ctx context.Context, input string) (string, error) {
+func (smp *SlackMrkdwnParser) Parse(ctx context.Context, input string, mentions *event.Mentions) (string, error) {
 	parserCtx := parser.NewContext()
 	parserCtx.Set(ContextKeyContext, ctx)
+	parserCtx.Set(ContextKeyMentions, mentions)
 
 	input = emoji.ReplaceShortcodesWithUnicode(input)
 	// TODO is this actually needed or was it just blindly copied from Discord?
