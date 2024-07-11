@@ -66,6 +66,7 @@ func (mc *MessageConverter) ToMatrix(
 		partID := slackid.MakePartID(slackid.PartTypeFile, i, file.ID)
 		output.Parts = append(output.Parts, mc.slackFileToMatrix(ctx, portal, intent, client, partID, &file))
 	}
+	output.MergeCaption()
 	return output
 }
 
@@ -80,28 +81,37 @@ func (mc *MessageConverter) EditToMatrix(
 ) *bridgev2.ConvertedEdit {
 	ctx = context.WithValue(ctx, contextKeyPortal, portal)
 	ctx = context.WithValue(ctx, contextKeySource, source)
+	client := source.Client.(SlackClientProvider).GetClient()
 	existingMap := make(map[networkid.PartID]*database.Message, len(existing))
 	for _, part := range existing {
 		existingMap[part.PartID] = part
 	}
+	editTargetPart := existing[0]
 	output := &bridgev2.ConvertedEdit{}
-	textPart := mc.makeTextPart(ctx, msg, portal, intent)
-	if textPart != nil {
-		output.ModifiedParts = append(output.ModifiedParts, &bridgev2.ConvertedEditPart{
-			Part:    existingMap[""],
-			Type:    textPart.Type,
-			Content: textPart.Content,
-			Extra:   textPart.Extra,
-		})
-	}
+	modifiedPart := mc.makeTextPart(ctx, msg, portal, intent)
+	captionMerged := false
 	for i, file := range msg.Files {
+		partID := slackid.MakePartID(slackid.PartTypeFile, i, file.ID)
+		existingPart, ok := existingMap[partID]
 		if file.Mode == "tombstone" {
-			partID := slackid.MakePartID(slackid.PartTypeFile, i, file.ID)
-			deletedPart, ok := existingMap[partID]
 			if ok {
-				output.DeletedParts = append(output.DeletedParts, deletedPart)
+				output.DeletedParts = append(output.DeletedParts, existingPart)
+			}
+		} else {
+			// For edits where there's either only one media part, or there was no text part,
+			// we'll need to fetch the first media part to merge it in
+			if !captionMerged && modifiedPart != nil && (len(msg.Files) == 1 || editTargetPart.PartID != "") {
+				if editTargetPart.PartID != "" {
+					editTargetPart = existingPart
+				}
+				filePart := mc.slackFileToMatrix(ctx, portal, intent, client, partID, &file)
+				modifiedPart = bridgev2.MergeCaption(modifiedPart, filePart)
+				captionMerged = true
 			}
 		}
+	}
+	if modifiedPart != nil {
+		output.ModifiedParts = append(output.ModifiedParts, modifiedPart.ToEditPart(editTargetPart))
 	}
 	return output
 }
