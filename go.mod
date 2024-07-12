@@ -8,7 +8,7 @@ require (
 	github.com/yuin/goldmark v1.7.4
 	go.mau.fi/util v0.5.1-0.20240708204011-043c35cda49c
 	gopkg.in/yaml.v3 v3.0.1
-	maunium.net/go/mautrix v0.19.0-beta.1.0.20240711110145-32e6f25c34b9
+	maunium.net/go/mautrix v0.19.0-beta.1.0.20240712131006-681b5449d545
 )
 
 require (
@@ -34,4 +34,4 @@ require (
 	maunium.net/go/mauflag v1.0.0 // indirect
 )
 
-replace github.com/slack-go/slack => github.com/beeper/slackgo v0.0.0-20240710101621-cfe3621af5cc
+replace github.com/slack-go/slack => github.com/beeper/slackgo v0.0.0-20240712130756-280e5a87be97

@@ -177,18 +177,31 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 
 	case *slack.ChannelUpdateEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, "", evt.Timestamp)
-		meta.Type = bridgev2.RemoteEventChatInfoChange
+		meta.Type = bridgev2.RemoteEventChatResync
 		meta.CreatePortal = true
-		fullChatInfo, err := s.fetchChatInfo(ctx, evt.Channel, false)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get chat info: %w", err)
-		}
-		wrapped = &SlackChatInfoChange{
-			SlackEventMeta: &meta,
-			Change:         &bridgev2.ChatInfoChange{ChatInfo: fullChatInfo},
-		}
+		wrapped = &meta
 	}
 	return wrapped, metaErr
+}
+
+func (s *SlackClient) getReactionInfo(ctx context.Context, reaction string) (emoji string, extraContent map[string]any) {
+	shortcode := fmt.Sprintf(":%s:", reaction)
+	slackReactionInfo := map[string]any{
+		"name": reaction,
+	}
+	var isImage bool
+	emoji, isImage = s.GetEmoji(ctx, reaction)
+	if isImage {
+		slackReactionInfo["mxc"] = emoji
+		if !s.Main.Config.CustomEmojiReactions {
+			emoji = shortcode
+		}
+	}
+	extraContent = map[string]any{
+		"com.beeper.reaction.shortcode": shortcode,
+		"fi.mau.slack.reaction":         slackReactionInfo,
+	}
+	return
 }
 
 func (s *SlackClient) wrapReaction(ctx context.Context, meta *SlackEventMeta, reaction string, add bool, target slack.ReactionItem) (*SlackReaction, error) {
@@ -197,21 +210,7 @@ func (s *SlackClient) wrapReaction(ctx context.Context, meta *SlackEventMeta, re
 	} else {
 		meta.Type = bridgev2.RemoteEventReactionRemove
 	}
-	shortcode := fmt.Sprintf(":%s:", reaction)
-	slackReactionInfo := map[string]any{
-		"name": reaction,
-	}
-	emoji, isImage := s.GetEmoji(ctx, reaction)
-	if isImage {
-		slackReactionInfo["mxc"] = emoji
-		if !s.Main.Config.CustomEmojiReactions {
-			emoji = shortcode
-		}
-	}
-	extraContent := map[string]any{
-		"com.beeper.reaction.shortcode": shortcode,
-		"fi.mau.slack.reaction":         slackReactionInfo,
-	}
+	emoji, extraContent := s.getReactionInfo(ctx, reaction)
 	return &SlackReaction{
 		SlackEventMeta: meta,
 		Emoji:          emoji,
@@ -295,6 +294,9 @@ func (s *SlackEventMeta) GetPortalKey() networkid.PortalKey {
 }
 
 func (s *SlackEventMeta) AddLogContext(c zerolog.Context) zerolog.Context {
+	if s.LogContext == nil {
+		return c
+	}
 	return s.LogContext(c)
 }
 
@@ -328,11 +330,11 @@ type SlackChatInfoChange struct {
 	Change *bridgev2.ChatInfoChange
 }
 
+var _ bridgev2.RemoteChatInfoChange = (*SlackChatInfoChange)(nil)
+
 func (s *SlackChatInfoChange) GetChatInfoChange(ctx context.Context) (*bridgev2.ChatInfoChange, error) {
 	return s.Change, nil
 }
-
-var _ bridgev2.RemoteChatInfoChange = (*SlackChatInfoChange)(nil)
 
 type SlackReadReceipt struct {
 	*SlackEventMeta
@@ -399,10 +401,36 @@ type SlackMessage struct {
 }
 
 var (
-	_ bridgev2.RemoteMessage        = (*SlackMessage)(nil)
-	_ bridgev2.RemoteEdit           = (*SlackMessage)(nil)
-	_ bridgev2.RemoteMessageRemove  = (*SlackMessage)(nil)
-	_ bridgev2.RemoteChatInfoChange = (*SlackMessage)(nil)
+	_ bridgev2.RemoteMessage       = (*SlackMessage)(nil)
+	_ bridgev2.RemoteEdit          = (*SlackMessage)(nil)
+	_ bridgev2.RemoteMessageRemove = (*SlackMessage)(nil)
+	_ bridgev2.RemoteChatResync    = (*SlackMessage)(nil)
+)
+
+type SlackChatResync struct {
+	*SlackEventMeta
+	Client         *SlackClient
+	LatestMessage  string
+	ShouldSyncInfo bool
+}
+
+func (s *SlackChatResync) GetChatInfo(ctx context.Context, portal *bridgev2.Portal) (*bridgev2.ChatInfo, error) {
+	if !s.ShouldSyncInfo {
+		return nil, nil
+	}
+	return s.Client.GetChatInfo(ctx, portal)
+}
+
+func (s *SlackChatResync) CheckNeedsBackfill(ctx context.Context, latestBridgedMessage *database.Message) (bool, error) {
+	if latestBridgedMessage == nil {
+		return s.LatestMessage != "" && s.LatestMessage != "0000000000.000000", nil
+	}
+	_, _, latestBridgedID, _ := slackid.ParseMessageID(latestBridgedMessage.ID)
+	return latestBridgedID < s.LatestMessage, nil
+}
+
+var (
+	_ bridgev2.RemoteChatResyncBackfill = (*SlackChatResync)(nil)
 )
 
 func (s *SlackMessage) GetType() bridgev2.RemoteEventType {
@@ -413,7 +441,8 @@ func (s *SlackMessage) GetType() bridgev2.RemoteEventType {
 		return bridgev2.RemoteEventMessageRemove
 	case slack.MsgSubTypeChannelTopic, slack.MsgSubTypeChannelPurpose, slack.MsgSubTypeChannelName,
 		slack.MsgSubTypeGroupTopic, slack.MsgSubTypeGroupPurpose, slack.MsgSubTypeGroupName:
-		return bridgev2.RemoteEventChatInfoChange
+		// TODO implement deltas instead of full resync
+		return bridgev2.RemoteEventChatResync
 	case slack.MsgSubTypeMessageReplied, slack.MsgSubTypeGroupJoin, slack.MsgSubTypeGroupLeave,
 		slack.MsgSubTypeChannelJoin, slack.MsgSubTypeChannelLeave:
 		return bridgev2.RemoteEventUnknown
@@ -452,15 +481,4 @@ func (s *SlackMessage) GetTargetMessage() networkid.MessageID {
 	default:
 		return ""
 	}
-}
-
-func (s *SlackMessage) GetChatInfoChange(ctx context.Context) (*bridgev2.ChatInfoChange, error) {
-	fullChatInfo, err := s.Client.fetchChatInfo(ctx, s.Data.Channel, false)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get chat info: %w", err)
-	}
-	// TODO implement deltas instead of full resync
-	return &bridgev2.ChatInfoChange{
-		ChatInfo: fullChatInfo,
-	}, nil
 }

@@ -159,9 +159,45 @@ func (s *SlackClient) syncTeamPortal(ctx context.Context) error {
 
 func (s *SlackClient) SyncChannels(ctx context.Context) {
 	log := zerolog.Ctx(ctx)
-	serverInfo := make(map[string]*slack.Channel)
+	clientCounts, err := s.Client.ClientCountsContext(ctx, &slack.ClientCountsParams{
+		ThreadCountsByChannel: true,
+		OrgWideAware:          true,
+		IncludeFileChannels:   true,
+	})
+	if err != nil {
+		log.Err(err).Msg("Failed to fetch client counts")
+		return
+	}
+	latestMessageIDs := make(map[string]string, len(clientCounts.Channels)+len(clientCounts.MpIMs)+len(clientCounts.IMs))
+	for _, ch := range clientCounts.Channels {
+		latestMessageIDs[ch.ID] = ch.Latest
+	}
+	for _, ch := range clientCounts.MpIMs {
+		latestMessageIDs[ch.ID] = ch.Latest
+	}
+	for _, ch := range clientCounts.IMs {
+		latestMessageIDs[ch.ID] = ch.Latest
+	}
+	userPortals, err := s.UserLogin.Bridge.DB.UserPortal.GetAllForLogin(ctx, s.UserLogin.UserLogin)
+	if err != nil {
+		log.Err(err).Msg("Failed to fetch user portals")
+		return
+	}
+	existingPortals := make(map[networkid.PortalKey]struct{}, len(userPortals))
+	for _, up := range userPortals {
+		existingPortals[up.Portal] = struct{}{}
+	}
+	var channels []*slack.Channel
 	token, _ := s.UserLogin.Metadata.Extra["token"].(string)
-	if !strings.HasPrefix(token, "xoxs") {
+	if strings.HasPrefix(token, "xoxs") || s.Main.Config.Backfill.ConversationCount == -1 {
+		for _, ch := range s.BootResp.Channels {
+			channels = append(channels, &ch.Channel)
+		}
+		for _, ch := range s.BootResp.IMs {
+			channels = append(channels, &ch.Channel)
+		}
+		log.Debug().Int("channel_count", len(channels)).Msg("Using channels from boot response for sync")
+	} else {
 		totalLimit := s.Main.Config.Backfill.ConversationCount
 		var cursor string
 		log.Debug().Int("total_limit", totalLimit).Msg("Fetching conversation list for sync")
@@ -181,7 +217,7 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 			}
 			log.Debug().Int("chunk_size", len(channelsChunk)).Msg("Fetched chunk of conversations")
 			for _, channel := range channelsChunk {
-				serverInfo[channel.ID] = &channel
+				channels = append(channels, &channel)
 			}
 			if nextCursor == "" || len(channelsChunk) == 0 {
 				break
@@ -190,66 +226,34 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 			cursor = nextCursor
 		}
 	}
-	userPortals, err := s.UserLogin.Bridge.DB.UserPortal.GetAllForLogin(ctx, s.UserLogin.UserLogin)
-	if err != nil {
-		log.Err(err).Msg("Failed to fetch existing portals for sync")
-		return
+	slices.SortFunc(channels, func(a, b *slack.Channel) int {
+		return cmp.Compare(latestMessageIDs[a.ID], latestMessageIDs[b.ID])
+	})
+	for _, ch := range channels {
+		portalKey := s.makePortalKey(ch)
+		delete(existingPortals, portalKey)
+		latestMessageID, hasCounts := latestMessageIDs[ch.ID]
+		s.Main.br.QueueRemoteEvent(s.UserLogin, &SlackChatResync{
+			SlackEventMeta: &SlackEventMeta{
+				Type:         bridgev2.RemoteEventChatResync,
+				PortalKey:    portalKey,
+				CreatePortal: hasCounts || !(ch.IsIM || ch.IsMpIM),
+			},
+			LatestMessage: latestMessageID,
+		})
 	}
-	for _, userPortal := range userPortals {
-		_, channelID := slackid.ParsePortalID(userPortal.Portal.ID)
+	for portalKey := range existingPortals {
+		_, channelID := slackid.ParsePortalID(portalKey.ID)
 		if channelID == "" {
 			continue
 		}
-		portal, err := s.UserLogin.Bridge.GetExistingPortalByID(ctx, userPortal.Portal)
-		if err != nil {
-			log.Err(err).Stringer("portal_key", userPortal.Portal).Msg("Failed to get existing portal for sync")
-			continue
-		} else {
-			if portal.MXID != "" {
-				// Refetch metadata because the list output doesn't have enough info
-				info, err := s.GetChatInfo(ctx, portal)
-				if err != nil {
-					log.Err(err).Stringer("portal_key", portal.PortalKey).Msg("Failed to fetch chat info for existing portal")
-				} else {
-					portal.UpdateInfo(ctx, info, s.UserLogin, nil, time.Time{})
-				}
-				delete(serverInfo, channelID)
-			}
-		}
-	}
-	remainingChannels := make([]*slack.Channel, len(serverInfo))
-	i := 0
-	for _, channel := range serverInfo {
-		remainingChannels[i] = channel
-		i++
-	}
-	slices.SortFunc(remainingChannels, func(a, b *slack.Channel) int {
-		return cmp.Compare(a.LastRead, b.LastRead)
-	})
-	for _, ch := range remainingChannels {
-		portal, err := s.UserLogin.Bridge.GetPortalByID(ctx, s.makePortalKey(ch))
-		if err != nil {
-			log.Err(err).Str("channel_id", ch.ID).Msg("Failed to get portal for channel")
-			continue
-		}
-		// Fetch full info to determine if it's a non-open DM
-		ch, err = s.fetchChatInfoWithCache(ctx, ch.ID)
-		if err != nil {
-			log.Err(err).Str("channel_id", ch.ID).Msg("Failed to fetch full chat info for channel")
-			continue
-		}
-		if (ch.IsIM || ch.IsMpIM) && (ch.Latest == nil || ch.Latest.SubType == "") {
-			continue
-		}
-		info, err := s.wrapChatInfo(ctx, ch, true)
-		if err != nil {
-			log.Err(err).Str("channel_id", ch.ID).Msg("Failed to wrap chat info for channel")
-			continue
-		}
-		err = portal.CreateMatrixRoom(ctx, s.UserLogin, info)
-		if err != nil {
-			log.Err(err).Str("channel_id", ch.ID).Msg("Failed to create Matrix room for channel")
-		}
+		s.Main.br.QueueRemoteEvent(s.UserLogin, &SlackChatResync{
+			SlackEventMeta: &SlackEventMeta{
+				Type:      bridgev2.RemoteEventChatResync,
+				PortalKey: portalKey,
+			},
+			LatestMessage: latestMessageIDs[channelID],
+		})
 	}
 }
 
