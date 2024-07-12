@@ -59,15 +59,21 @@ func (s *SlackClient) FetchMessages(ctx context.Context, params bridgev2.FetchMe
 		return nil, err
 	}
 	convertedMessages := make([]*bridgev2.BackfillMessage, len(chunk.Messages))
+	var maxMsgID string
 	for i, msg := range chunk.Messages {
 		convertedMessages[i] = s.wrapBackfillMessage(ctx, params.Portal, &msg.Msg)
+		if maxMsgID < msg.Timestamp {
+			maxMsgID = msg.Timestamp
+		}
 	}
 	slices.Reverse(convertedMessages)
+	lastRead := s.getLastReadCache(channelID)
 	return &bridgev2.FetchMessagesResponse{
 		Messages: convertedMessages,
 		Cursor:   networkid.PaginationCursor(chunk.ResponseMetadata.Cursor),
 		HasMore:  chunk.HasMore,
 		Forward:  params.Forward,
+		MarkRead: lastRead != "" && maxMsgID != "" && lastRead >= maxMsgID,
 	}, nil
 }
 

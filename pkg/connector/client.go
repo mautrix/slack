@@ -72,6 +72,7 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 			TeamID:    teamID,
 
 			chatInfoCache: make(map[string]chatInfoCacheEntry),
+			lastReadCache: make(map[string]string),
 		}
 	}
 	teamPortalKey := networkid.PortalKey{ID: slackid.MakeTeamPortalID(teamID)}
@@ -101,6 +102,8 @@ type SlackClient struct {
 
 	chatInfoCache     map[string]chatInfoCacheEntry
 	chatInfoCacheLock sync.Mutex
+	lastReadCache     map[string]string
+	lastReadCacheLock sync.Mutex
 }
 
 var _ bridgev2.NetworkAPI = (*SlackClient)(nil)
@@ -157,6 +160,18 @@ func (s *SlackClient) syncTeamPortal(ctx context.Context) error {
 	return nil
 }
 
+func (s *SlackClient) setLastReadCache(channelID, ts string) {
+	s.lastReadCacheLock.Lock()
+	s.lastReadCache[channelID] = ts
+	s.lastReadCacheLock.Unlock()
+}
+
+func (s *SlackClient) getLastReadCache(channelID string) string {
+	s.lastReadCacheLock.Lock()
+	defer s.lastReadCacheLock.Unlock()
+	return s.lastReadCache[channelID]
+}
+
 func (s *SlackClient) SyncChannels(ctx context.Context) {
 	log := zerolog.Ctx(ctx)
 	clientCounts, err := s.Client.ClientCountsContext(ctx, &slack.ClientCountsParams{
@@ -169,15 +184,22 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 		return
 	}
 	latestMessageIDs := make(map[string]string, len(clientCounts.Channels)+len(clientCounts.MpIMs)+len(clientCounts.IMs))
+	lastReadCache := make(map[string]string, len(clientCounts.Channels)+len(clientCounts.MpIMs)+len(clientCounts.IMs))
 	for _, ch := range clientCounts.Channels {
 		latestMessageIDs[ch.ID] = ch.Latest
+		lastReadCache[ch.ID] = ch.LastRead
 	}
 	for _, ch := range clientCounts.MpIMs {
 		latestMessageIDs[ch.ID] = ch.Latest
+		lastReadCache[ch.ID] = ch.LastRead
 	}
 	for _, ch := range clientCounts.IMs {
 		latestMessageIDs[ch.ID] = ch.Latest
+		lastReadCache[ch.ID] = ch.LastRead
 	}
+	s.lastReadCacheLock.Lock()
+	s.lastReadCache = lastReadCache
+	s.lastReadCacheLock.Unlock()
 	userPortals, err := s.UserLogin.Bridge.DB.UserPortal.GetAllForLogin(ctx, s.UserLogin.UserLogin)
 	if err != nil {
 		log.Err(err).Msg("Failed to fetch user portals")
