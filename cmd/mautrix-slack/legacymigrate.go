@@ -17,34 +17,22 @@
 package main
 
 import (
-	"maunium.net/go/mautrix/bridgev2/matrix/mxmain"
-
-	"go.mau.fi/mautrix-slack/pkg/connector"
+	_ "embed"
 )
 
-var (
-	Tag       = "unknown"
-	Commit    = "unknown"
-	BuildTime = "unknown"
-)
+const legacyMigrateRenameTables = `
+ALTER TABLE portal RENAME TO portal_old;
+ALTER TABLE puppet RENAME TO puppet_old;
+ALTER TABLE "user" RENAME TO user_old;
+ALTER TABLE user_team RENAME TO user_team_old;
+ALTER TABLE user_team_portal RENAME TO user_team_portal_old;
+ALTER TABLE message RENAME TO message_old;
+ALTER TABLE reaction RENAME TO reaction_old;
+ALTER TABLE attachment RENAME TO attachment_old;
+ALTER TABLE team_info RENAME TO team_info_old;
+ALTER TABLE backfill_state RENAME TO backfill_state_old;
+ALTER TABLE emoji RENAME TO emoji_old;
+`
 
-func main() {
-	m := mxmain.BridgeMain{
-		Name:        "mautrix-slack",
-		Description: "A Matrix-Slack puppeting bridge",
-		URL:         "https://github.com/mautrix/slack",
-		Version:     "0.1.0",
-		Connector:   &connector.SlackConnector{},
-	}
-	m.PostInit = func() {
-		m.CheckLegacyDB(
-			16,
-			"c565641",
-			"v0.1.0",
-			m.LegacyMigrateSimple(legacyMigrateRenameTables, legacyMigrateCopyData, 11),
-			true,
-		)
-	}
-	m.InitVersion(Tag, Commit, BuildTime)
-	m.Run()
-}
+//go:embed legacymigrate.sql
+var legacyMigrateCopyData string
