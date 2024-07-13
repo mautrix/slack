@@ -94,16 +94,12 @@ func (s *SlackTokenLogin) SubmitCookies(ctx context.Context, input map[string]st
 		return nil, err
 	}
 	ul, err := s.User.NewLogin(ctx, &database.UserLogin{
-		ID: slackid.MakeUserLoginID(info.Team.ID, info.Self.ID),
-		Metadata: database.UserLoginMetadata{
-			StandardUserLoginMetadata: database.StandardUserLoginMetadata{
-				RemoteName: fmt.Sprintf("%s (%s)", info.Team.Name, info.Self.Profile.Email),
-			},
-			Extra: map[string]any{
-				"email":        info.Self.Profile.Email,
-				"token":        token,
-				"cookie_token": cookieToken,
-			},
+		ID:         slackid.MakeUserLoginID(info.Team.ID, info.Self.ID),
+		RemoteName: fmt.Sprintf("%s - %s", info.Team.Name, info.Self.Profile.Email),
+		Metadata: &UserLoginMetadata{
+			Email:       info.Self.Profile.Email,
+			Token:       token,
+			CookieToken: cookieToken,
 		},
 	}, &bridgev2.NewLoginParams{
 		DeleteOnConflict:  true,

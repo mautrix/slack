@@ -29,6 +29,7 @@ import (
 	"github.com/slack-go/slack"
 	"go.mau.fi/util/ptr"
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 
 	"go.mau.fi/mautrix-slack/pkg/slackid"
@@ -132,9 +133,11 @@ func (s *SlackClient) generateGroupDMName(ctx context.Context, members []string)
 func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, fetchMembers bool) (*bridgev2.ChatInfo, error) {
 	var members bridgev2.ChatMemberList
 	var avatar *bridgev2.Avatar
+	var roomType database.RoomType
 	var err error
 	switch {
 	case info.IsMpIM:
+		roomType = database.RoomTypeGroupDM
 		members.IsFull = true
 		members.Members = make([]bridgev2.ChatMember, len(info.Members))
 		for i, member := range info.Members {
@@ -145,6 +148,7 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, fet
 			return nil, err
 		}
 	case info.IsIM:
+		roomType = database.RoomTypeDM
 		members.IsFull = true
 		selfMember := bridgev2.ChatMember{EventSender: s.makeEventSender(s.UserID)}
 		otherMember := bridgev2.ChatMember{EventSender: s.makeEventSender(info.User)}
@@ -192,13 +196,12 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, fet
 		IsNoteToSelf: info.IsIM && info.User == s.UserID,
 	})
 	return &bridgev2.ChatInfo{
-		Name:         ptr.Ptr(name),
-		Topic:        ptr.Ptr(info.Topic.Value),
-		Avatar:       avatar,
-		Members:      &members,
-		IsDirectChat: ptr.Ptr(info.IsIM),
-		IsSpace:      ptr.Ptr(false),
-		ParentID:     ptr.Ptr(slackid.MakeTeamPortalID(s.TeamID)),
+		Name:     ptr.Ptr(name),
+		Topic:    ptr.Ptr(info.Topic.Value),
+		Avatar:   avatar,
+		Members:  &members,
+		Type:     &roomType,
+		ParentID: ptr.Ptr(slackid.MakeTeamPortalID(s.TeamID)),
 	}, nil
 }
 
@@ -226,7 +229,7 @@ func (s *SlackClient) getTeamInfo() *bridgev2.ChatInfo {
 			Members:          []bridgev2.ChatMember{{EventSender: s.makeEventSender(s.UserID)}},
 			PowerLevels:      &bridgev2.PowerLevelChanges{EventsDefault: ptr.Ptr(100)},
 		},
-		IsSpace: ptr.Ptr(true),
+		Type: ptr.Ptr(database.RoomTypeSpace),
 	}
 }
 
