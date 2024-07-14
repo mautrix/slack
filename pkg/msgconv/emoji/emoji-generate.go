@@ -19,8 +19,11 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -101,14 +104,39 @@ func unifiedToSkinToneID(input string) string {
 	return "skin-tone-" + strings.Join(parts, "-")
 }
 
+func getVariationSequences() (output map[string]struct{}) {
+	variationSequences := exerrors.Must(http.Get("https://www.unicode.org/Public/15.1.0/ucd/emoji/emoji-variation-sequences.txt"))
+	buf := bufio.NewReader(variationSequences.Body)
+	output = make(map[string]struct{})
+	for {
+		line, err := buf.ReadString('\n')
+		if errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			panic(err)
+		}
+		parts := strings.Split(line, "; ")
+		if len(parts) < 2 || parts[1] != "emoji style" {
+			continue
+		}
+		unifiedParts := strings.Split(parts[0], " ")
+		output[unifiedParts[0]] = struct{}{}
+	}
+	return
+}
+
 func main() {
 	var emojis []Emoji
 	resp := exerrors.Must(http.Get("https://raw.githubusercontent.com/iamcal/emoji-data/master/emoji.json"))
 	exerrors.PanicIfNotNil(json.NewDecoder(resp.Body).Decode(&emojis))
+	vs := getVariationSequences()
 
 	shortcodeToEmoji := make(map[string]string)
 	for _, emoji := range emojis {
 		shortcodeToEmoji[emoji.ShortName] = unifiedToUnicode(emoji.Unified)
+		if _, needsVariation := vs[emoji.Unified]; needsVariation {
+			shortcodeToEmoji[emoji.ShortName] += "\ufe0f"
+		}
 		for skinToneKey, stEmoji := range emoji.SkinVariations {
 			shortcodeToEmoji[fmt.Sprintf("%s::%s", emoji.ShortName, unifiedToSkinToneID(skinToneKey))] = unifiedToUnicode(stEmoji.Unified)
 		}
