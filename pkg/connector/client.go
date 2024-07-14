@@ -76,7 +76,7 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 	}
 	teamPortalKey := networkid.PortalKey{ID: slackid.MakeTeamPortalID(teamID)}
 	var err error
-	sc.TeamPortal, err = s.br.UnlockedGetPortalByID(ctx, teamPortalKey, false)
+	sc.TeamPortal, err = s.br.UnlockedGetPortalByKey(ctx, teamPortalKey, false)
 	if err != nil {
 		return fmt.Errorf("failed to get team portal: %w", err)
 	}

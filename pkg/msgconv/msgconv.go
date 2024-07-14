@@ -76,7 +76,7 @@ func (mc *MessageConverter) GetMentionedUserInfo(ctx context.Context, userID str
 func (mc *MessageConverter) GetMentionedRoomInfo(ctx context.Context, channelID string) (mxid id.RoomID, alias id.RoomAlias, name string) {
 	source := ctx.Value(contextKeySource).(*bridgev2.UserLogin)
 	teamID, _ := slackid.ParseUserLoginID(source.ID)
-	portal, err := mc.Bridge.GetExistingPortalByID(ctx, networkid.PortalKey{
+	portal, err := mc.Bridge.GetExistingPortalByKey(ctx, networkid.PortalKey{
 		ID:       slackid.MakePortalID(teamID, channelID),
 		Receiver: source.ID,
 	})
