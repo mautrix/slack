@@ -30,6 +30,8 @@ type SlackConnector struct {
 	Config  Config
 	DB      *slackdb.SlackDB
 	MsgConv *msgconv.MessageConverter
+
+	HackyStartupHook func(context.Context) error
 }
 
 var (
@@ -48,6 +50,11 @@ func (s *SlackConnector) SetMaxFileSize(maxSize int64) {
 }
 
 func (s *SlackConnector) Start(ctx context.Context) error {
+	if s.HackyStartupHook != nil {
+		if err := s.HackyStartupHook(ctx); err != nil {
+			return err
+		}
+	}
 	return s.DB.Upgrade(ctx)
 }
 

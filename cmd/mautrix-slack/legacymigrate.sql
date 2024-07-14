@@ -49,11 +49,19 @@ SELECT
     topic_set,
     in_space,
     CASE
-        WHEN type=1 THEN 'dm'
-        WHEN type=2 THEN 'group_dm'
+        WHEN type=2 THEN 'dm'
+        WHEN type=3 THEN 'group_dm'
         ELSE ''
     END, -- room_type
-    '{}' -- metadata
+    CASE
+        WHEN type=2 THEN
+            -- only: postgres
+            jsonb_build_object
+            -- only: sqlite (line commented)
+--          json_object
+            ('other_user_id', dm_user_id)
+        ELSE '{}'
+    END -- metadata
 FROM portal_old;
 
 INSERT INTO ghost (
@@ -189,7 +197,8 @@ SELECT DISTINCT
     '', -- portal_receiver
     false, -- in_space
     false, -- preferred
-    NULL -- last_read
+    -- only: postgres
+    CAST(NULL AS BIGINT) -- last_read
 FROM user_team_portal_old;
 
 UPDATE portal
@@ -225,3 +234,5 @@ DROP TABLE user_team_old;
 DROP TABLE puppet_old;
 DROP TABLE user_old;
 DROP TABLE emoji_old;
+
+CREATE TABLE database_was_migrated();

@@ -152,6 +152,7 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, fet
 	var avatar *bridgev2.Avatar
 	var roomType database.RoomType
 	var err error
+	var extraUpdates func(ctx context.Context, portal *bridgev2.Portal) bool
 	switch {
 	case info.IsMpIM:
 		roomType = database.RoomTypeGroupDM
@@ -180,6 +181,14 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, fet
 		}
 		ghost.UpdateInfoIfNecessary(ctx, s.UserLogin, bridgev2.RemoteEventUnknown)
 		info.Name = ghost.Name
+		extraUpdates = func(ctx context.Context, portal *bridgev2.Portal) bool {
+			meta := portal.Metadata.(*PortalMetadata)
+			if meta.OtherUserID != info.User {
+				meta.OtherUserID = info.User
+				return true
+			}
+			return false
+		}
 	case info.Name != "":
 		members = s.generateMemberList(ctx, info, fetchMembers)
 	default:
@@ -201,12 +210,13 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, fet
 		IsNoteToSelf: info.IsIM && info.User == s.UserID,
 	})
 	return &bridgev2.ChatInfo{
-		Name:     ptr.Ptr(name),
-		Topic:    ptr.Ptr(info.Topic.Value),
-		Avatar:   avatar,
-		Members:  &members,
-		Type:     &roomType,
-		ParentID: ptr.Ptr(slackid.MakeTeamPortalID(s.TeamID)),
+		Name:         ptr.Ptr(name),
+		Topic:        ptr.Ptr(info.Topic.Value),
+		Avatar:       avatar,
+		Members:      &members,
+		Type:         &roomType,
+		ParentID:     ptr.Ptr(slackid.MakeTeamPortalID(s.TeamID)),
+		ExtraUpdates: extraUpdates,
 	}, nil
 }
 

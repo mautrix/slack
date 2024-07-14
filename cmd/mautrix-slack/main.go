@@ -28,14 +28,16 @@ var (
 	BuildTime = "unknown"
 )
 
+var c = &connector.SlackConnector{}
+var m = mxmain.BridgeMain{
+	Name:        "mautrix-slack",
+	Description: "A Matrix-Slack puppeting bridge",
+	URL:         "https://github.com/mautrix/slack",
+	Version:     "0.1.0",
+	Connector:   c,
+}
+
 func main() {
-	m := mxmain.BridgeMain{
-		Name:        "mautrix-slack",
-		Description: "A Matrix-Slack puppeting bridge",
-		URL:         "https://github.com/mautrix/slack",
-		Version:     "0.1.0",
-		Connector:   &connector.SlackConnector{},
-	}
 	m.PostInit = func() {
 		m.CheckLegacyDB(
 			16,
@@ -45,6 +47,7 @@ func main() {
 			true,
 		)
 	}
+	c.HackyStartupHook = postMigrate
 	m.InitVersion(Tag, Commit, BuildTime)
 	m.Run()
 }
