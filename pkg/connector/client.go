@@ -260,7 +260,9 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 				PortalKey:    portalKey,
 				CreatePortal: hasCounts || !(ch.IsIM || ch.IsMpIM),
 			},
-			LatestMessage: latestMessageID,
+			Client:         s,
+			LatestMessage:  latestMessageID,
+			PreFetchedInfo: ch,
 		})
 	}
 	for portalKey := range existingPortals {
@@ -268,12 +270,18 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 		if channelID == "" {
 			continue
 		}
+		latestMessageID, ok := latestMessageIDs[channelID]
+		if !ok {
+			// TODO delete portal if it's actually gone?
+			continue
+		}
 		s.Main.br.QueueRemoteEvent(s.UserLogin, &SlackChatResync{
 			SlackEventMeta: &SlackEventMeta{
 				Type:      bridgev2.RemoteEventChatResync,
 				PortalKey: portalKey,
 			},
-			LatestMessage: latestMessageIDs[channelID],
+			Client:        s,
+			LatestMessage: latestMessageID,
 		})
 	}
 }

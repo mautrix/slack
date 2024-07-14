@@ -130,6 +130,23 @@ func (s *SlackClient) generateGroupDMName(ctx context.Context, members []string)
 	return strings.Join(ghostNames, ", "), nil
 }
 
+func (s *SlackClient) generateMemberList(ctx context.Context, info *slack.Channel, fetchList bool) (members bridgev2.ChatMemberList) {
+	if fetchList {
+		members.Members = s.fetchChannelMembers(ctx, info.ID, s.Main.Config.ParticipantSyncCount)
+	}
+	hasSelf := false
+	for _, mem := range members.Members {
+		if mem.IsFromMe {
+			hasSelf = true
+		}
+	}
+	if !hasSelf && info.IsMember {
+		members.Members = append(members.Members, bridgev2.ChatMember{EventSender: s.makeEventSender(s.UserID)})
+	}
+	members.IsFull = len(members.Members) >= info.NumMembers
+	return
+}
+
 func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, fetchMembers bool) (*bridgev2.ChatInfo, error) {
 	var members bridgev2.ChatMemberList
 	var avatar *bridgev2.Avatar
@@ -164,19 +181,7 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, fet
 		ghost.UpdateInfoIfNecessary(ctx, s.UserLogin, bridgev2.RemoteEventUnknown)
 		info.Name = ghost.Name
 	case info.Name != "":
-		if fetchMembers {
-			members.Members = s.fetchChannelMembers(ctx, info.ID, s.Main.Config.ParticipantSyncCount)
-		}
-		hasSelf := false
-		for _, mem := range members.Members {
-			if mem.IsFromMe {
-				hasSelf = true
-			}
-		}
-		if !hasSelf && info.IsMember {
-			members.Members = append(members.Members, bridgev2.ChatMember{EventSender: s.makeEventSender(s.UserID)})
-		}
-		members.IsFull = len(members.Members) >= info.NumMembers
+		members = s.generateMemberList(ctx, info, fetchMembers)
 	default:
 		return nil, fmt.Errorf("unrecognized channel type")
 	}

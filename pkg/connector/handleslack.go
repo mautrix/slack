@@ -414,11 +414,18 @@ type SlackChatResync struct {
 	*SlackEventMeta
 	Client         *SlackClient
 	LatestMessage  string
+	PreFetchedInfo *slack.Channel
 	ShouldSyncInfo bool
 }
 
 func (s *SlackChatResync) GetChatInfo(ctx context.Context, portal *bridgev2.Portal) (*bridgev2.ChatInfo, error) {
-	if !s.ShouldSyncInfo {
+	if s.PreFetchedInfo != nil {
+		wrappedInfo, err := s.Client.wrapChatInfo(ctx, s.PreFetchedInfo, portal.MXID == "" || !s.Client.Main.Config.ParticipantSyncOnlyOnCreate)
+		if err != nil {
+			return nil, fmt.Errorf("failed to wrap chat info: %w", err)
+		}
+		return wrappedInfo, nil
+	} else if !s.ShouldSyncInfo {
 		return nil, nil
 	}
 	return s.Client.GetChatInfo(ctx, portal)
