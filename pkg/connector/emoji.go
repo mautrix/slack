@@ -29,7 +29,7 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"go.mau.fi/mautrix-slack/pkg/connector/slackdb"
-	"go.mau.fi/mautrix-slack/pkg/msgconv/emoji"
+	"go.mau.fi/mautrix-slack/pkg/emoji"
 )
 
 func (s *SlackClient) handleEmojiChange(ctx context.Context, evt *slack.EmojiChangedEvent) {

@@ -26,7 +26,7 @@ import (
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/format"
 
-	"go.mau.fi/mautrix-slack/pkg/msgconv/emoji"
+	"go.mau.fi/mautrix-slack/pkg/emoji"
 )
 
 type SlackMrkdwnParser struct {

@@ -29,7 +29,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2/networkid"
 
 	"go.mau.fi/mautrix-slack/pkg/connector/slackdb"
-	"go.mau.fi/mautrix-slack/pkg/msgconv/emoji"
+	"go.mau.fi/mautrix-slack/pkg/emoji"
 	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
 
