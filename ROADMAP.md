@@ -21,22 +21,20 @@
         * [x] Media and files
         * [x] Edits
         * [x] Threads (as Matrix native threads with fallback Matrix reply)
-        * [ ] Custom Slack emoji
-    * [ ] Reactions
-        * [x] Regular Unicode emoji
-        * [ ] Custom Slack emoji
+        * [x] Custom Slack emoji
+    * [x] Reactions
     * [x] Typing status
     * [x] Message deletion
-    * [ ] Reading pre-login message history
+    * [x] Reading pre-login message history
     * [x] Conversation types
         * [x] Channel (including Slack Connect)
         * [x] Group DM
         * [x] 1:1 DM
-    * [ ] Initial conversation metadata
+    * [x] Initial conversation metadata
         * [x] Name
         * [x] Topic
         * [x] Description
-        * [ ] Channel members
+        * [x] Channel members
     * [ ] Conversation metadata changes
         * [ ] Name
         * [x] Topic

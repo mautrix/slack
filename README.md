@@ -1,4 +1,8 @@
 # mautrix-slack
+![Languages](https://img.shields.io/github/languages/top/mautrix/slack.svg)
+[![License](https://img.shields.io/github/license/mautrix/slack.svg)](LICENSE)
+[![GitLab CI](https://mau.dev/mautrix/slack/badges/main/pipeline.svg)](https://mau.dev/mautrix/slack/container_registry)
+
 A Matrix-Slack puppeting bridge based on [slack-go](https://github.com/slack-go/slack).
 
 ## Documentation
