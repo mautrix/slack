@@ -17,39 +17,53 @@
 package emoji
 
 import (
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"regexp"
 	"strings"
+	"sync"
 
 	"go.mau.fi/util/exerrors"
 )
 
 //go:generate go run ./emoji-generate.go
 //go:embed emoji.json
-var emojiFileData []byte
+var emojiFileData embed.FS
 
-var ShortcodeToUnicodeMap map[string]string
-var UnicodeToShortcodeMap map[string]string
+var shortcodeToUnicodeMap map[string]string
+var unicodeToShortcodeMap map[string]string
+var shortcodeRegex *regexp.Regexp
+var initOnce sync.Once
 
-func init() {
-	exerrors.PanicIfNotNil(json.Unmarshal(emojiFileData, &ShortcodeToUnicodeMap))
-	UnicodeToShortcodeMap = make(map[string]string, len(ShortcodeToUnicodeMap))
-	for shortcode, emoji := range ShortcodeToUnicodeMap {
-		UnicodeToShortcodeMap[emoji] = shortcode
+func doInit() {
+	file := exerrors.Must(emojiFileData.Open("emoji.json"))
+	exerrors.PanicIfNotNil(json.NewDecoder(file).Decode(&shortcodeToUnicodeMap))
+	exerrors.PanicIfNotNil(file.Close())
+	unicodeToShortcodeMap = make(map[string]string, len(shortcodeToUnicodeMap))
+	for shortcode, emoji := range shortcodeToUnicodeMap {
+		unicodeToShortcodeMap[emoji] = shortcode
 	}
+	shortcodeRegex = regexp.MustCompile(`:[^:\s]*:`)
 }
 
-var ShortcodeRegex = regexp.MustCompile(`:[^:\s]*:`)
+func GetShortcode(unicode string) string {
+	initOnce.Do(doInit)
+	return unicodeToShortcodeMap[unicode]
+}
+
+func GetUnicode(shortcode string) string {
+	return shortcodeToUnicodeMap[strings.Trim(shortcode, ":")]
+}
+
+func replaceShortcode(code string) string {
+	emoji := GetUnicode(code)
+	if emoji == "" {
+		return code
+	}
+	return emoji
+}
 
 func ReplaceShortcodesWithUnicode(text string) string {
-	return ShortcodeRegex.ReplaceAllStringFunc(text, func(code string) string {
-		strippedCode := strings.Trim(code, ":")
-		emoji, found := ShortcodeToUnicodeMap[strippedCode]
-		if found {
-			return emoji
-		} else {
-			return code
-		}
-	})
+	initOnce.Do(doInit)
+	return shortcodeRegex.ReplaceAllStringFunc(text, replaceShortcode)
 }

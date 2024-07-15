@@ -219,7 +219,7 @@ func (s *SlackClient) syncEmojis(ctx context.Context, onlyIfCountMismatch bool) 
 		if uri, ok := uploaded[alias]; ok {
 			dbEmoji.Alias = alias
 			dbEmoji.ImageMXC = uri
-		} else if unicode, ok := emoji.ShortcodeToUnicodeMap[alias]; ok {
+		} else if unicode := emoji.GetUnicode(alias); unicode != "" {
 			dbEmoji.Alias = unicode
 		}
 		err = s.Main.DB.Emoji.Put(ctx, dbEmoji)
@@ -245,8 +245,7 @@ func (s *SlackClient) syncEmojis(ctx context.Context, onlyIfCountMismatch bool) 
 }
 
 func (s *SlackClient) TryGetEmoji(ctx context.Context, shortcode string) (string, bool) {
-	unicode, ok := emoji.ShortcodeToUnicodeMap[shortcode]
-	if ok {
+	if unicode := emoji.GetUnicode(shortcode); unicode != "" {
 		return unicode, false
 	}
 

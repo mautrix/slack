@@ -124,9 +124,8 @@ func (s *SlackClient) PreHandleMatrixReaction(ctx context.Context, msg *bridgev2
 		}
 		emojiID = dbEmoji.EmojiID
 	} else {
-		var ok bool
-		emojiID, ok = emoji.UnicodeToShortcodeMap[key]
-		if !ok {
+		emojiID = emoji.GetShortcode(key)
+		if emojiID == "" {
 			err = fmt.Errorf("unknown emoji %q", key)
 		}
 	}
