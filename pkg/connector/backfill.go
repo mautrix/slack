@@ -54,14 +54,34 @@ func (s *SlackClient) FetchMessages(ctx context.Context, params bridgev2.FetchMe
 		slackParams.Oldest = slackParams.Latest
 		slackParams.Latest = ""
 	}
-	chunk, err := s.Client.GetConversationHistoryContext(ctx, slackParams)
+	var chunk *slack.GetConversationHistoryResponse
+	var err error
+	var threadTS string
+	if params.ThreadRoot != "" {
+		var ok bool
+		_, _, threadTS, ok = slackid.ParseMessageID(params.ThreadRoot)
+		if !ok {
+			return nil, fmt.Errorf("invalid thread root ID")
+		}
+		chunk, err = s.Client.GetConversationRepliesContext(ctx, &slack.GetConversationRepliesParameters{
+			GetConversationHistoryParameters: *slackParams,
+			Timestamp:                        threadTS,
+		})
+	} else {
+		chunk, err = s.Client.GetConversationHistoryContext(ctx, slackParams)
+	}
 	if err != nil {
 		return nil, err
 	}
-	convertedMessages := make([]*bridgev2.BackfillMessage, len(chunk.Messages))
+	convertedMessages := make([]*bridgev2.BackfillMessage, 0, len(chunk.Messages))
 	var maxMsgID string
-	for i, msg := range chunk.Messages {
-		convertedMessages[i] = s.wrapBackfillMessage(ctx, params.Portal, &msg.Msg)
+	for _, msg := range chunk.Messages {
+		if threadTS != "" && msg.Timestamp == threadTS {
+			continue
+		} else if threadTS == "" && msg.ThreadTimestamp != "" && msg.ThreadTimestamp != msg.Timestamp {
+			continue
+		}
+		convertedMessages = append(convertedMessages, s.wrapBackfillMessage(ctx, params.Portal, &msg.Msg, threadTS != ""))
 		if maxMsgID < msg.Timestamp {
 			maxMsgID = msg.Timestamp
 		}
@@ -77,7 +97,7 @@ func (s *SlackClient) FetchMessages(ctx context.Context, params bridgev2.FetchMe
 	}, nil
 }
 
-func (s *SlackClient) wrapBackfillMessage(ctx context.Context, portal *bridgev2.Portal, msg *slack.Msg) *bridgev2.BackfillMessage {
+func (s *SlackClient) wrapBackfillMessage(ctx context.Context, portal *bridgev2.Portal, msg *slack.Msg, inThread bool) *bridgev2.BackfillMessage {
 	senderID := msg.User
 	if senderID == "" {
 		senderID = msg.BotID
@@ -100,6 +120,10 @@ func (s *SlackClient) wrapBackfillMessage(ctx context.Context, portal *bridgev2.
 		ID:               slackid.MakeMessageID(s.TeamID, channelID, msg.Timestamp),
 		Timestamp:        slackid.ParseSlackTimestamp(msg.Timestamp),
 		Reactions:        make([]*bridgev2.BackfillReaction, 0, len(msg.Reactions)),
+	}
+	if msg.ReplyCount > 0 && !inThread {
+		out.ShouldBackfillThread = true
+		out.LastThreadMessage = slackid.MakeMessageID(s.TeamID, channelID, msg.LatestReply)
 	}
 	for _, reaction := range msg.Reactions {
 		emoji, extraContent := s.getReactionInfo(ctx, reaction.Name)

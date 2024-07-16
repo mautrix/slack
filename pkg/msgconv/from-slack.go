@@ -50,7 +50,7 @@ func (mc *MessageConverter) ToMatrix(
 	ctx = context.WithValue(ctx, contextKeySource, source)
 	client := source.Client.(SlackClientProvider).GetClient()
 	output := &bridgev2.ConvertedMessage{}
-	if msg.ThreadTimestamp != "" {
+	if msg.ThreadTimestamp != "" && msg.ThreadTimestamp != msg.Timestamp {
 		teamID, channelID := slackid.ParsePortalID(portal.ID)
 		output.ThreadRoot = ptr.Ptr(slackid.MakeMessageID(teamID, channelID, msg.ThreadTimestamp))
 	}
