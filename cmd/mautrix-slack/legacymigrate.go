@@ -27,9 +27,6 @@ import (
 	"maunium.net/go/mautrix/bridgev2/matrix"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
-
-	"go.mau.fi/mautrix-slack/pkg/connector"
-	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
 
 const legacyMigrateRenameTables = `
@@ -65,12 +62,11 @@ func postMigrate(ctx context.Context) error {
 	for _, portal := range portals {
 		switch portal.RoomType {
 		case database.RoomTypeDM:
-			teamID, _ := slackid.ParsePortalID(portal.ID)
-			otherUserID := portal.Metadata.(*connector.PortalMetadata).OtherUserID
+			otherUserID := portal.OtherUserID
 			if otherUserID == "" {
 				zerolog.Ctx(ctx).Warn().Msg("DM portal has no other user ID")
 			} else {
-				ghost, err := m.Bridge.GetGhostByID(ctx, slackid.MakeUserID(teamID, otherUserID))
+				ghost, err := m.Bridge.GetGhostByID(ctx, otherUserID)
 				if err != nil {
 					return fmt.Errorf("failed to get ghost for %s: %w", otherUserID, err)
 				}

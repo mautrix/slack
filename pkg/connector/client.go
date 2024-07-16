@@ -212,9 +212,11 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 	token := s.UserLogin.Metadata.(*UserLoginMetadata).Token
 	if strings.HasPrefix(token, "xoxs") || s.Main.Config.Backfill.ConversationCount == -1 {
 		for _, ch := range s.BootResp.Channels {
+			ch.IsMember = true
 			channels = append(channels, &ch.Channel)
 		}
 		for _, ch := range s.BootResp.IMs {
+			ch.IsMember = true
 			channels = append(channels, &ch.Channel)
 		}
 		log.Debug().Int("channel_count", len(channels)).Msg("Using channels from boot response for sync")

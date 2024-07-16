@@ -6,9 +6,9 @@ require (
 	github.com/rs/zerolog v1.33.0
 	github.com/slack-go/slack v0.10.3
 	github.com/yuin/goldmark v1.7.4
-	go.mau.fi/util v0.5.1-0.20240714204302-8d7c8742a899
+	go.mau.fi/util v0.6.0
 	gopkg.in/yaml.v3 v3.0.1
-	maunium.net/go/mautrix v0.19.0-beta.1.0.20240715123557-cb850e3f0293
+	maunium.net/go/mautrix v0.19.1-0.20240716143345-128781cffe32
 )
 
 require (
@@ -34,4 +34,4 @@ require (
 	maunium.net/go/mauflag v1.0.0 // indirect
 )
 
-replace github.com/slack-go/slack => github.com/beeper/slackgo v0.0.0-20240712130756-280e5a87be97
+replace github.com/slack-go/slack => github.com/beeper/slackgo v0.0.0-20240716122207-d35506171b9c

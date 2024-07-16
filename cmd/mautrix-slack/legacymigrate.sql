@@ -26,7 +26,7 @@ SELECT
 FROM team_info_old;
 
 INSERT INTO portal (
-    bridge_id, id, receiver, mxid, parent_id, parent_receiver, relay_bridge_id, relay_login_id,
+    bridge_id, id, receiver, mxid, parent_id, parent_receiver, relay_bridge_id, relay_login_id, other_user_id,
     name, topic, avatar_id, avatar_hash, avatar_mxc, name_set, avatar_set, topic_set, in_space, room_type,
     metadata
 )
@@ -39,6 +39,7 @@ SELECT
     '', -- parent_receiver
     NULL, -- relay_bridge_id
     NULL, -- relay_login_id
+    CASE WHEN type=2 THEN team_id || '-' || dm_user_id END, -- other_user_id
     name,
     topic,
     avatar, -- avatar_id,
@@ -53,15 +54,7 @@ SELECT
         WHEN type=3 THEN 'group_dm'
         ELSE ''
     END, -- room_type
-    CASE
-        WHEN type=2 THEN
-            -- only: postgres
-            jsonb_build_object
-            -- only: sqlite (line commented)
---          json_object
-            ('other_user_id', dm_user_id)
-        ELSE '{}'
-    END -- metadata
+    '{}' -- metadata
 FROM portal_old;
 
 INSERT INTO ghost (

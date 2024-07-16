@@ -22,9 +22,7 @@ import (
 
 func (s *SlackConnector) GetDBMetaTypes() database.MetaTypes {
 	return database.MetaTypes{
-		Portal: func() any {
-			return &PortalMetadata{}
-		},
+		Portal:   nil,
 		Ghost:    nil,
 		Message:  nil,
 		Reaction: nil,
@@ -32,10 +30,6 @@ func (s *SlackConnector) GetDBMetaTypes() database.MetaTypes {
 			return &UserLoginMetadata{}
 		},
 	}
-}
-
-type PortalMetadata struct {
-	OtherUserID string `json:"other_user_id,omitempty"`
 }
 
 type UserLoginMetadata struct {

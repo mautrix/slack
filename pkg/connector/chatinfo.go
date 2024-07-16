@@ -143,7 +143,7 @@ func (s *SlackClient) generateMemberList(ctx context.Context, info *slack.Channe
 	if !hasSelf && info.IsMember {
 		members.Members = append(members.Members, bridgev2.ChatMember{EventSender: s.makeEventSender(s.UserID)})
 	}
-	members.IsFull = len(members.Members) >= info.NumMembers
+	members.IsFull = info.NumMembers > 0 && len(members.Members) >= info.NumMembers
 	return
 }
 
@@ -170,6 +170,7 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, fet
 		members.IsFull = true
 		selfMember := bridgev2.ChatMember{EventSender: s.makeEventSender(s.UserID)}
 		otherMember := bridgev2.ChatMember{EventSender: s.makeEventSender(info.User)}
+		members.OtherUserID = otherMember.Sender
 		if s.UserID == info.User {
 			members.Members = []bridgev2.ChatMember{selfMember}
 		} else {
@@ -181,20 +182,12 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, fet
 		}
 		ghost.UpdateInfoIfNecessary(ctx, s.UserLogin, bridgev2.RemoteEventUnknown)
 		info.Name = ghost.Name
-		extraUpdates = func(ctx context.Context, portal *bridgev2.Portal) bool {
-			meta := portal.Metadata.(*PortalMetadata)
-			if meta.OtherUserID != info.User {
-				meta.OtherUserID = info.User
-				return true
-			}
-			return false
-		}
 	case info.Name != "":
 		members = s.generateMemberList(ctx, info, fetchMembers)
 	default:
 		return nil, fmt.Errorf("unrecognized channel type")
 	}
-	if s.Main.Config.WorkspaceAvatarInRooms && (info.Name != "" || info.IsMpIM) {
+	if s.Main.Config.WorkspaceAvatarInRooms && (roomType == database.RoomTypeDefault || roomType == database.RoomTypeGroupDM) {
 		avatar = &bridgev2.Avatar{
 			ID:     s.TeamPortal.AvatarID,
 			Remove: s.TeamPortal.AvatarID == "",
