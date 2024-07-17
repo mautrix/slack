@@ -30,7 +30,7 @@ displayname_template: '{{or .Profile.DisplayName .Profile.RealName .Name}}{{if .
 #  .IsShared - Whether the channel is shared with another workspace.
 #  .IsExtShared - Whether the channel is shared with an external organization.
 #  .IsOrgShared - Whether the channel is shared with an organization in the same enterprise grid.
-channel_name_template: '{{if or .IsNoteToSelf (not .IsIM)}}{{if and .IsChannel (not .IsPrivate)}}#{{end}}{{.Name}}{{if .IsNoteToSelf}} (you){{end}}{{end}}'
+channel_name_template: '{{if and .IsChannel (not .IsPrivate)}}#{{end}}{{.Name}}{{if .IsNoteToSelf}} (you){{end}}'
 # Displayname template for Slack workspaces. Available variables:
 #  .Name - The name of the team
 #  .Domain - The Slack subdomain of the team

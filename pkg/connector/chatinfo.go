@@ -196,14 +196,17 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, fet
 		}
 	}
 	members.TotalMemberCount = info.NumMembers
-	name := s.Main.Config.FormatChannelName(&ChannelNameParams{
-		Channel:      info,
-		TeamName:     s.BootResp.Team.Name,
-		TeamDomain:   s.BootResp.Team.Domain,
-		IsNoteToSelf: info.IsIM && info.User == s.UserID,
-	})
+	var name *string
+	if roomType != database.RoomTypeDM || len(members.Members) == 1 {
+		name = ptr.Ptr(s.Main.Config.FormatChannelName(&ChannelNameParams{
+			Channel:      info,
+			TeamName:     s.BootResp.Team.Name,
+			TeamDomain:   s.BootResp.Team.Domain,
+			IsNoteToSelf: info.IsIM && info.User == s.UserID,
+		}))
+	}
 	return &bridgev2.ChatInfo{
-		Name:         ptr.Ptr(name),
+		Name:         name,
 		Topic:        ptr.Ptr(info.Topic.Value),
 		Avatar:       avatar,
 		Members:      &members,
