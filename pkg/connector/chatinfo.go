@@ -200,8 +200,7 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, fet
 	if roomType != database.RoomTypeDM || len(members.Members) == 1 {
 		name = ptr.Ptr(s.Main.Config.FormatChannelName(&ChannelNameParams{
 			Channel:      info,
-			TeamName:     s.BootResp.Team.Name,
-			TeamDomain:   s.BootResp.Team.Domain,
+			Team:         &s.BootResp.Team,
 			IsNoteToSelf: info.IsIM && info.User == s.UserID,
 		}))
 	}
@@ -281,14 +280,17 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string) (*bridge
 	var avatarURL string
 	isBot := userID == "USLACKBOT"
 	if info != nil {
-		name = ptr.Ptr(s.Main.Config.FormatDisplayname(info))
+		name = ptr.Ptr(s.Main.Config.FormatDisplayname(&DisplaynameParams{
+			User: info,
+			Team: &s.BootResp.Team,
+		}))
 		avatarURL = info.Profile.ImageOriginal
 		if avatarURL == "" && info.Profile.Image512 != "" {
 			avatarURL = info.Profile.Image512
 		}
 		isBot = isBot || info.IsBot || info.IsAppUser
 	} else if botInfo != nil {
-		name = ptr.Ptr(s.Main.Config.FormatBotDisplayname(botInfo))
+		name = ptr.Ptr(s.Main.Config.FormatBotDisplayname(botInfo, &s.BootResp.Team))
 		avatarURL = botInfo.Icons.Image72
 		isBot = true
 	}

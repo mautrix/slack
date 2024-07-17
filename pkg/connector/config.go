@@ -80,27 +80,34 @@ func executeTemplate(tpl *template.Template, data any) string {
 	return strings.TrimSpace(buffer.String())
 }
 
-func (c *Config) FormatDisplayname(user *slack.User) string {
+type DisplaynameParams struct {
+	*slack.User
+	Team *slack.TeamInfo
+}
+
+func (c *Config) FormatDisplayname(user *DisplaynameParams) string {
 	return executeTemplate(c.displaynameTemplate, user)
 }
 
-func (c *Config) FormatBotDisplayname(bot *slack.Bot) string {
-	return c.FormatDisplayname(&slack.User{
-		ID:      bot.ID,
-		Name:    bot.Name,
-		IsBot:   true,
-		Deleted: bot.Deleted,
-		Updated: bot.Updated,
-		Profile: slack.UserProfile{
-			DisplayName: bot.Name,
+func (c *Config) FormatBotDisplayname(bot *slack.Bot, team *slack.TeamInfo) string {
+	return c.FormatDisplayname(&DisplaynameParams{
+		User: &slack.User{
+			ID:      bot.ID,
+			Name:    bot.Name,
+			IsBot:   true,
+			Deleted: bot.Deleted,
+			Updated: bot.Updated,
+			Profile: slack.UserProfile{
+				DisplayName: bot.Name,
+			},
 		},
+		Team: team,
 	})
 }
 
 type ChannelNameParams struct {
 	*slack.Channel
-	TeamName     string
-	TeamDomain   string
+	Team         *slack.TeamInfo
 	IsNoteToSelf bool
 }
 
