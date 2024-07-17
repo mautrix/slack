@@ -52,6 +52,7 @@ func GetShortcode(unicode string) string {
 }
 
 func GetUnicode(shortcode string) string {
+	initOnce.Do(doInit)
 	return shortcodeToUnicodeMap[strings.Trim(shortcode, ":")]
 }
 
