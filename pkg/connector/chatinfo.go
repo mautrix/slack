@@ -213,6 +213,7 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, fet
 		Type:         &roomType,
 		ParentID:     ptr.Ptr(slackid.MakeTeamPortalID(s.TeamID)),
 		ExtraUpdates: extraUpdates,
+		CanBackfill:  true,
 	}, nil
 }
 

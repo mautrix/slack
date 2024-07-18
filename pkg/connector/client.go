@@ -261,6 +261,11 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 				Type:         bridgev2.RemoteEventChatResync,
 				PortalKey:    portalKey,
 				CreatePortal: hasCounts || !(ch.IsIM || ch.IsMpIM),
+				LogContext: func(c zerolog.Context) zerolog.Context {
+					return c.
+						Object("portal_key", portalKey).
+						Str("slack_latest_message_id", latestMessageID)
+				},
 			},
 			Client:         s,
 			LatestMessage:  latestMessageID,
