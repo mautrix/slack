@@ -17,19 +17,27 @@
 package connector
 
 import (
+	"go.mau.fi/util/jsontime"
+
 	"maunium.net/go/mautrix/bridgev2/database"
 )
 
 func (s *SlackConnector) GetDBMetaTypes() database.MetaTypes {
 	return database.MetaTypes{
-		Portal:   nil,
-		Ghost:    nil,
+		Portal: nil,
+		Ghost: func() any {
+			return &GhostMetadata{}
+		},
 		Message:  nil,
 		Reaction: nil,
 		UserLogin: func() any {
 			return &UserLoginMetadata{}
 		},
 	}
+}
+
+type GhostMetadata struct {
+	LastSync jsontime.Unix `json:"last_sync"`
 }
 
 type UserLoginMetadata struct {

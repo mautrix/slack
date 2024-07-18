@@ -27,6 +27,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
+	"go.mau.fi/util/jsontime"
 	"go.mau.fi/util/ptr"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
@@ -295,15 +296,23 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string) (*bridge
 		isBot = true
 	}
 	return &bridgev2.UserInfo{
-		Identifiers:  []string{fmt.Sprintf("slack-internal:%s", userID)},
-		Name:         name,
-		Avatar:       makeAvatar(avatarURL),
-		IsBot:        &isBot,
-		ExtraUpdates: nil,
+		Identifiers: []string{fmt.Sprintf("slack-internal:%s", userID)},
+		Name:        name,
+		Avatar:      makeAvatar(avatarURL),
+		IsBot:       &isBot,
+		ExtraUpdates: func(ctx context.Context, ghost *bridgev2.Ghost) bool {
+			ghost.Metadata.(*GhostMetadata).LastSync = jsontime.UnixNow()
+			return true
+		},
 	}, nil
 }
 
+const MinGhostSyncInterval = 24 * time.Hour
+
 func (s *SlackClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*bridgev2.UserInfo, error) {
+	if time.Since(ghost.Metadata.(*GhostMetadata).LastSync.Time) < MinGhostSyncInterval {
+		return nil, nil
+	}
 	_, userID := slackid.ParseUserID(ghost.ID)
 	return s.fetchUserInfo(ctx, userID)
 }
