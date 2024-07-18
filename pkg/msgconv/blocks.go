@@ -170,10 +170,8 @@ func (mc *MessageConverter) renderRichTextSectionElements(ctx context.Context, e
 				emoji, isImage := sc.GetEmoji(ctx, e.Name)
 				if isImage {
 					htmlText.WriteString(fmt.Sprintf(`<img data-mx-emoticon src="%[1]s" alt=":%[2]s:" title=":%[2]s:" height="32"/>`, emoji, e.Name))
-				} else if emoji != e.Name {
-					htmlText.WriteString(emoji)
 				} else {
-					htmlText.WriteString(fmt.Sprintf(":%s:", e.Name))
+					htmlText.WriteString(emoji)
 				}
 			}
 			closingTags(&htmlText, e.Style)

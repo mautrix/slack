@@ -87,7 +87,7 @@ func (s *SlackClient) addEmoji(ctx context.Context, emojiName, emojiValue string
 			return dbEmoji
 		}
 	} else {
-		if dbEmoji != nil && dbEmoji.Value == emojiValue {
+		if dbEmoji != nil && dbEmoji.Value == emojiValue && (dbEmoji.Alias != "" || dbEmoji.ImageMXC != "") {
 			return dbEmoji
 		}
 		// Don't reupload emojis that are only missing the value column (but do set the value column so it's there in the future)
@@ -190,8 +190,15 @@ func (s *SlackClient) syncEmojis(ctx context.Context, onlyIfCountMismatch bool) 
 			log.Err(err).Msg("Failed to get emoji count from database")
 			return nil
 		} else if emojiCount == len(resp) {
+			log.Debug().Int("emoji_count", len(resp)).Msg("Not syncing emojis: count is already correct")
 			return nil
 		}
+		log.Debug().
+			Int("emoji_count", len(resp)).
+			Int("cached_emoji_count", emojiCount).
+			Msg("Syncing team emojis as server has different number than cache")
+	} else {
+		log.Debug().Int("emoji_count", len(resp)).Msg("Syncing team emojis (didn't check cache)")
 	}
 
 	deferredAliases := make(map[string]string)
@@ -268,7 +275,7 @@ func (s *SlackClient) GetEmoji(ctx context.Context, shortcode string) (string, b
 		emojiVal, isImage = s.TryGetEmoji(ctx, shortcode)
 	}
 	if emojiVal == "" {
-		emojiVal = shortcode
+		emojiVal = fmt.Sprintf(":%s:", shortcode)
 		isImage = false
 	}
 	return emojiVal, isImage
