@@ -6,9 +6,9 @@ require (
 	github.com/rs/zerolog v1.33.0
 	github.com/slack-go/slack v0.10.3
 	github.com/yuin/goldmark v1.7.4
-	go.mau.fi/util v0.6.0
+	go.mau.fi/util v0.6.1-0.20240719175439-20a6073e1dd4
 	gopkg.in/yaml.v3 v3.0.1
-	maunium.net/go/mautrix v0.19.1-0.20240719110719-b881a7d45511
+	maunium.net/go/mautrix v0.19.1-0.20240719181800-ea591b0a2e23
 )
 
 require (
