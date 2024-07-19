@@ -47,7 +47,6 @@ func main() {
 			true,
 		)
 	}
-	c.HackyStartupHook = postMigrate
 	m.InitVersion(Tag, Commit, BuildTime)
 	m.Run()
 }

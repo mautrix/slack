@@ -227,5 +227,3 @@ DROP TABLE user_team_old;
 DROP TABLE puppet_old;
 DROP TABLE user_old;
 DROP TABLE emoji_old;
-
-CREATE TABLE database_was_migrated();

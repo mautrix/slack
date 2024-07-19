@@ -8,7 +8,7 @@ require (
 	github.com/yuin/goldmark v1.7.4
 	go.mau.fi/util v0.6.0
 	gopkg.in/yaml.v3 v3.0.1
-	maunium.net/go/mautrix v0.19.1-0.20240718165923-a4b0b55db29d
+	maunium.net/go/mautrix v0.19.1-0.20240719110719-b881a7d45511
 )
 
 require (
