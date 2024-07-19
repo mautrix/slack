@@ -43,7 +43,7 @@ func main() {
 			16,
 			"c565641",
 			"v0.1.0",
-			m.LegacyMigrateSimple(legacyMigrateRenameTables, legacyMigrateCopyData, 12),
+			m.LegacyMigrateSimple(legacyMigrateRenameTables, legacyMigrateCopyData, 14),
 			true,
 		)
 	}

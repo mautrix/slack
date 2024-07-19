@@ -27,7 +27,7 @@ FROM team_info_old;
 
 INSERT INTO portal (
     bridge_id, id, receiver, mxid, parent_id, parent_receiver, relay_bridge_id, relay_login_id, other_user_id,
-    name, topic, avatar_id, avatar_hash, avatar_mxc, name_set, avatar_set, topic_set, in_space, room_type,
+    name, topic, avatar_id, avatar_hash, avatar_mxc, name_set, avatar_set, topic_set, name_is_custom, in_space, room_type,
     metadata
 )
 SELECT
@@ -48,6 +48,7 @@ SELECT
     name_set,
     avatar_set,
     topic_set,
+    CASE WHEN type=2 THEN false ELSE true END, -- name_is_custom
     in_space,
     CASE
         WHEN type=2 THEN 'dm'
