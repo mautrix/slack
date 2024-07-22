@@ -5,7 +5,7 @@ INSERT INTO portal (
 )
 SELECT
     '', -- bridge_id
-    team_id || '-@', -- id
+    team_id, -- id
     '', -- receiver
     space_room,
     NULL, -- parent_id
@@ -35,7 +35,7 @@ SELECT
     team_id || '-' || channel_id, -- id
     '', -- receiver
     mxid,
-    team_id || '-@', -- parent_id
+    team_id, -- parent_id
     '', -- parent_receiver
     NULL, -- relay_bridge_id
     NULL, -- relay_login_id
@@ -199,7 +199,7 @@ FROM user_team_portal_old;
 
 UPDATE portal
 SET receiver=ul.user_login_id
-FROM (SELECT team_id || '-' || slack_id AS user_login_id, team_id || '-@' AS parent_id FROM user_team_old) ul
+FROM (SELECT team_id || '-' || slack_id AS user_login_id, team_id AS parent_id FROM user_team_old) ul
 WHERE room_type IN ('dm', 'group_dm') AND portal.parent_id=ul.parent_id;
 
 CREATE TABLE emoji (

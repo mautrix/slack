@@ -90,25 +90,26 @@ func UserLoginIDToUserID(userLoginID networkid.UserLoginID) networkid.UserID {
 	return networkid.UserID(strings.ToLower(string(userLoginID)))
 }
 
-const TeamPortalChannelID = "@"
-
 func MakeTeamPortalID(teamID string) networkid.PortalID {
-	return MakePortalID(teamID, TeamPortalChannelID)
+	return networkid.PortalID(teamID)
 }
 
 func MakePortalID(teamID, channelID string) networkid.PortalID {
+	if channelID == "" {
+		return MakeTeamPortalID(teamID)
+	}
 	return networkid.PortalID(fmt.Sprintf("%s-%s", teamID, channelID))
 }
 
 func ParsePortalID(id networkid.PortalID) (teamID, channelID string) {
 	parts := strings.Split(string(id), "-")
-	if len(parts) != 2 {
-		return "", ""
+	if len(parts) == 1 {
+		return parts[0], ""
+	} else if len(parts) == 2 {
+		return parts[0], parts[1]
+	} else {
+		return
 	}
-	if parts[1] == TeamPortalChannelID {
-		parts[1] = ""
-	}
-	return parts[0], parts[1]
 }
 
 func MakePortalKey(teamID, channelID string, userLoginID networkid.UserLoginID, isPrivateChat bool) (key networkid.PortalKey) {
