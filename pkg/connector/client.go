@@ -303,7 +303,7 @@ func (s *SlackClient) Disconnect() {
 	if rtm := s.RTM; rtm != nil {
 		err := rtm.Disconnect()
 		if err != nil {
-			s.UserLogin.Log.Err(err).Msg("Failed to disconnect RTM")
+			s.UserLogin.Log.Debug().Err(err).Msg("Failed to disconnect RTM")
 		}
 		// TODO stop consumeEvents?
 		s.RTM = nil
@@ -316,7 +316,11 @@ func (s *SlackClient) IsLoggedIn() bool {
 }
 
 func (s *SlackClient) LogoutRemote(ctx context.Context) {
-	_, err := s.Client.SendAuthSignoutContext(ctx)
+	err := s.RTM.Disconnect()
+	if err != nil {
+		s.UserLogin.Log.Debug().Err(err).Msg("Failed to disconnect RTM")
+	}
+	_, err = s.Client.SendAuthSignoutContext(ctx)
 	if err != nil {
 		s.UserLogin.Log.Err(err).Msg("Failed to send sign out request to Slack")
 	}

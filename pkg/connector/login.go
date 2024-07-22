@@ -135,7 +135,7 @@ func (s *SlackTokenLogin) SubmitCookies(ctx context.Context, input map[string]st
 		return nil, err
 	}
 	sc := ul.Client.(*SlackClient)
-	err = sc.connect(ctx, info)
+	err = sc.connect(ul.Log.WithContext(context.Background()), info)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect after login: %w", err)
 	}

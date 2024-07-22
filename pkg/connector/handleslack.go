@@ -58,6 +58,8 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 			return
 		}
 		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnected})
+	//case *slack.DisconnectedEvent:
+	// TODO handle?
 	case *slack.HelloEvent:
 		// Ignored for now
 	case *slack.InvalidAuthEvent:
