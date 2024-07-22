@@ -123,7 +123,8 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 				Str("message_ts", evt.Timestamp).
 				Str("message_id", string(meta.ID)).
 				Str("message_sender", sender).
-				Str("subtype", evt.SubType)
+				Str("subtype", evt.SubType).
+				Bool("hidden", evt.Hidden)
 		}
 		wrapped = &SlackMessage{
 			SlackEventMeta: &meta,
@@ -458,7 +459,14 @@ func (s *SlackMessage) GetType() bridgev2.RemoteEventType {
 	case slack.MsgSubTypeMessageReplied, slack.MsgSubTypeGroupJoin, slack.MsgSubTypeGroupLeave,
 		slack.MsgSubTypeChannelJoin, slack.MsgSubTypeChannelLeave:
 		return bridgev2.RemoteEventUnknown
+	case "", slack.MsgSubTypeMeMessage, slack.MsgSubTypeBotMessage, slack.MsgSubTypeThreadBroadcast, "huddle_thread":
+		// Known types
+		return bridgev2.RemoteEventMessage
 	default:
+		// For unknown types with the hidden flag, don't bridge
+		if s.Data.Hidden {
+			return bridgev2.RemoteEventUnknown
+		}
 		return bridgev2.RemoteEventMessage
 	}
 }
