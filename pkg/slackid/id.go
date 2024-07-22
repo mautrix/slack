@@ -47,11 +47,11 @@ func ParseSlackTimestamp(timestamp string) time.Time {
 
 	var nanoSeconds int64
 	if len(parts) > 1 {
-		nsec, err := strconv.ParseInt(parts[1], 10, 64)
+		msec, err := strconv.ParseInt(parts[1], 10, 64)
 		if err != nil {
 			nanoSeconds = 0
 		} else {
-			nanoSeconds = nsec
+			nanoSeconds = msec * 1000
 		}
 	}
 
