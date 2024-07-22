@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/rs/zerolog/hlog"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 
@@ -115,6 +116,7 @@ func legacyProvLogin(w http.ResponseWriter, r *http.Request) {
 
 	login, err := m.Bridge.Network.CreateLogin(r.Context(), user, connector.LoginFlowIDAuthToken)
 	if err != nil {
+		hlog.FromRequest(r).Err(err).Msg("Failed to create login")
 		jsonResponse(w, http.StatusInternalServerError, Error{
 			Error:   "Failed to create login",
 			ErrCode: "M_UNKNOWN",
@@ -123,6 +125,7 @@ func legacyProvLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	nextStep, err := login.Start(r.Context())
 	if err != nil {
+		hlog.FromRequest(r).Err(err).Msg("Failed to start login")
 		jsonResponse(w, http.StatusInternalServerError, Error{
 			Error:   "Failed to start login",
 			ErrCode: "M_UNKNOWN",
@@ -140,6 +143,7 @@ func legacyProvLogin(w http.ResponseWriter, r *http.Request) {
 		"cookie_token": data.Cookietoken,
 	})
 	if err != nil {
+		hlog.FromRequest(r).Err(err).Msg("Failed to submit cookies")
 		jsonResponse(w, http.StatusInternalServerError, Error{
 			Error:   "Failed to submit cookies",
 			ErrCode: "M_UNKNOWN",
