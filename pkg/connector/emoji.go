@@ -100,9 +100,11 @@ func (s *SlackClient) addEmoji(ctx context.Context, emojiName, emojiValue string
 			EmojiID: emojiName,
 		}
 	}
+	if newImageMXC != "" || (dbEmoji.Value != "" && dbEmoji.Value != emojiValue) {
+		dbEmoji.ImageMXC = newImageMXC
+	}
 	dbEmoji.Value = emojiValue
 	dbEmoji.Alias = newAlias
-	dbEmoji.ImageMXC = newImageMXC
 	err = s.Main.DB.Emoji.Put(ctx, dbEmoji)
 	if err != nil {
 		log.Err(err).
