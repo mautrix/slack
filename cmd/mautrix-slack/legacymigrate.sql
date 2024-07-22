@@ -193,6 +193,8 @@ SELECT DISTINCT
     false, -- preferred
     -- only: postgres
     CAST(NULL AS BIGINT) -- last_read
+    -- only: sqlite (line commented)
+--  NULL -- last_read
 FROM user_team_portal_old;
 
 UPDATE portal
