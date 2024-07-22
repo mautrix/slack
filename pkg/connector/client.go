@@ -37,6 +37,7 @@ import (
 
 func init() {
 	status.BridgeStateHumanErrors.Update(status.BridgeStateErrorMap{
+		"slack-not-logged-in":          "Please log in again",
 		"slack-invalid-auth":           "Invalid credentials, please log in again",
 		"slack-user-removed-from-team": "You were removed from the Slack workspace",
 		"slack-id-mismatch":            "Unexpected internal error: got different user ID",
@@ -114,6 +115,13 @@ func (s *SlackClient) GetClient() *slack.Client {
 }
 
 func (s *SlackClient) Connect(ctx context.Context) error {
+	if s.Client == nil {
+		s.UserLogin.BridgeState.Send(status.BridgeState{
+			StateEvent: status.StateBadCredentials,
+			Error:      "slack-not-logged-in",
+		})
+		return nil
+	}
 	bootResp, err := s.Client.ClientBootContext(ctx)
 	if err != nil {
 		if err.Error() == "user_removed_from_team" || err.Error() == "invalid_auth" {
