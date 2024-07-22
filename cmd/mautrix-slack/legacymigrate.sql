@@ -39,7 +39,7 @@ SELECT
     '', -- parent_receiver
     NULL, -- relay_bridge_id
     NULL, -- relay_login_id
-    CASE WHEN type=2 THEN team_id || '-' || dm_user_id END, -- other_user_id
+    CASE WHEN type=2 THEN LOWER(team_id || '-' || dm_user_id) END, -- other_user_id
     name,
     topic,
     avatar, -- avatar_id,
