@@ -1,4 +1,4 @@
-mautrix-slack
+/mautrix-slack
 logs/
 *.db*
 *.yaml

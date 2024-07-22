@@ -27,6 +27,8 @@ import (
 )
 
 const LoginFlowIDAuthToken = "token"
+const LoginStepIDAuthToken = "fi.mau.slack.login.enter_auth_token"
+const LoginStepIDComplete = "fi.mau.slack.login.complete"
 
 func (s *SlackConnector) GetLoginFlows() []bridgev2.LoginFlow {
 	return []bridgev2.LoginFlow{{
@@ -76,7 +78,7 @@ new Promise(resolve => {
 func (s *SlackTokenLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) {
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeCookies,
-		StepID:       "fi.mau.slack.login.enter_auth_token",
+		StepID:       LoginStepIDAuthToken,
 		Instructions: "Enter a JSON object with your auth token and cookie token, or a cURL command copied from browser devtools.\n\nFor example: `{\"auth_token\":\"xoxc-...\",\"cookie_token\":\"xoxd-...\"}`",
 		CookiesParams: &bridgev2.LoginCookiesParams{
 			URL:       "https://slack.com/signin",
@@ -139,7 +141,7 @@ func (s *SlackTokenLogin) SubmitCookies(ctx context.Context, input map[string]st
 	}
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeComplete,
-		StepID:       "fi.mau.slack.login.complete",
+		StepID:       LoginStepIDComplete,
 		Instructions: fmt.Sprintf("Successfully logged into %s as %s", info.Team.Name, info.Self.Profile.Email),
 		CompleteParams: &bridgev2.LoginCompleteParams{
 			UserLoginID: ul.ID,
