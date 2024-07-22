@@ -1,4 +1,4 @@
--- v0 -> v1: Latest schema
+-- v0 -> v2 (compatible with v1+): Latest schema
 CREATE TABLE emoji (
     team_id   TEXT NOT NULL,
     emoji_id  TEXT NOT NULL,
@@ -8,3 +8,5 @@ CREATE TABLE emoji (
 
     PRIMARY KEY (team_id, emoji_id)
 );
+
+CREATE INDEX emoji_alias_idx ON emoji (team_id, alias);

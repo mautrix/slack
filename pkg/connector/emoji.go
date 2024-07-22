@@ -41,10 +41,13 @@ func (s *SlackClient) handleEmojiChange(ctx context.Context, evt *slack.EmojiCha
 	switch evt.SubType {
 	case "add":
 		s.addEmoji(ctx, evt.Name, evt.Value)
+		log.Debug().Str("emoji_id", evt.Name).Msg("Handled emoji addition")
 	case "remove":
 		err := s.Main.DB.Emoji.DeleteMany(ctx, s.TeamID, evt.Names...)
 		if err != nil {
 			log.Err(err).Strs("emoji_ids", evt.Names).Msg("Failed to delete emojis from database")
+		} else {
+			log.Debug().Strs("emoji_ids", evt.Names).Msg("Handled emoji deletion")
 		}
 	case "rename":
 		dbEmoji, err := s.Main.DB.Emoji.GetBySlackID(ctx, s.TeamID, evt.OldName)
@@ -55,6 +58,8 @@ func (s *SlackClient) handleEmojiChange(ctx context.Context, evt *slack.EmojiCha
 			s.addEmoji(ctx, evt.NewName, evt.Value)
 		} else if err = s.Main.DB.Emoji.Rename(ctx, dbEmoji, evt.NewName); err != nil {
 			log.Err(err).Msg("Failed to rename emoji in database")
+		} else {
+			log.Debug().Str("old_id", evt.OldName).Str("new_name", evt.NewName).Msg("Handled emoji rename")
 		}
 	default:
 		log.Warn().Msg("Unknown emoji change subtype, resyncing emojis")
@@ -78,29 +83,16 @@ func (s *SlackClient) addEmoji(ctx context.Context, emojiName, emojiValue string
 	var newAlias string
 	var newImageMXC id.ContentURIString
 	if strings.HasPrefix(emojiValue, "alias:") {
-		var isImage bool
-		newAlias, isImage = s.TryGetEmoji(ctx, strings.TrimPrefix(emojiValue, "alias:"))
+		newAlias = strings.TrimPrefix(emojiValue, "alias:")
+		aliasTarget, isImage, _ := s.tryGetEmoji(ctx, newAlias, false, false)
 		if isImage {
-			newImageMXC = id.ContentURIString(newAlias)
+			newImageMXC = id.ContentURIString(aliasTarget)
 		}
 		if dbEmoji != nil && dbEmoji.Value == emojiValue && dbEmoji.Alias == newAlias && dbEmoji.ImageMXC == newImageMXC {
 			return dbEmoji
 		}
-	} else {
-		if dbEmoji != nil && dbEmoji.Value == emojiValue && (dbEmoji.Alias != "" || dbEmoji.ImageMXC != "") {
-			return dbEmoji
-		}
-		// Don't reupload emojis that are only missing the value column (but do set the value column so it's there in the future)
-		if dbEmoji == nil || dbEmoji.Value != "" || dbEmoji.ImageMXC == "" {
-			newImageMXC, err = reuploadEmoji(ctx, s.Main.br.Bot, emojiValue)
-			if err != nil {
-				log.Err(err).
-					Str("emoji_name", emojiName).
-					Str("emoji_value", emojiValue).
-					Msg("Failed to reupload emoji")
-				return nil
-			}
-		}
+	} else if dbEmoji != nil && dbEmoji.Value == emojiValue {
+		return dbEmoji
 	}
 	if dbEmoji == nil {
 		dbEmoji = &slackdb.Emoji{
@@ -202,7 +194,7 @@ func (s *SlackClient) syncEmojis(ctx context.Context, onlyIfCountMismatch bool) 
 	}
 
 	deferredAliases := make(map[string]string)
-	uploaded := make(map[string]id.ContentURIString, len(resp))
+	created := make(map[string]*slackdb.Emoji, len(resp))
 	existingIDs := make([]string, 0, len(resp))
 
 	for key, url := range resp {
@@ -211,8 +203,8 @@ func (s *SlackClient) syncEmojis(ctx context.Context, onlyIfCountMismatch bool) 
 			deferredAliases[key] = strings.TrimPrefix(url, "alias:")
 		} else {
 			addedEmoji := s.addEmoji(ctx, key, url)
-			if addedEmoji != nil && addedEmoji.ImageMXC != "" {
-				uploaded[key] = addedEmoji.ImageMXC
+			if addedEmoji != nil {
+				created[key] = addedEmoji
 			}
 		}
 	}
@@ -222,18 +214,17 @@ func (s *SlackClient) syncEmojis(ctx context.Context, onlyIfCountMismatch bool) 
 			TeamID:  s.TeamID,
 			EmojiID: key,
 			Value:   fmt.Sprintf("alias:%s", alias),
+			Alias:   alias,
 		}
-		if uri, ok := uploaded[alias]; ok {
-			dbEmoji.Alias = alias
-			dbEmoji.ImageMXC = uri
-		} else if unicode := emoji.GetUnicode(alias); unicode != "" {
-			dbEmoji.Alias = unicode
+		if otherEmoji, ok := created[alias]; ok {
+			dbEmoji.ImageMXC = otherEmoji.ImageMXC
 		}
 		err = s.Main.DB.Emoji.Put(ctx, dbEmoji)
 		if err != nil {
 			log.Err(err).
-				Str("emoji_id", key).
-				Str("alias", alias).
+				Str("emoji_id", dbEmoji.EmojiID).
+				Str("alias", dbEmoji.Alias).
+				Str("image_mxc", string(dbEmoji.ImageMXC)).
 				Msg("Failed to save deferred emoji alias to database")
 		}
 	}
@@ -251,28 +242,56 @@ func (s *SlackClient) syncEmojis(ctx context.Context, onlyIfCountMismatch bool) 
 	return nil
 }
 
-func (s *SlackClient) TryGetEmoji(ctx context.Context, shortcode string) (string, bool) {
+func (s *SlackClient) tryGetEmoji(ctx context.Context, shortcode string, ensureUploaded, allowRecurse bool) (val string, isImage, found bool) {
 	if unicode := emoji.GetUnicode(shortcode); unicode != "" {
-		return unicode, false
+		return unicode, false, true
 	}
 
 	dbEmoji, err := s.Main.DB.Emoji.GetBySlackID(ctx, s.TeamID, shortcode)
 	if err != nil {
 		zerolog.Ctx(ctx).Err(err).Str("shortcode", shortcode).Msg("Failed to get emoji from database")
-		return "", false
-	} else if dbEmoji != nil && dbEmoji.ImageMXC != "" {
-		return string(dbEmoji.ImageMXC), true
-	} else if dbEmoji != nil {
-		return dbEmoji.Alias, false
-	} else {
-		return "", false
+		return
+	} else if dbEmoji == nil {
+		return
 	}
+	found = true
+	if dbEmoji.ImageMXC != "" {
+		val = string(dbEmoji.ImageMXC)
+		isImage = true
+	} else if strings.HasPrefix(dbEmoji.Value, "alias:") {
+		if !allowRecurse {
+			zerolog.Ctx(ctx).Warn().Str("shortcode", shortcode).Msg("Not recursing into emoji alias")
+			return "", false, true
+		}
+		val, isImage, _ = s.tryGetEmoji(ctx, strings.TrimPrefix(dbEmoji.Value, "alias:"), ensureUploaded, false)
+	} else if ensureUploaded {
+		defer s.Main.DB.Emoji.WithLock(s.TeamID)()
+		dbEmoji.ImageMXC, err = reuploadEmoji(ctx, s.Main.br.Bot, dbEmoji.Value)
+		if err != nil {
+			zerolog.Ctx(ctx).Err(err).
+				Str("shortcode", shortcode).
+				Str("url", dbEmoji.Value).
+				Msg("Failed to reupload emoji")
+			return
+		}
+		err = s.Main.DB.Emoji.SaveMXC(ctx, dbEmoji)
+		if err != nil {
+			zerolog.Ctx(ctx).Err(err).
+				Str("shortcode", shortcode).
+				Str("url", dbEmoji.Value).
+				Str("mxc", string(dbEmoji.ImageMXC)).
+				Msg("Failed to save reuploaded emoji")
+		}
+		val = string(dbEmoji.ImageMXC)
+		isImage = true
+	}
+	return
 }
 
 func (s *SlackClient) GetEmoji(ctx context.Context, shortcode string) (string, bool) {
-	emojiVal, isImage := s.TryGetEmoji(ctx, shortcode)
-	if emojiVal == "" && s.ResyncEmojisDueToNotFound(ctx) {
-		emojiVal, isImage = s.TryGetEmoji(ctx, shortcode)
+	emojiVal, isImage, found := s.tryGetEmoji(ctx, shortcode, true, true)
+	if !found && s.ResyncEmojisDueToNotFound(ctx) {
+		emojiVal, isImage, _ = s.tryGetEmoji(ctx, shortcode, true, true)
 	}
 	if emojiVal == "" {
 		emojiVal = fmt.Sprintf(":%s:", shortcode)

@@ -54,6 +54,7 @@ const (
 			SET value = excluded.value, alias = excluded.alias, image_mxc = excluded.image_mxc
 	`
 	renameEmojiQuery         = `UPDATE emoji SET emoji_id=$3 WHERE team_id=$1 AND emoji_id=$2`
+	saveEmojiMXCQuery        = `UPDATE emoji SET image_mxc=$3 WHERE team_id=$1 AND (emoji_id=$2 OR alias=$2)`
 	deleteEmojiQueryPostgres = `DELETE FROM emoji WHERE team_id=$1 AND emoji_id=ANY($2)`
 	deleteEmojiQuerySQLite   = `DELETE FROM emoji WHERE team_id=? AND emoji_id IN (?)`
 	pruneEmojiQueryPostgres  = `DELETE FROM emoji WHERE team_id=$1 AND emoji_id<>ANY($2)`
@@ -128,6 +129,10 @@ func (eq *EmojiQuery) Put(ctx context.Context, emoji *Emoji) error {
 
 func (eq *EmojiQuery) Rename(ctx context.Context, emoji *Emoji, newID string) error {
 	return eq.Exec(ctx, renameEmojiQuery, emoji.TeamID, emoji.EmojiID, newID)
+}
+
+func (eq *EmojiQuery) SaveMXC(ctx context.Context, emoji *Emoji) error {
+	return eq.Exec(ctx, saveEmojiMXCQuery, emoji.TeamID, emoji.EmojiID, emoji.ImageMXC)
 }
 
 type Emoji struct {
