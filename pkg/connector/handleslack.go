@@ -46,6 +46,10 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 			Msg("Connecting to Slack")
 		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnecting})
 	case *slack.ConnectedEvent:
+		if evt.Info == nil || evt.Info.Team == nil || evt.Info.User == nil {
+			log.Warn().Any("event_data", evt).Msg("Got connected event without info")
+			return
+		}
 		if evt.Info.Team.ID != s.TeamID || evt.Info.User.ID != s.UserID {
 			log.Error().
 				Str("event_team_id", evt.Info.Team.ID).
