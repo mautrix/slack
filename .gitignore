@@ -1,6 +1,7 @@
-config.yaml
-slack
+/mautrix-slack
 logs/
 *.db*
-registration.yaml
+*.yaml
+!example-config.yaml
+!.pre-commit-config.yaml
 /start
