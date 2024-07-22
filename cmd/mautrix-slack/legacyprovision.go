@@ -19,6 +19,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/rs/zerolog/hlog"
@@ -138,6 +139,7 @@ func legacyProvLogin(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	data.Cookietoken, _ = url.PathUnescape(data.Cookietoken)
 	nextStep, err = login.(bridgev2.LoginProcessCookies).SubmitCookies(r.Context(), map[string]string{
 		"auth_token":   data.Token,
 		"cookie_token": data.Cookietoken,
