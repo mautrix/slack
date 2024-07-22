@@ -52,16 +52,25 @@ type SlackTokenLogin struct {
 var _ bridgev2.LoginProcessCookies = (*SlackTokenLogin)(nil)
 
 const ExtractSlackTokenJS = `
-let mautrixSlackTokenCheckInterval
-function mautrixFindSlackToken() {
-    if (!localStorage.localConfig_v2?.includes("xoxc-")) {
-        return
-    }
-	const auth_token = Object.values(JSON.parse(localStorage.localConfig_v2).teams)[0].token
-    window.clearInterval(mautrixSlackTokenCheckInterval)
-    window.mautrixLoginCallback({ auth_token })
-)
-mautrixSlackTokenCheckInterval = window.setInterval(mautrixFindSlackToken, 1000)
+new Promise(resolve => {
+	let mautrixSlackTokenCheckInterval
+	function mautrixFindSlackToken() {
+		// Automatically click the "Use Slack in Browser" button
+		if (/\.slack\.com$/.test(window.location.host)) {
+			const link = document?.querySelector?.(".p-ssb_redirect__body")?.querySelector?.(".c-link");
+			if (link) {
+				location.href = link.getAttribute("href");
+			}
+		}
+		if (!localStorage.localConfig_v2?.includes("xoxc-")) {
+			return
+		}
+		const auth_token = Object.values(JSON.parse(localStorage.localConfig_v2).teams)[0].token
+		window.clearInterval(mautrixSlackTokenCheckInterval)
+		resolve({ auth_token })
+	}
+	mautrixSlackTokenCheckInterval = window.setInterval(mautrixFindSlackToken, 1000)
+})
 `
 
 func (s *SlackTokenLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) {
@@ -70,7 +79,7 @@ func (s *SlackTokenLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error
 		StepID:       "fi.mau.slack.login.enter_auth_token",
 		Instructions: "Enter a JSON object with your auth token and cookie token, or a cURL command copied from browser devtools.\n\nFor example: `{\"auth_token\":\"xoxc-...\",\"cookie_token\":\"xoxd-...\"}`",
 		CookiesParams: &bridgev2.LoginCookiesParams{
-			URL:       "https://slack.com",
+			URL:       "https://slack.com/signin",
 			UserAgent: "",
 			Fields: []bridgev2.LoginCookieField{{
 				ID:       "auth_token",
@@ -81,7 +90,7 @@ func (s *SlackTokenLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error
 				}, {
 					Type:            bridgev2.LoginCookieTypeRequestBody,
 					Name:            "token",
-					RequestURLRegex: `https://.+?\.slack\.com/api/.+`,
+					RequestURLRegex: `^https://.+?\.slack\.com/api/(client|experiments|api|users|teams|conversations)\..+$`,
 				}},
 				Pattern: `^xoxc-.+$`,
 			}, {
@@ -92,7 +101,7 @@ func (s *SlackTokenLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error
 					Name:         "d",
 					CookieDomain: "slack.com",
 				}},
-				Pattern: `^xoxd-[a-zA-Z0-9/+=%]+$`,
+				Pattern: `^xoxd-[a-zA-Z0-9/+=]+$`,
 			}},
 			ExtractJS: ExtractSlackTokenJS,
 		},
