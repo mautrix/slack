@@ -14,9 +14,9 @@ SELECT
     NULL, -- relay_login_id
     team_name,
     '', -- topic
-    avatar, -- avatar_id,
+    COALESCE(avatar, ''), -- avatar_id,
     '', -- avatar_hash
-    avatar_url, -- avatar_mxc
+    COALESCE(avatar_url, ''), -- avatar_mxc
     name_set,
     avatar_set,
     false, -- topic_set
@@ -44,7 +44,7 @@ SELECT
     topic,
     avatar, -- avatar_id,
     '', -- avatar_hash
-    avatar_url, -- avatar_mxc
+    COALESCE(avatar_url, ''), -- avatar_mxc
     name_set,
     avatar_set,
     topic_set,
@@ -66,9 +66,9 @@ SELECT
     '', -- bridge_id
     lower(team_id || '-' || user_id), -- id
     name,
-    avatar, -- avatar_id
+    COALESCE(avatar, ''), -- avatar_id
     '', -- avatar_hash
-    avatar_url, -- avatar_mxc
+    COALESCE(avatar_url, ''), -- avatar_mxc
     name_set,
     avatar_set,
     contact_info_set, -- contact_info_set
