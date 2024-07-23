@@ -267,6 +267,9 @@ func makeAvatar(avatarURL string) *bridgev2.Avatar {
 }
 
 func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string) (*bridgev2.UserInfo, error) {
+	if len(userID) == 0 {
+		return nil, fmt.Errorf("empty user ID")
+	}
 	var info *slack.User
 	var botInfo *slack.Bot
 	var err error
