@@ -75,7 +75,8 @@ SELECT
     is_bot, -- is_bot
     '[]', -- identifiers
     '{}' -- metadata
-FROM puppet_old;
+FROM puppet_old
+WHERE user_id=UPPER(user_id);
 
 INSERT INTO message (
     bridge_id, id, part_id, mxid, room_id, room_receiver, sender_id,
