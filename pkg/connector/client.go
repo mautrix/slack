@@ -308,6 +308,11 @@ func (s *SlackClient) consumeEvents() {
 }
 
 func (s *SlackClient) Disconnect() {
+	s.disconnectRTM()
+	s.Client = nil
+}
+
+func (s *SlackClient) disconnectRTM() {
 	if rtm := s.RTM; rtm != nil {
 		err := rtm.Disconnect()
 		if err != nil {
@@ -316,7 +321,6 @@ func (s *SlackClient) Disconnect() {
 		// TODO stop consumeEvents?
 		s.RTM = nil
 	}
-	s.Client = nil
 }
 
 func (s *SlackClient) IsLoggedIn() bool {
@@ -324,14 +328,17 @@ func (s *SlackClient) IsLoggedIn() bool {
 }
 
 func (s *SlackClient) LogoutRemote(ctx context.Context) {
-	err := s.RTM.Disconnect()
-	if err != nil {
-		s.UserLogin.Log.Debug().Err(err).Msg("Failed to disconnect RTM")
+	s.disconnectRTM()
+	if cli := s.Client; cli != nil {
+		_, err := cli.SendAuthSignoutContext(ctx)
+		if err != nil {
+			s.UserLogin.Log.Err(err).Msg("Failed to send sign out request to Slack")
+		}
+		s.Client = nil
 	}
-	_, err = s.Client.SendAuthSignoutContext(ctx)
-	if err != nil {
-		s.UserLogin.Log.Err(err).Msg("Failed to send sign out request to Slack")
-	}
+	meta := s.UserLogin.Metadata.(*UserLoginMetadata)
+	meta.Token = ""
+	meta.CookieToken = ""
 }
 
 func (s *SlackClient) invalidateSession(ctx context.Context, state status.BridgeState) {
