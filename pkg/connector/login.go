@@ -117,7 +117,7 @@ func (s *SlackTokenLogin) SubmitCookies(ctx context.Context, input map[string]st
 	client := makeSlackClient(&s.User.Log, token, cookieToken)
 	info, err := client.ClientBootContext(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("client.boot failed: %w", err)
 	}
 	ul, err := s.User.NewLogin(ctx, &database.UserLogin{
 		ID:         slackid.MakeUserLoginID(info.Team.ID, info.Self.ID),
