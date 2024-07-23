@@ -3,6 +3,7 @@ module go.mau.fi/mautrix-slack
 go 1.22
 
 require (
+	github.com/lib/pq v1.10.9
 	github.com/rs/zerolog v1.33.0
 	github.com/slack-go/slack v0.10.3
 	github.com/stretchr/testify v1.9.0
@@ -17,7 +18,6 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/gorilla/mux v1.8.0 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
-	github.com/lib/pq v1.10.9 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.19 // indirect
 	github.com/mattn/go-sqlite3 v1.14.22 // indirect

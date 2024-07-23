@@ -19,6 +19,7 @@ package slackdb
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"strings"
 	"sync"
@@ -26,6 +27,11 @@ import (
 	"go.mau.fi/util/dbutil"
 	"maunium.net/go/mautrix/id"
 )
+
+var PostgresArrayWrapper func(any) interface {
+	driver.Valuer
+	sql.Scanner
+}
 
 type EmojiQuery struct {
 	*dbutil.QueryHelper[*Emoji]
@@ -57,7 +63,7 @@ const (
 	saveEmojiMXCQuery        = `UPDATE emoji SET image_mxc=$3 WHERE team_id=$1 AND (emoji_id=$2 OR alias=$2)`
 	deleteEmojiQueryPostgres = `DELETE FROM emoji WHERE team_id=$1 AND emoji_id=ANY($2)`
 	deleteEmojiQuerySQLite   = `DELETE FROM emoji WHERE team_id=? AND emoji_id IN (?)`
-	pruneEmojiQueryPostgres  = `DELETE FROM emoji WHERE team_id=$1 AND emoji_id<>ANY($2)`
+	pruneEmojiQueryPostgres  = `DELETE FROM emoji WHERE team_id=$1 AND emoji_id<>ALL($2)`
 	pruneEmojiQuerySQLite    = `DELETE FROM emoji WHERE team_id=? AND emoji_id NOT IN (?)`
 )
 
@@ -116,7 +122,7 @@ func (eq *EmojiQuery) DeleteMany(ctx context.Context, teamID string, emojiIDs ..
 func (eq *EmojiQuery) Prune(ctx context.Context, teamID string, emojiIDs ...string) error {
 	switch eq.GetDB().Dialect {
 	case dbutil.Postgres:
-		return eq.Exec(ctx, pruneEmojiQueryPostgres, teamID, emojiIDs)
+		return eq.Exec(ctx, pruneEmojiQueryPostgres, teamID, PostgresArrayWrapper(emojiIDs))
 	default:
 		query, args := buildSQLiteEmojiDeleteQuery(pruneEmojiQuerySQLite, teamID, emojiIDs...)
 		return eq.Exec(ctx, query, args...)

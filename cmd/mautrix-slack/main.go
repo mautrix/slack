@@ -19,9 +19,11 @@ package main
 import (
 	"net/http"
 
+	"github.com/lib/pq"
 	"maunium.net/go/mautrix/bridgev2/matrix/mxmain"
 
 	"go.mau.fi/mautrix-slack/pkg/connector"
+	"go.mau.fi/mautrix-slack/pkg/connector/slackdb"
 )
 
 var (
@@ -40,6 +42,7 @@ var m = mxmain.BridgeMain{
 }
 
 func main() {
+	slackdb.PostgresArrayWrapper = pq.Array
 	m.PostInit = func() {
 		m.CheckLegacyDB(
 			16,
