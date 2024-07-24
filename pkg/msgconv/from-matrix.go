@@ -120,12 +120,13 @@ func (mc *MessageConverter) ToSlack(
 			return nil, ErrMediaDownloadFailed
 		}
 
-		var filename, caption, subtype string
+		var filename, caption, captionHTML, subtype string
 		if content.FileName == "" || content.FileName == content.Body {
 			filename = content.Body
 		} else {
 			filename = content.FileName
 			caption = content.Body
+			captionHTML = content.FormattedBody
 		}
 		useFileUpload := false
 		if content.MSC3245Voice != nil && ffmpeg.Supported() {
@@ -174,7 +175,12 @@ func (mc *MessageConverter) ToSlack(
 			fileShare := &slack.ShareFileParams{
 				Files:   []string{resp.File},
 				Channel: channelID,
-				Text:    caption,
+			}
+			if captionHTML != "" {
+				mrkdwn := mc.MatrixHTMLParser.Parse(ctx, content.FormattedBody, content.Mentions, portal)
+				fileShare.Blocks = []slack.Block{slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, mrkdwn, false, false), nil, nil)}
+			} else if caption != "" {
+				fileShare.Blocks = []slack.Block{slack.NewRichTextBlock("", slack.NewRichTextSection(slack.NewRichTextSectionTextElement(caption, nil)))}
 			}
 			return &ConvertedSlackMessage{FileShare: fileShare}, nil
 		}
