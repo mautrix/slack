@@ -28,6 +28,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
 	"go.mau.fi/util/exmime"
+	"go.mau.fi/util/ffmpeg"
 	"go.mau.fi/util/ptr"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
@@ -220,7 +221,34 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 		log.Err(err).Msg("Failed to download file from Slack")
 		return makeErrorMessage(partID, "Failed to download file from Slack")
 	}
-	err = mc.uploadMedia(ctx, portal, intent, data.Bytes(), &content)
+	dataBytes := data.Bytes()
+	if file.SubType == "slack_audio" && ffmpeg.Supported() {
+		sourceMime := file.Mimetype
+		// Slack claims audio messages are webm/opus, but actually stores mp4/aac?
+		if strings.HasSuffix(url, ".mp4") {
+			sourceMime = "audio/mp4"
+		}
+		dataBytes, err = ffmpeg.ConvertBytes(ctx, dataBytes, ".ogg", []string{}, []string{"-c:a", "libopus"}, sourceMime)
+		if err != nil {
+			log.Err(err).Msg("Failed to convert voice message")
+			return makeErrorMessage(partID, "Failed to convert voice message")
+		}
+		content.Info.MimeType = "audio/ogg"
+		content.Body += ".ogg"
+		if file.AudioWaveSamples == nil {
+			file.AudioWaveSamples = []int{}
+		}
+		for i, val := range file.AudioWaveSamples {
+			// Slack's waveforms are in the range 0-100, we need to convert them to 0-256
+			file.AudioWaveSamples[i] = min(int(float64(val)*2.56), 256)
+		}
+		content.MSC1767Audio = &event.MSC1767Audio{
+			Duration: content.Info.Duration,
+			Waveform: file.AudioWaveSamples,
+		}
+		content.MSC3245Voice = &event.MSC3245Voice{}
+	}
+	err = mc.uploadMedia(ctx, portal, intent, dataBytes, &content)
 	if err != nil {
 		if errors.Is(err, mautrix.MTooLarge) {
 			log.Err(err).Msg("Homeserver rejected too large file")
@@ -250,6 +278,9 @@ func convertSlackFileMetadata(file *slack.File) event.MessageEventContent {
 	}
 	if file.OriginalH != 0 {
 		content.Info.Height = file.OriginalH
+	}
+	if file.DurationMS != 0 {
+		content.Info.Duration = file.DurationMS
 	}
 	if file.Name != "" {
 		content.Body = file.Name

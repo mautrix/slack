@@ -30,6 +30,7 @@ import (
 
 	"go.mau.fi/mautrix-slack/pkg/connector/slackdb"
 	"go.mau.fi/mautrix-slack/pkg/emoji"
+	"go.mau.fi/mautrix-slack/pkg/msgconv"
 	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
 
@@ -46,11 +47,11 @@ func (s *SlackClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 	if channelID == "" {
 		return nil, errors.New("invalid channel ID")
 	}
-	sendOpts, fileUpload, err := s.Main.MsgConv.ToSlack(ctx, msg.Portal, msg.Content, msg.Event, msg.ThreadRoot, nil)
+	conv, err := s.Main.MsgConv.ToSlack(ctx, s.Client, msg.Portal, msg.Content, msg.Event, msg.ThreadRoot, nil)
 	if err != nil {
 		return nil, err
 	}
-	timestamp, err := s.sendToSlack(ctx, channelID, sendOpts, fileUpload)
+	timestamp, err := s.sendToSlack(ctx, channelID, conv)
 	if err != nil {
 		return nil, err
 	}
@@ -63,15 +64,15 @@ func (s *SlackClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 	}, nil
 }
 
-func (s *SlackClient) sendToSlack(ctx context.Context, channelID string, sendReq slack.MsgOption, fileUpload *slack.FileUploadParameters) (string, error) {
+func (s *SlackClient) sendToSlack(ctx context.Context, channelID string, conv *msgconv.ConvertedSlackMessage) (string, error) {
 	log := zerolog.Ctx(ctx)
-	if sendReq != nil {
+	if conv.SendReq != nil {
 		log.Debug().Msg("Sending message to Slack")
-		_, timestamp, err := s.Client.PostMessageContext(ctx, channelID, slack.MsgOptionAsUser(true), sendReq)
+		_, timestamp, err := s.Client.PostMessageContext(ctx, channelID, slack.MsgOptionAsUser(true), conv.SendReq)
 		return timestamp, err
-	} else if fileUpload != nil {
+	} else if conv.FileUpload != nil {
 		log.Debug().Msg("Uploading attachment to Slack")
-		file, err := s.Client.UploadFileContext(ctx, *fileUpload)
+		file, err := s.Client.UploadFileContext(ctx, *conv.FileUpload)
 		if err != nil {
 			log.Err(err).Msg("Failed to upload attachment to Slack")
 			return "", err
@@ -86,6 +87,14 @@ func (s *SlackClient) sendToSlack(ctx context.Context, channelID string, sendReq
 			return "", errors.New("failed to upload media to Slack")
 		}
 		return shareInfo.Ts, nil
+	} else if conv.FileShare != nil {
+		log.Debug().Msg("Sharing already uploaded attachment to Slack")
+		resp, err := s.Client.ShareFile(ctx, *conv.FileShare)
+		if err != nil {
+			log.Err(err).Msg("Failed to share attachment to Slack")
+			return "", err
+		}
+		return resp.FileMsgTS, nil
 	} else {
 		return "", errors.New("no message or attachment to send")
 	}
@@ -96,11 +105,11 @@ func (s *SlackClient) HandleMatrixEdit(ctx context.Context, msg *bridgev2.Matrix
 	if channelID == "" {
 		return errors.New("invalid channel ID")
 	}
-	sendOpts, fileUpload, err := s.Main.MsgConv.ToSlack(ctx, msg.Portal, msg.Content, msg.Event, nil, msg.EditTarget)
+	conv, err := s.Main.MsgConv.ToSlack(ctx, s.Client, msg.Portal, msg.Content, msg.Event, nil, msg.EditTarget)
 	if err != nil {
 		return err
 	}
-	_, err = s.sendToSlack(ctx, channelID, sendOpts, fileUpload)
+	_, err = s.sendToSlack(ctx, channelID, conv)
 	return err
 }
 

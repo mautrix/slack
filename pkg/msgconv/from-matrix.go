@@ -26,6 +26,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
+	"go.mau.fi/util/ffmpeg"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/event"
@@ -36,6 +37,8 @@ import (
 var (
 	ErrUnknownMsgType       = errors.New("unknown msgtype")
 	ErrMediaDownloadFailed  = errors.New("failed to download media")
+	ErrMediaUploadFailed    = errors.New("failed to reupload media")
+	ErrMediaConvertFailed   = errors.New("failed to re-encode media")
 	ErrMediaOnlyEditCaption = errors.New("only media message caption can be edited")
 )
 
@@ -43,14 +46,21 @@ func isMediaMsgtype(msgType event.MessageType) bool {
 	return msgType == event.MsgImage || msgType == event.MsgAudio || msgType == event.MsgVideo || msgType == event.MsgFile
 }
 
+type ConvertedSlackMessage struct {
+	SendReq    slack.MsgOption
+	FileUpload *slack.FileUploadParameters
+	FileShare  *slack.ShareFileParams
+}
+
 func (mc *MessageConverter) ToSlack(
 	ctx context.Context,
+	client *slack.Client,
 	portal *bridgev2.Portal,
 	content *event.MessageEventContent,
 	evt *event.Event,
 	threadRoot *database.Message,
 	editTarget *database.Message,
-) (sendReq slack.MsgOption, fileUpload *slack.FileUploadParameters, err error) {
+) (conv *ConvertedSlackMessage, err error) {
 	log := zerolog.Ctx(ctx)
 
 	if evt.Type == event.EventSticker {
@@ -63,13 +73,13 @@ func (mc *MessageConverter) ToSlack(
 		if isMediaMsgtype(content.MsgType) {
 			content.MsgType = event.MsgText
 			if content.FileName == "" || content.FileName == content.Body {
-				return nil, nil, ErrMediaOnlyEditCaption
+				return nil, ErrMediaOnlyEditCaption
 			}
 		}
 		var ok bool
 		_, _, editTargetID, ok = slackid.ParseMessageID(editTarget.ID)
 		if !ok {
-			return nil, nil, fmt.Errorf("failed to parse edit target ID")
+			return nil, fmt.Errorf("failed to parse edit target ID")
 		}
 	}
 	if threadRoot != nil {
@@ -80,7 +90,7 @@ func (mc *MessageConverter) ToSlack(
 		var ok bool
 		_, _, threadRootID, ok = slackid.ParseMessageID(threadRootMessageID)
 		if !ok {
-			return nil, nil, fmt.Errorf("failed to parse thread root ID")
+			return nil, fmt.Errorf("failed to parse thread root ID")
 		}
 	}
 
@@ -102,35 +112,74 @@ func (mc *MessageConverter) ToSlack(
 		if content.MsgType == event.MsgEmote {
 			options = append(options, slack.MsgOptionMeMessage())
 		}
-		return slack.MsgOptionCompose(options...), nil, nil
+		return &ConvertedSlackMessage{SendReq: slack.MsgOptionCompose(options...)}, nil
 	case event.MsgAudio, event.MsgFile, event.MsgImage, event.MsgVideo:
 		data, err := mc.Bridge.Bot.DownloadMedia(ctx, content.URL, content.File)
 		if err != nil {
 			log.Err(err).Msg("Failed to download Matrix attachment")
-			return nil, nil, ErrMediaDownloadFailed
+			return nil, ErrMediaDownloadFailed
 		}
 
-		var filename, caption string
+		var filename, caption, subtype string
 		if content.FileName == "" || content.FileName == content.Body {
 			filename = content.Body
 		} else {
 			filename = content.FileName
 			caption = content.Body
 		}
+		useFileUpload := false
+		if content.MSC3245Voice != nil && ffmpeg.Supported() {
+			data, err = ffmpeg.ConvertBytes(ctx, data, ".webm", []string{}, []string{"-c:a", "copy"}, content.Info.MimeType)
+			if err != nil {
+				log.Err(err).Msg("Failed to convert voice message")
+				return nil, ErrMediaConvertFailed
+			}
+			filename += ".webm"
+			content.Info.MimeType = "audio/webm;codecs=opus"
+			subtype = "slack_audio"
+		}
 		_, channelID := slackid.ParsePortalID(portal.ID)
-		fileUpload = &slack.FileUploadParameters{
-			Filename:        filename,
-			Filetype:        content.Info.MimeType,
-			Reader:          bytes.NewReader(data),
-			Channels:        []string{channelID},
-			ThreadTimestamp: threadRootID,
+		if useFileUpload {
+			fileUpload := &slack.FileUploadParameters{
+				Filename:        filename,
+				Filetype:        content.Info.MimeType,
+				Reader:          bytes.NewReader(data),
+				Channels:        []string{channelID},
+				ThreadTimestamp: threadRootID,
+			}
+			if caption != "" {
+				fileUpload.InitialComment = caption
+			}
+			return &ConvertedSlackMessage{FileUpload: fileUpload}, nil
+		} else {
+			resp, err := client.GetFileUploadURL(ctx, slack.GetFileUploadURLParameters{
+				Filename: filename,
+				Length:   len(data),
+				SubType:  subtype,
+			})
+			if err != nil {
+				log.Err(err).Msg("Failed to get file upload URL")
+				return nil, ErrMediaUploadFailed
+			}
+			err = client.UploadToURL(ctx, resp, content.Info.MimeType, data)
+			if err != nil {
+				log.Err(err).Msg("Failed to upload file")
+				return nil, ErrMediaUploadFailed
+			}
+			err = client.CompleteFileUpload(ctx, resp)
+			if err != nil {
+				log.Err(err).Msg("Failed to complete file upload")
+				return nil, ErrMediaUploadFailed
+			}
+			fileShare := &slack.ShareFileParams{
+				Files:   []string{resp.File},
+				Channel: channelID,
+				Text:    caption,
+			}
+			return &ConvertedSlackMessage{FileShare: fileShare}, nil
 		}
-		if caption != "" {
-			fileUpload.InitialComment = caption
-		}
-		return nil, fileUpload, nil
 	default:
-		return nil, nil, ErrUnknownMsgType
+		return nil, ErrUnknownMsgType
 	}
 }
 
