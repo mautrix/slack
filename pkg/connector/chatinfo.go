@@ -266,21 +266,7 @@ func makeAvatar(avatarURL string) *bridgev2.Avatar {
 	}
 }
 
-func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string) (*bridgev2.UserInfo, error) {
-	if len(userID) == 0 {
-		return nil, fmt.Errorf("empty user ID")
-	}
-	var info *slack.User
-	var botInfo *slack.Bot
-	var err error
-	if userID[0] == 'B' {
-		botInfo, err = s.Client.GetBotInfoContext(ctx, userID)
-	} else {
-		info, err = s.Client.GetUserInfoContext(ctx, userID)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user info: %w", err)
-	}
+func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *slack.Bot) *bridgev2.UserInfo {
 	var name *string
 	var avatarURL string
 	isBot := userID == "USLACKBOT"
@@ -308,7 +294,25 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string) (*bridge
 			ghost.Metadata.(*GhostMetadata).LastSync = jsontime.UnixNow()
 			return true
 		},
-	}, nil
+	}
+}
+
+func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string) (*bridgev2.UserInfo, error) {
+	if len(userID) == 0 {
+		return nil, fmt.Errorf("empty user ID")
+	}
+	var info *slack.User
+	var botInfo *slack.Bot
+	var err error
+	if userID[0] == 'B' {
+		botInfo, err = s.Client.GetBotInfoContext(ctx, userID)
+	} else {
+		info, err = s.Client.GetUserInfoContext(ctx, userID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user info: %w", err)
+	}
+	return s.wrapUserInfo(userID, info, botInfo), nil
 }
 
 const MinGhostSyncInterval = 24 * time.Hour
