@@ -217,11 +217,9 @@ func (mc *MessageConverter) renderSlackBlock(ctx context.Context, block slack.Bl
 		}
 		return strings.Join(htmlParts, "<br>"), false
 	case *slack.RichTextBlock:
-		var htmlText strings.Builder
-		for _, element := range b.Elements {
-			htmlText.WriteString(mc.renderSlackRichTextElement(ctx, len(b.Elements), element, mentions))
-		}
-		return format.UnwrapSingleParagraph(htmlText.String()), false
+		var buf strings.Builder
+		mc.renderSlackRichTextElements(ctx, b.Elements, mentions, 0, &buf)
+		return format.UnwrapSingleParagraph(buf.String()), false
 	case *slack.ContextBlock:
 		var htmlText strings.Builder
 		var unsupported bool = false
@@ -247,42 +245,127 @@ func (mc *MessageConverter) renderSlackBlock(ctx context.Context, block slack.Bl
 	}
 }
 
+func getBlockquoteDepth(rawElem slack.RichTextElement) int {
+	switch elem := rawElem.(type) {
+	case *slack.RichTextSection:
+		return 0
+	case *slack.RichTextPreformatted:
+		return elem.Border
+	case *slack.RichTextQuote:
+		return elem.Border + 1
+	case *slack.RichTextList:
+		return elem.Border
+	default:
+		return 0
+	}
+}
+
+func acceptListNest(elem slack.RichTextElement, minDepth int, typeAtMinDepth slack.RichTextListStyle) bool {
+	list, ok := elem.(*slack.RichTextList)
+	return ok && list.Indent >= minDepth && (list.Indent > minDepth || list.Style == typeAtMinDepth)
+}
+
+func (mc *MessageConverter) renderSlackRichTextLists(
+	ctx context.Context,
+	lists []*slack.RichTextList,
+	mentions *event.Mentions,
+	into *strings.Builder,
+) {
+	listStyles := []string{"1", "a", "i"}
+	firstList := lists[0]
+	style := listStyles[firstList.Indent%len(listStyles)]
+	offset := firstList.Offset + 1
+	if firstList.Style == slack.RTELStyleOrdered {
+		if offset > 1 {
+			_, _ = fmt.Fprintf(into, `<ol start="%d" type="%s">`, offset, style)
+		} else {
+			_, _ = fmt.Fprintf(into, `<ol type="%s">`, style)
+		}
+		defer into.WriteString("</ol>")
+	} else {
+		into.WriteString("<ul>")
+		defer into.WriteString("</ul>")
+	}
+	for i := 0; i < len(lists); i++ {
+		list := lists[i]
+		if list.Indent > firstList.Indent {
+			var subLists []*slack.RichTextList
+			for ; i < len(lists) && lists[i].Indent > firstList.Indent; i++ {
+				subLists = append(subLists, lists[i])
+			}
+			i--
+			mc.renderSlackRichTextLists(ctx, subLists, mentions, into)
+		} else {
+			if i != 0 {
+				into.WriteString("</li>")
+			}
+			for j, listItem := range list.Elements {
+				if j == 0 && list.Offset+1 != offset {
+					offset = list.Offset + 1
+					_, _ = fmt.Fprintf(into, `<li value="%d">`, offset)
+				} else {
+					into.WriteString("<li>")
+				}
+				into.WriteString(mc.renderSlackRichTextElement(ctx, 1, &listItem, mentions))
+				if j < len(list.Elements)-1 {
+					into.WriteString("</li>")
+				}
+				offset++
+			}
+		}
+	}
+	into.WriteString("</li>")
+}
+
+func (mc *MessageConverter) renderSlackRichTextElements(
+	ctx context.Context,
+	elements []slack.RichTextElement,
+	mentions *event.Mentions,
+	existingBQDepth int,
+	into *strings.Builder,
+) {
+	for i := 0; i < len(elements); i++ {
+		bqDepth := getBlockquoteDepth(elements[i])
+		if bqDepth-existingBQDepth > 0 {
+			into.WriteString("<blockquote>")
+			var subElements []slack.RichTextElement
+			for ; i < len(elements) && getBlockquoteDepth(elements[i]) >= bqDepth; i++ {
+				subElements = append(subElements, elements[i])
+			}
+			i--
+			mc.renderSlackRichTextElements(ctx, subElements, mentions, bqDepth, into)
+			into.WriteString("</blockquote>")
+			continue
+		}
+		firstList, ok := elements[i].(*slack.RichTextList)
+		if ok {
+			var subLists []*slack.RichTextList
+			for ; i < len(elements) && acceptListNest(elements[i], firstList.Indent, firstList.Style); i++ {
+				subLists = append(subLists, elements[i].(*slack.RichTextList))
+			}
+			i--
+			mc.renderSlackRichTextLists(ctx, subLists, mentions, into)
+			continue
+		}
+		into.WriteString(mc.renderSlackRichTextElement(ctx, len(elements), elements[i], mentions))
+	}
+}
+
 func (mc *MessageConverter) renderSlackRichTextElement(ctx context.Context, numElements int, element slack.RichTextElement, mentions *event.Mentions) string {
 	switch e := element.(type) {
 	case *slack.RichTextSection:
-		var htmlTag string
-		var htmlCloseTag string
-		if e.RichTextElementType() == slack.RTEPreformatted {
-			htmlTag = "<pre>"
-			htmlCloseTag = "</pre>"
-		} else if e.RichTextElementType() == slack.RTEQuote {
-			htmlTag = "<blockquote>"
-			htmlCloseTag = "</blockquote>"
-		} else if numElements != 1 {
-			htmlTag = "<p>"
-			htmlCloseTag = "</p>"
+		children := mc.renderRichTextSectionElements(ctx, e.Elements, mentions)
+		if numElements == 1 {
+			return children
 		}
-		return fmt.Sprintf("%s%s%s", htmlTag, mc.renderRichTextSectionElements(ctx, e.Elements, mentions), htmlCloseTag)
+		return fmt.Sprintf("<p>%s</p>", children)
+	case *slack.RichTextPreformatted:
+		children := mc.renderRichTextSectionElements(ctx, e.Elements, mentions)
+		return fmt.Sprintf("<pre>%s</pre>", children)
+	case *slack.RichTextQuote:
+		return mc.renderRichTextSectionElements(ctx, e.Elements, mentions)
 	case *slack.RichTextList:
-		var htmlText strings.Builder
-		var htmlTag string
-		var htmlCloseTag string
-		if e.Style == "ordered" {
-			htmlTag = "<ol>"
-			if e.Offset > 0 {
-				htmlTag = fmt.Sprintf("<ol start=\"%d\">", e.Offset+1)
-			}
-			htmlCloseTag = "</ol>"
-		} else {
-			htmlTag = "<ul>"
-			htmlCloseTag = "</ul>"
-		}
-		htmlText.WriteString(htmlTag)
-		for _, e := range e.Elements {
-			htmlText.WriteString(fmt.Sprintf("<li>%s</li>", mc.renderSlackRichTextElement(ctx, 1, &e, mentions)))
-		}
-		htmlText.WriteString(htmlCloseTag)
-		return htmlText.String()
+		panic("renderSlackRichTextElement should not be called with RichTextList")
 	default:
 		zerolog.Ctx(ctx).Debug().Type("element_type", e).Msg("Unsupported Slack rich text element")
 		return fmt.Sprintf("<i>Unsupported section %s in Slack text.</i>", e.RichTextElementType())
