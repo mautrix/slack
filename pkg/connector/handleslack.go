@@ -242,6 +242,12 @@ func wrapReadReceipt(meta *SlackEventMeta) *SlackReadReceipt {
 
 func wrapMemberChange(meta *SlackEventMeta, sender bridgev2.EventSender, newMembership, prevMembership event.Membership) *SlackChatInfoChange {
 	meta.Type = bridgev2.RemoteEventChatInfoChange
+	meta.LogContext = func(c zerolog.Context) zerolog.Context {
+		return c.
+			Any("member_change_target", sender).
+			Str("prev_membership", string(prevMembership)).
+			Str("new_membership", string(newMembership))
+	}
 	return &SlackChatInfoChange{
 		SlackEventMeta: meta,
 		Change: &bridgev2.ChatInfoChange{
@@ -278,6 +284,7 @@ func (s *SlackClient) makeEventMeta(ctx context.Context, channelID string, chann
 		meta.Sender = s.makeEventSender(senderID)
 	}
 	if timestamp != "" {
+		meta.RawTimestamp = timestamp
 		meta.ID = slackid.MakeMessageID(s.TeamID, channelID, timestamp)
 		meta.Timestamp = slackid.ParseSlackTimestamp(timestamp)
 	}
@@ -293,6 +300,7 @@ type SlackEventMeta struct {
 	ID           networkid.MessageID
 	LogContext   func(zerolog.Context) zerolog.Context
 	CreatePortal bool
+	RawTimestamp string
 }
 
 func (s *SlackEventMeta) GetType() bridgev2.RemoteEventType {
@@ -304,6 +312,7 @@ func (s *SlackEventMeta) GetPortalKey() networkid.PortalKey {
 }
 
 func (s *SlackEventMeta) AddLogContext(c zerolog.Context) zerolog.Context {
+	c = c.Str("event_ts", s.RawTimestamp)
 	if s.LogContext == nil {
 		return c
 	}
