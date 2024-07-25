@@ -269,6 +269,9 @@ func (mc *MessageConverter) renderSlackRichTextElement(ctx context.Context, numE
 		var htmlCloseTag string
 		if e.Style == "ordered" {
 			htmlTag = "<ol>"
+			if e.Offset > 0 {
+				htmlTag = fmt.Sprintf("<ol start=\"%d\">", e.Offset+1)
+			}
 			htmlCloseTag = "</ol>"
 		} else {
 			htmlTag = "<ul>"

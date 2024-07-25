@@ -33,7 +33,7 @@ import (
 type MessageConverter struct {
 	Bridge *bridgev2.Bridge
 
-	MatrixHTMLParser  *matrixfmt.MatrixHTMLParser
+	MatrixHTMLParser  *matrixfmt.HTMLParser
 	SlackMrkdwnParser *mrkdwn.SlackMrkdwnParser
 
 	ServerName  string
@@ -100,7 +100,7 @@ func New(br *bridgev2.Bridge) *MessageConverter {
 		MaxFileSize: 50 * 1024 * 1024,
 		ServerName:  br.Matrix.ServerName(),
 
-		MatrixHTMLParser: matrixfmt.New(br),
+		MatrixHTMLParser: matrixfmt.New2(br),
 	}
 	mc.SlackMrkdwnParser = mrkdwn.New(&mrkdwn.Params{
 		ServerName:     br.Matrix.ServerName(),

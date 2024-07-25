@@ -242,6 +242,14 @@ func (s *SlackClient) getTeamInfo() *bridgev2.ChatInfo {
 			PowerLevels:      &bridgev2.PowerLevelChanges{EventsDefault: ptr.Ptr(100)},
 		},
 		Type: ptr.Ptr(database.RoomTypeSpace),
+		ExtraUpdates: func(ctx context.Context, portal *bridgev2.Portal) (changed bool) {
+			meta := portal.Metadata.(*slackid.PortalMetadata)
+			if meta.TeamDomain != s.BootResp.Team.Domain {
+				meta.TeamDomain = s.BootResp.Team.Domain
+				changed = true
+			}
+			return
+		},
 	}
 }
 
@@ -291,7 +299,7 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 		Avatar:      makeAvatar(avatarURL),
 		IsBot:       &isBot,
 		ExtraUpdates: func(ctx context.Context, ghost *bridgev2.Ghost) bool {
-			ghost.Metadata.(*GhostMetadata).LastSync = jsontime.UnixNow()
+			ghost.Metadata.(*slackid.GhostMetadata).LastSync = jsontime.UnixNow()
 			return true
 		},
 	}
@@ -318,7 +326,7 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string) (*bridge
 const MinGhostSyncInterval = 24 * time.Hour
 
 func (s *SlackClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*bridgev2.UserInfo, error) {
-	if time.Since(ghost.Metadata.(*GhostMetadata).LastSync.Time) < MinGhostSyncInterval {
+	if time.Since(ghost.Metadata.(*slackid.GhostMetadata).LastSync.Time) < MinGhostSyncInterval {
 		return nil, nil
 	}
 	_, userID := slackid.ParseUserID(ghost.ID)

@@ -122,7 +122,7 @@ func (s *SlackTokenLogin) SubmitCookies(ctx context.Context, input map[string]st
 	ul, err := s.User.NewLogin(ctx, &database.UserLogin{
 		ID:         slackid.MakeUserLoginID(info.Team.ID, info.Self.ID),
 		RemoteName: fmt.Sprintf("%s - %s", info.Team.Name, info.Self.Profile.Email),
-		Metadata: &UserLoginMetadata{
+		Metadata: &slackid.UserLoginMetadata{
 			Email:       info.Self.Profile.Email,
 			Token:       token,
 			CookieToken: cookieToken,

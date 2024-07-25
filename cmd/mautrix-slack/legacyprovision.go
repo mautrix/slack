@@ -69,7 +69,7 @@ func legacyProvPing(w http.ResponseWriter, r *http.Request) {
 				},
 				"self": map[string]any{
 					"id":   string(login.ID),
-					"name": login.Metadata.(*connector.UserLoginMetadata).Email,
+					"name": login.Metadata.(*slackid.UserLoginMetadata).Email,
 				},
 			},
 		})

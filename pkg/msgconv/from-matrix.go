@@ -97,13 +97,13 @@ func (mc *MessageConverter) ToSlack(
 	switch content.MsgType {
 	case event.MsgText, event.MsgEmote, event.MsgNotice:
 		options := make([]slack.MsgOption, 0, 4)
+		var block slack.Block
 		if content.Format == event.FormatHTML {
-			options = append(options, slack.MsgOptionText(mc.MatrixHTMLParser.Parse(ctx, content.FormattedBody, content.Mentions, portal), false))
+			block = mc.MatrixHTMLParser.Parse(ctx, content.FormattedBody, content.Mentions, portal)
 		} else {
-			options = append(options,
-				slack.MsgOptionText(content.Body, false),
-				slack.MsgOptionDisableMarkdown())
+			block = slack.NewRichTextBlock("", slack.NewRichTextSection(slack.NewRichTextSectionTextElement(content.Body, nil)))
 		}
+		options = append(options, slack.MsgOptionBlocks(block))
 		if editTargetID != "" {
 			options = append(options, slack.MsgOptionUpdate(editTargetID))
 		} else if threadRootID != "" {
@@ -172,15 +172,18 @@ func (mc *MessageConverter) ToSlack(
 				log.Err(err).Msg("Failed to complete file upload")
 				return nil, ErrMediaUploadFailed
 			}
+			var block slack.Block
+			if captionHTML != "" {
+				block = mc.MatrixHTMLParser.Parse(ctx, content.FormattedBody, content.Mentions, portal)
+			} else if caption != "" {
+				block = slack.NewRichTextBlock("", slack.NewRichTextSection(slack.NewRichTextSectionTextElement(caption, nil)))
+			}
 			fileShare := &slack.ShareFileParams{
 				Files:   []string{resp.File},
 				Channel: channelID,
 			}
-			if captionHTML != "" {
-				mrkdwn := mc.MatrixHTMLParser.Parse(ctx, content.FormattedBody, content.Mentions, portal)
-				fileShare.Blocks = []slack.Block{slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, mrkdwn, false, false), nil, nil)}
-			} else if caption != "" {
-				fileShare.Blocks = []slack.Block{slack.NewRichTextBlock("", slack.NewRichTextSection(slack.NewRichTextSectionTextElement(caption, nil)))}
+			if block != nil {
+				fileShare.Blocks = []slack.Block{block}
 			}
 			return &ConvertedSlackMessage{FileShare: fileShare}, nil
 		}

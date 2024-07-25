@@ -14,26 +14,23 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package connector
+package slackid
 
 import (
-	"maunium.net/go/mautrix/bridgev2/database"
-
-	"go.mau.fi/mautrix-slack/pkg/slackid"
+	"go.mau.fi/util/jsontime"
 )
 
-func (s *SlackConnector) GetDBMetaTypes() database.MetaTypes {
-	return database.MetaTypes{
-		Portal: func() any {
-			return &slackid.PortalMetadata{}
-		},
-		Ghost: func() any {
-			return &slackid.GhostMetadata{}
-		},
-		Message:  nil,
-		Reaction: nil,
-		UserLogin: func() any {
-			return &slackid.UserLoginMetadata{}
-		},
-	}
+type PortalMetadata struct {
+	// Only present for team portals, not channels
+	TeamDomain string `json:"team_domain"`
+}
+
+type GhostMetadata struct {
+	LastSync jsontime.Unix `json:"last_sync"`
+}
+
+type UserLoginMetadata struct {
+	Email       string `json:"email"`
+	Token       string `json:"token"`
+	CookieToken string `json:"cookie_token,omitempty"`
 }

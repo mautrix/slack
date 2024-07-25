@@ -57,7 +57,7 @@ func makeSlackClient(log *zerolog.Logger, token, cookieToken string) *slack.Clie
 
 func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.UserLogin) error {
 	teamID, userID := slackid.ParseUserLoginID(login.ID)
-	meta := login.Metadata.(*UserLoginMetadata)
+	meta := login.Metadata.(*slackid.UserLoginMetadata)
 	var sc *SlackClient
 	if meta.Token == "" {
 		sc = &SlackClient{Main: s, UserLogin: login, UserID: userID, TeamID: teamID}
@@ -217,7 +217,7 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 		existingPortals[up.Portal] = struct{}{}
 	}
 	var channels []*slack.Channel
-	token := s.UserLogin.Metadata.(*UserLoginMetadata).Token
+	token := s.UserLogin.Metadata.(*slackid.UserLoginMetadata).Token
 	if strings.HasPrefix(token, "xoxs") || s.Main.Config.Backfill.ConversationCount == -1 {
 		for _, ch := range s.BootResp.Channels {
 			ch.IsMember = true
@@ -336,13 +336,13 @@ func (s *SlackClient) LogoutRemote(ctx context.Context) {
 		}
 		s.Client = nil
 	}
-	meta := s.UserLogin.Metadata.(*UserLoginMetadata)
+	meta := s.UserLogin.Metadata.(*slackid.UserLoginMetadata)
 	meta.Token = ""
 	meta.CookieToken = ""
 }
 
 func (s *SlackClient) invalidateSession(ctx context.Context, state status.BridgeState) {
-	meta := s.UserLogin.Metadata.(*UserLoginMetadata)
+	meta := s.UserLogin.Metadata.(*slackid.UserLoginMetadata)
 	meta.Token = ""
 	meta.CookieToken = ""
 	err := s.UserLogin.Save(ctx)
