@@ -25,6 +25,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/id"
 
+	"go.mau.fi/mautrix-slack/pkg/connector/slackdb"
 	"go.mau.fi/mautrix-slack/pkg/msgconv/matrixfmt"
 	"go.mau.fi/mautrix-slack/pkg/msgconv/mrkdwn"
 	"go.mau.fi/mautrix-slack/pkg/slackid"
@@ -93,14 +94,14 @@ func (mc *MessageConverter) GetMentionedRoomInfo(ctx context.Context, channelID 
 	return portal.MXID, "", portal.Name
 }
 
-func New(br *bridgev2.Bridge) *MessageConverter {
+func New(br *bridgev2.Bridge, db *slackdb.SlackDB) *MessageConverter {
 	mc := &MessageConverter{
 		Bridge: br,
 
 		MaxFileSize: 50 * 1024 * 1024,
 		ServerName:  br.Matrix.ServerName(),
 
-		MatrixHTMLParser: matrixfmt.New2(br),
+		MatrixHTMLParser: matrixfmt.New2(br, db),
 	}
 	mc.SlackMrkdwnParser = mrkdwn.New(&mrkdwn.Params{
 		ServerName:     br.Matrix.ServerName(),

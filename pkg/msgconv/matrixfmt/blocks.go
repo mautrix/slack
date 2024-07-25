@@ -32,6 +32,7 @@ import (
 	"maunium.net/go/mautrix/format"
 	"maunium.net/go/mautrix/id"
 
+	"go.mau.fi/mautrix-slack/pkg/connector/slackdb"
 	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
 
@@ -98,10 +99,11 @@ func (ctx Context) WithLink(link string) Context {
 // HTMLParser is a somewhat customizable Matrix HTML parser.
 type HTMLParser struct {
 	br *bridgev2.Bridge
+	db *slackdb.SlackDB
 }
 
-func New2(br *bridgev2.Bridge) *HTMLParser {
-	return &HTMLParser{br: br}
+func New2(br *bridgev2.Bridge, db *slackdb.SlackDB) *HTMLParser {
+	return &HTMLParser{br: br, db: db}
 }
 
 func (parser *HTMLParser) GetMentionedUserID(mxid id.UserID, ctx Context) string {
@@ -258,6 +260,19 @@ func (parser *HTMLParser) tagToElement(node *html.Node, ctx Context) ([]slack.Ri
 	case "b", "strong", "i", "em", "s", "strike", "del", "u", "ins", "tt", "code", "a", "span", "font":
 		ctx = parser.applyBasicFormat(node, ctx)
 		return parser.nodeAndSiblingsToElement(node.FirstChild, ctx)
+	case "img":
+		src := parser.getAttribute(node, "src")
+		dbEmoji, err := parser.db.Emoji.GetByMXC(ctx.Ctx, src)
+		if err != nil {
+			zerolog.Ctx(ctx.Ctx).Err(err).Msg("Failed to get emoji by MXC to convert image")
+		} else if dbEmoji != nil {
+			return []slack.RichTextSectionElement{slack.NewRichTextSectionEmojiElement(dbEmoji.EmojiID, 0, ctx.StylePtr())}, nil
+		}
+		if alt := parser.getAttribute(node, "alt"); alt != "" {
+			return []slack.RichTextSectionElement{slack.NewRichTextSectionTextElement(alt, ctx.StylePtr())}, nil
+		} else {
+			return nil, nil
+		}
 	case "h1", "h2", "h3", "h4", "h5", "h6":
 		length := int(node.Data[1] - '0')
 		prefix := strings.Repeat("#", length) + " "
@@ -387,6 +402,9 @@ func (parser *HTMLParser) nodeAndSiblingsToElement(node *html.Node, ctx Context)
 			}
 			elems = append(elems, e...)
 		}
+	}
+	if len(sectionCollector) > 0 {
+		elems = append(elems, slack.NewRichTextSection(sectionCollector...))
 	}
 	return
 }
