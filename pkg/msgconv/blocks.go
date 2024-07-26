@@ -408,6 +408,15 @@ func (mc *MessageConverter) trySlackBlocksToMatrix(ctx context.Context, portal *
 	return converted
 }
 
+func isImageAttachment(att *slack.Attachment) bool {
+	return att.Title == "" &&
+		att.Fields == nil &&
+		att.Text == "" &&
+		att.AuthorName == "" &&
+		len(att.Blocks.BlockSet) == 1 &&
+		att.Blocks.BlockSet[0].BlockType() == slack.MBTImage
+}
+
 func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, blocks slack.Blocks, attachments []slack.Attachment) (*bridgev2.ConvertedMessagePart, error) {
 	// Special case for bots like the Giphy bot which send images in a specific format
 	if len(blocks.BlockSet) == 2 &&
@@ -427,6 +436,9 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 	}
 
 	for _, attachment := range attachments {
+		if isImageAttachment(&attachment) {
+			continue
+		}
 		if attachment.IsMsgUnfurl {
 			for _, message_block := range attachment.MessageBlocks {
 				renderedAttachment := mc.blocksToHTML(ctx, message_block.Message.Blocks, true, mentions)

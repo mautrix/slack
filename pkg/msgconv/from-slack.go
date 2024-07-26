@@ -22,6 +22,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -67,7 +69,23 @@ func (mc *MessageConverter) ToMatrix(
 		partID := slackid.MakePartID(slackid.PartTypeFile, i, file.ID)
 		output.Parts = append(output.Parts, mc.slackFileToMatrix(ctx, portal, intent, client, partID, &file))
 	}
-	output.MergeCaption()
+	for i, att := range msg.Attachments {
+		if !isImageAttachment(&att) {
+			continue
+		}
+		part, err := mc.renderImageBlock(ctx, portal, intent, *att.Blocks.BlockSet[0].(*slack.ImageBlock))
+		if err != nil {
+			zerolog.Ctx(ctx).Err(err).Msg("Failed to render image block")
+		} else {
+			part.ID = slackid.MakePartID(slackid.PartTypeAttachment, len(msg.Files)+i, strconv.Itoa(att.ID))
+			output.Parts = append(output.Parts, part)
+		}
+	}
+	if output.MergeCaption() {
+		output.Parts[0].DBMetadata = &slackid.MessageMetadata{
+			CaptionMerged: true,
+		}
+	}
 	return output
 }
 
@@ -83,12 +101,22 @@ func (mc *MessageConverter) EditToMatrix(
 	ctx = context.WithValue(ctx, contextKeyPortal, portal)
 	ctx = context.WithValue(ctx, contextKeySource, source)
 	client := source.Client.(SlackClientProvider).GetClient()
+	output := &bridgev2.ConvertedEdit{}
 	existingMap := make(map[networkid.PartID]*database.Message, len(existing))
 	for _, part := range existing {
 		existingMap[part.PartID] = part
+		partType, _, innerPartID, ok := slackid.ParsePartID(part.PartID)
+		if ok && partType == slackid.PartTypeAttachment {
+			innerPartIDInt, _ := strconv.Atoi(innerPartID)
+			attachmentStillExists := slices.ContainsFunc(msg.Attachments, func(attachment slack.Attachment) bool {
+				return attachment.ID == innerPartIDInt
+			})
+			if !attachmentStillExists {
+				output.DeletedParts = append(output.DeletedParts, part)
+			}
+		}
 	}
 	editTargetPart := existing[0]
-	output := &bridgev2.ConvertedEdit{}
 	modifiedPart := mc.makeTextPart(ctx, msg, portal, intent)
 	captionMerged := false
 	for i, file := range msg.Files {
@@ -107,10 +135,14 @@ func (mc *MessageConverter) EditToMatrix(
 				}
 				filePart := mc.slackFileToMatrix(ctx, portal, intent, client, partID, &file)
 				modifiedPart = bridgev2.MergeCaption(modifiedPart, filePart)
+				modifiedPart.DBMetadata = &slackid.MessageMetadata{
+					CaptionMerged: true,
+				}
 				captionMerged = true
 			}
 		}
 	}
+	// TODO this doesn't handle edits to captions in msg.Attachments gifs properly
 	if modifiedPart != nil {
 		output.ModifiedParts = append(output.ModifiedParts, modifiedPart.ToEditPart(editTargetPart))
 	}

@@ -30,7 +30,9 @@ func (s *SlackConnector) GetDBMetaTypes() database.MetaTypes {
 		Ghost: func() any {
 			return &slackid.GhostMetadata{}
 		},
-		Message:  nil,
+		Message: func() any {
+			return &slackid.MessageMetadata{}
+		},
 		Reaction: nil,
 		UserLogin: func() any {
 			return &slackid.UserLoginMetadata{}

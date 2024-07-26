@@ -124,7 +124,8 @@ func MakePortalKey(teamID, channelID string, userLoginID networkid.UserLoginID, 
 type PartType string
 
 const (
-	PartTypeFile PartType = "file"
+	PartTypeFile       PartType = "file"
+	PartTypeAttachment PartType = "attachment"
 )
 
 func MakePartID(partType PartType, index int, id string) networkid.PartID {

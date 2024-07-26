@@ -34,3 +34,7 @@ type UserLoginMetadata struct {
 	Token       string `json:"token"`
 	CookieToken string `json:"cookie_token,omitempty"`
 }
+
+type MessageMetadata struct {
+	CaptionMerged bool `json:"caption_merged"`
+}
