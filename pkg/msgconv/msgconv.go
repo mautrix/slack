@@ -18,6 +18,9 @@ package msgconv
 
 import (
 	"context"
+	"net"
+	"net/http"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
@@ -33,6 +36,7 @@ import (
 
 type MessageConverter struct {
 	Bridge *bridgev2.Bridge
+	HTTP   http.Client
 
 	MatrixHTMLParser  *matrixfmt.HTMLParser
 	SlackMrkdwnParser *mrkdwn.SlackMrkdwnParser
@@ -97,6 +101,15 @@ func (mc *MessageConverter) GetMentionedRoomInfo(ctx context.Context, channelID 
 func New(br *bridgev2.Bridge, db *slackdb.SlackDB) *MessageConverter {
 	mc := &MessageConverter{
 		Bridge: br,
+		HTTP: http.Client{
+			Transport: &http.Transport{
+				DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ResponseHeaderTimeout: 20 * time.Second,
+				ForceAttemptHTTP2:     true,
+			},
+			Timeout: 60 * time.Second,
+		},
 
 		MaxFileSize: 50 * 1024 * 1024,
 		ServerName:  br.Matrix.ServerName(),

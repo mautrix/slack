@@ -23,6 +23,7 @@ import (
 	"html"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -33,27 +34,41 @@ import (
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/format"
+	"maunium.net/go/mautrix/id"
 
 	"go.mau.fi/mautrix-slack/pkg/msgconv/mrkdwn"
 )
 
-func (mc *MessageConverter) renderImageBlock(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, block slack.ImageBlock) (*bridgev2.ConvertedMessagePart, error) {
-	log := zerolog.Ctx(ctx)
-	client := http.Client{}
-	resp, err := client.Get(block.ImageURL)
-	if err != nil {
-		log.Err(err).Msg("Failed to fetch image block")
-		return nil, err
-	} else if resp.StatusCode != 200 {
-		log.Error().Int("status_code", resp.StatusCode).Msg("Unexpected status code fetching image block")
-		return nil, fmt.Errorf(resp.Status)
+func (mc *MessageConverter) downloadExternalImage(ctx context.Context, addr string) ([]byte, error) {
+	wrappedURL := &url.URL{
+		Scheme: "https",
+		Host:   "slack-imgs.com",
+		Path:   "/",
+		RawQuery: (&url.Values{
+			"c":   {"1"},
+			"o1":  {"ro"},
+			"url": {addr},
+		}).Encode(),
 	}
-	bytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Err(err).Msg("Failed to read image block get response")
-		return nil, err
+	if req, err := http.NewRequestWithContext(ctx, http.MethodGet, wrappedURL.String(), nil); err != nil {
+		return nil, fmt.Errorf("failed to prepare request: %w", err)
+	} else if resp, err := mc.HTTP.Do(req); err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	} else if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code %d", resp.StatusCode)
+	} else if bytes, err := io.ReadAll(resp.Body); err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	} else {
+		return bytes, nil
 	}
-	filename := path.Base(resp.Request.URL.Path)
+}
+
+func (mc *MessageConverter) renderImageBlock(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, imageURL string) (*bridgev2.ConvertedMessagePart, error) {
+	bytes, err := mc.downloadExternalImage(ctx, imageURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download media: %w", err)
+	}
+	filename := path.Base(imageURL)
 	mimetype := http.DetectContentType(bytes)
 	content := event.MessageEventContent{
 		MsgType: event.MsgImage,
@@ -65,13 +80,45 @@ func (mc *MessageConverter) renderImageBlock(ctx context.Context, portal *bridge
 	}
 	err = mc.uploadMedia(ctx, portal, intent, bytes, &content)
 	if err != nil {
-		log.Err(err).Msg("Failed to reupload image block media")
-		return nil, err
+		return nil, fmt.Errorf("failed to reupload media: %w", err)
 	}
 	return &bridgev2.ConvertedMessagePart{
 		Type:    event.EventMessage,
 		Content: &content,
 	}, nil
+}
+
+func (mc *MessageConverter) attachmentToURLPreview(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, attachment slack.Attachment) *event.BeeperLinkPreview {
+	var mxc id.ContentURIString
+	var file *event.EncryptedFileInfo
+	var imageMime string
+	if attachment.ImageURL != "" {
+		bytes, err := mc.downloadExternalImage(ctx, attachment.ImageURL)
+		if err != nil {
+			zerolog.Ctx(ctx).Err(err).Msg("Failed to download link preview image")
+		} else {
+			imageMime = http.DetectContentType(bytes)
+			mxc, file, err = intent.UploadMedia(ctx, portal.MXID, bytes, path.Base(attachment.ImageURL), imageMime)
+			if err != nil {
+				zerolog.Ctx(ctx).Err(err).Msg("Failed to reupload link preview image")
+			}
+		}
+	}
+	// TODO handle mrkdwn in description? there can at least be links
+	return &event.BeeperLinkPreview{
+		LinkPreview: event.LinkPreview{
+			CanonicalURL: attachment.FromURL,
+			Title:        attachment.Title,
+			Type:         "website",
+			Description:  attachment.Text,
+			ImageURL:     mxc,
+			ImageSize:    attachment.ImageBytes,
+			ImageWidth:   attachment.ImageWidth,
+			ImageHeight:  attachment.ImageHeight,
+		},
+		MatchedURL:      attachment.OriginalURL,
+		ImageEncryption: file,
+	}
 }
 
 func (mc *MessageConverter) mrkdwnToMatrixHtml(ctx context.Context, inputMrkdwn string, mentions *event.Mentions) string {
@@ -423,11 +470,12 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 		blocks.BlockSet[0].BlockType() == slack.MBTImage &&
 		blocks.BlockSet[1].BlockType() == slack.MBTContext {
 		imageBlock := blocks.BlockSet[0].(*slack.ImageBlock)
-		return mc.renderImageBlock(ctx, portal, intent, *imageBlock)
+		return mc.renderImageBlock(ctx, portal, intent, imageBlock.ImageURL)
 	}
 
 	mentions := &event.Mentions{}
 	var htmlText strings.Builder
+	var urlPreviews []*event.BeeperLinkPreview
 
 	htmlText.WriteString(mc.blocksToHTML(ctx, blocks, false, mentions))
 
@@ -437,6 +485,10 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 
 	for _, attachment := range attachments {
 		if isImageAttachment(&attachment) {
+			continue
+		}
+		if attachment.FromURL != "" && attachment.OriginalURL != "" && attachment.Title != "" {
+			urlPreviews = append(urlPreviews, mc.attachmentToURLPreview(ctx, portal, intent, attachment))
 			continue
 		}
 		if attachment.IsMsgUnfurl {
@@ -513,6 +565,7 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 
 	content := format.HTMLToContent(htmlText.String())
 	content.Mentions = mentions
+	content.BeeperLinkPreviews = urlPreviews
 	return &bridgev2.ConvertedMessagePart{
 		Type:    event.EventMessage,
 		Content: &content,

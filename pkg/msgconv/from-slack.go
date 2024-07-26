@@ -73,7 +73,7 @@ func (mc *MessageConverter) ToMatrix(
 		if !isImageAttachment(&att) {
 			continue
 		}
-		part, err := mc.renderImageBlock(ctx, portal, intent, *att.Blocks.BlockSet[0].(*slack.ImageBlock))
+		part, err := mc.renderImageBlock(ctx, portal, intent, att.Blocks.BlockSet[0].(*slack.ImageBlock).ImageURL)
 		if err != nil {
 			zerolog.Ctx(ctx).Err(err).Msg("Failed to render image block")
 		} else {
