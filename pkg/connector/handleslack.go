@@ -188,7 +188,7 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 	case *slack.ChannelUpdateEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, "", evt.Timestamp)
 		meta.Type = bridgev2.RemoteEventChatResync
-		meta.CreatePortal = true
+		//meta.CreatePortal = true
 		wrapped = &meta
 	}
 	return wrapped, metaErr

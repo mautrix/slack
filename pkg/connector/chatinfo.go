@@ -229,6 +229,8 @@ func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, isNew
 	info, err := s.fetchChatInfoWithCache(ctx, channelID)
 	if err != nil {
 		return nil, err
+	} else if isNew && !info.IsMember {
+		return nil, fmt.Errorf("request cancelled due to user not being in channel")
 	}
 	return s.wrapChatInfo(ctx, info, isNew)
 }
