@@ -95,12 +95,39 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 		*slack.FileCreatedEvent, *slack.FileChangeEvent, *slack.FileDeletedEvent,
 		*slack.DesktopNotificationEvent, *slack.ReconnectUrlEvent, *slack.LatencyReport:
 		// ignored intentionally, these are duplicates or do not contain useful information
+	case *slack.UserChangeEvent:
+		go s.handleUserChange(ctx, &evt.User)
+	case *slack.UserInvalidatedEvent:
+		go s.handleUserInvalidated(ctx, evt.User.ID)
 	default:
 		logEvt := log.Warn()
 		if log.GetLevel() == zerolog.TraceLevel {
 			logEvt = logEvt.Any("event_data", evt)
 		}
 		logEvt.Msg("Unrecognized Slack event type")
+	}
+}
+
+func (s *SlackClient) handleUserChange(ctx context.Context, user *slack.User) {
+	ghost, err := s.Main.br.GetGhostByID(ctx, slackid.MakeUserID(s.TeamID, user.ID))
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to get ghost")
+		return
+	}
+	ghost.UpdateInfo(ctx, s.wrapUserInfo(user.ID, user, nil))
+}
+
+func (s *SlackClient) handleUserInvalidated(ctx context.Context, userID string) {
+	ghost, err := s.Main.br.GetGhostByID(ctx, slackid.MakeUserID(s.TeamID, userID))
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to get ghost")
+		return
+	}
+	info, err := s.fetchUserInfo(ctx, userID, ghost.Metadata.(*slackid.GhostMetadata).SlackUpdatedTS)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to fetch user info after user invalidated event")
+	} else if info != nil {
+		ghost.UpdateInfo(ctx, info)
 	}
 }
 

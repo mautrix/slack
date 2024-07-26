@@ -37,4 +37,4 @@ require (
 	maunium.net/go/mauflag v1.0.0 // indirect
 )
 
-replace github.com/slack-go/slack => github.com/beeper/slackgo v0.0.0-20240726205058-7257b3fca8ab
+replace github.com/slack-go/slack => github.com/beeper/slackgo v0.0.0-20240726212315-68fa88ff026e

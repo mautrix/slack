@@ -309,13 +309,15 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 		Avatar:      makeAvatar(avatarURL),
 		IsBot:       &isBot,
 		ExtraUpdates: func(ctx context.Context, ghost *bridgev2.Ghost) bool {
-			ghost.Metadata.(*slackid.GhostMetadata).LastSync = jsontime.UnixNow()
+			meta := ghost.Metadata.(*slackid.GhostMetadata)
+			meta.LastSync = jsontime.UnixNow()
+			meta.SlackUpdatedTS = int64(info.Updated)
 			return true
 		},
 	}
 }
 
-func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string) (*bridgev2.UserInfo, error) {
+func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string, lastUpdated int64) (*bridgev2.UserInfo, error) {
 	if len(userID) == 0 {
 		return nil, fmt.Errorf("empty user ID")
 	}
@@ -325,7 +327,22 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string) (*bridge
 	if userID[0] == 'B' {
 		botInfo, err = s.Client.GetBotInfoContext(ctx, userID)
 	} else {
-		info, err = s.Client.GetUserInfoContext(ctx, userID)
+		//info, err = s.Client.GetUserInfoContext(ctx, userID)
+		var infos map[string]*slack.User
+		infos, err = s.Client.GetUsersCacheContext(ctx, s.TeamID, slack.GetCachedUsersParameters{
+			CheckInteraction:        true,
+			IncludeProfileOnlyUsers: true,
+			UpdatedIDs: map[string]int64{
+				userID: lastUpdated,
+			},
+		})
+		if infos != nil {
+			var ok bool
+			info, ok = infos[userID]
+			if !ok {
+				return nil, nil
+			}
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user info: %w", err)
@@ -333,12 +350,13 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string) (*bridge
 	return s.wrapUserInfo(userID, info, botInfo), nil
 }
 
-const MinGhostSyncInterval = 24 * time.Hour
+const MinGhostSyncInterval = 4 * time.Hour
 
 func (s *SlackClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*bridgev2.UserInfo, error) {
-	if time.Since(ghost.Metadata.(*slackid.GhostMetadata).LastSync.Time) < MinGhostSyncInterval {
+	meta := ghost.Metadata.(*slackid.GhostMetadata)
+	if time.Since(meta.LastSync.Time) < MinGhostSyncInterval {
 		return nil, nil
 	}
 	_, userID := slackid.ParseUserID(ghost.ID)
-	return s.fetchUserInfo(ctx, userID)
+	return s.fetchUserInfo(ctx, userID, meta.SlackUpdatedTS)
 }
