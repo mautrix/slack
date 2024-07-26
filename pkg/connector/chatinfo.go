@@ -32,6 +32,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
+	"maunium.net/go/mautrix/event"
 
 	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
@@ -148,12 +149,13 @@ func (s *SlackClient) generateMemberList(ctx context.Context, info *slack.Channe
 	return
 }
 
-func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, fetchMembers bool) (*bridgev2.ChatInfo, error) {
+func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isNew bool) (*bridgev2.ChatInfo, error) {
 	var members bridgev2.ChatMemberList
 	var avatar *bridgev2.Avatar
 	var roomType database.RoomType
 	var err error
 	var extraUpdates func(ctx context.Context, portal *bridgev2.Portal) bool
+	var userLocal *bridgev2.UserLocalPortalInfo
 	switch {
 	case info.IsMpIM:
 		roomType = database.RoomTypeGroupDM
@@ -184,7 +186,12 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, fet
 		ghost.UpdateInfoIfNecessary(ctx, s.UserLogin, bridgev2.RemoteEventUnknown)
 		info.Name = ghost.Name
 	case info.Name != "":
-		members = s.generateMemberList(ctx, info, fetchMembers)
+		members = s.generateMemberList(ctx, info, !s.Main.Config.ParticipantSyncOnlyOnCreate || isNew)
+		if isNew && s.Main.Config.MuteChannelsByDefault {
+			userLocal = &bridgev2.UserLocalPortalInfo{
+				MutedUntil: &event.MutedForever,
+			}
+		}
 	default:
 		return nil, fmt.Errorf("unrecognized channel type")
 	}
@@ -213,16 +220,17 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, fet
 		Type:         &roomType,
 		ParentID:     ptr.Ptr(slackid.MakeTeamPortalID(s.TeamID)),
 		ExtraUpdates: extraUpdates,
+		UserLocal:    userLocal,
 		CanBackfill:  true,
 	}, nil
 }
 
-func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, fetchMembers bool) (*bridgev2.ChatInfo, error) {
+func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, isNew bool) (*bridgev2.ChatInfo, error) {
 	info, err := s.fetchChatInfoWithCache(ctx, channelID)
 	if err != nil {
 		return nil, err
 	}
-	return s.wrapChatInfo(ctx, info, fetchMembers)
+	return s.wrapChatInfo(ctx, info, isNew)
 }
 
 func (s *SlackClient) getTeamInfo() *bridgev2.ChatInfo {
@@ -260,7 +268,7 @@ func (s *SlackClient) GetChatInfo(ctx context.Context, portal *bridgev2.Portal) 
 	} else if channelID == "" {
 		return s.getTeamInfo(), nil
 	} else {
-		return s.fetchChatInfo(ctx, channelID, portal.MXID == "" || !s.Main.Config.ParticipantSyncOnlyOnCreate)
+		return s.fetchChatInfo(ctx, channelID, portal.MXID == "")
 	}
 }
 

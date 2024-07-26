@@ -436,7 +436,7 @@ type SlackChatResync struct {
 
 func (s *SlackChatResync) GetChatInfo(ctx context.Context, portal *bridgev2.Portal) (*bridgev2.ChatInfo, error) {
 	if s.PreFetchedInfo != nil {
-		wrappedInfo, err := s.Client.wrapChatInfo(ctx, s.PreFetchedInfo, portal.MXID == "" || !s.Client.Main.Config.ParticipantSyncOnlyOnCreate)
+		wrappedInfo, err := s.Client.wrapChatInfo(ctx, s.PreFetchedInfo, portal.MXID == "")
 		if err != nil {
 			return nil, fmt.Errorf("failed to wrap chat info: %w", err)
 		}

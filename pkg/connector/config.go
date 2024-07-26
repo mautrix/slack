@@ -38,6 +38,7 @@ type Config struct {
 	WorkspaceAvatarInRooms      bool `yaml:"workspace_avatar_in_rooms"`
 	ParticipantSyncCount        int  `yaml:"participant_sync_count"`
 	ParticipantSyncOnlyOnCreate bool `yaml:"participant_sync_only_on_create"`
+	MuteChannelsByDefault       bool `yaml:"mute_channels_by_default"`
 
 	Backfill BackfillConfig `yaml:"backfill"`
 
@@ -131,5 +132,6 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Bool, "workspace_avatar_in_rooms")
 	helper.Copy(up.Int, "participant_sync_count")
 	helper.Copy(up.Bool, "participant_sync_only_on_create")
+	helper.Copy(up.Bool, "mute_channels_by_default")
 	helper.Copy(up.Int, "backfill", "conversation_count")
 }
