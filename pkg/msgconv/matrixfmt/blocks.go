@@ -355,8 +355,8 @@ func (parser *HTMLParser) textToElements(text string, ctx Context) []slack.RichT
 	if text == "" {
 		return nil
 	}
-	mentions, ok := ctx.ReturnData[ctxAllowedMentionsKey].(*event.Mentions)
-	if ok && mentions.Room && strings.Contains(text, "@room") && !ctx.TagStack.Has("code") {
+	mentions := ctx.ReturnData[ctxAllowedMentionsKey].(*event.Mentions)
+	if mentions != nil && mentions.Room && strings.Contains(text, "@room") && !ctx.TagStack.Has("code") {
 		parts := strings.Split(text, "@room")
 		elems := make([]slack.RichTextSectionElement, len(parts)*2-1)
 		for i, part := range parts {
