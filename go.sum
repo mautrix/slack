@@ -1,7 +1,7 @@
 github.com/DATA-DOG/go-sqlmock v1.5.2 h1:OcvFkGmslmlZibjAjaHm3L//6LiuBgolP7OputlJIzU=
 github.com/DATA-DOG/go-sqlmock v1.5.2/go.mod h1:88MAG/4G7SMwSE3CeA0ZKzrT5CiOU3OJ+JlNzwDqpNU=
-github.com/beeper/slackgo v0.0.0-20240726212315-68fa88ff026e h1:oNjTFBf3UK6qARHTyHbqMyOO6t1xOcl0iLAOfdRUTGQ=
-github.com/beeper/slackgo v0.0.0-20240726212315-68fa88ff026e/go.mod h1:K+6JA6FP9/mILahVr6VH67l83p0sWkayPiDOBhzKWlo=
+github.com/beeper/slackgo v0.0.0-20240727084049-0bd52ec9575e h1:+gON1/RAk7jSspnOf83yy7wLfDPcLKfqZZOPSs67VhI=
+github.com/beeper/slackgo v0.0.0-20240727084049-0bd52ec9575e/go.mod h1:K+6JA6FP9/mILahVr6VH67l83p0sWkayPiDOBhzKWlo=
 github.com/coreos/go-systemd/v22 v22.5.0 h1:RrqgGjYQKalulkV8NGVIfkXQf6YYmOyiJKk8iXXhfZs=
 github.com/coreos/go-systemd/v22 v22.5.0/go.mod h1:Y58oyj3AT4RCenI/lSvhwexgC+NSVTIJ3seZv2GcEnc=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
@@ -69,5 +69,5 @@ gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
 gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
 maunium.net/go/mauflag v1.0.0 h1:YiaRc0tEI3toYtJMRIfjP+jklH45uDHtT80nUamyD4M=
 maunium.net/go/mauflag v1.0.0/go.mod h1:nLivPOpTpHnpzEh8jEdSL9UqO9+/KBJFmNRlwKfkPeA=
-maunium.net/go/mautrix v0.19.1-0.20240725214946-a503da55e38f h1:HhaJoZG3aSphbntfw4gJqbzgpou0ZvCCjdhx169uEUc=
-maunium.net/go/mautrix v0.19.1-0.20240725214946-a503da55e38f/go.mod h1:xP3DCXdPBUe1sPiugLbd5mRh/mJQWfGWyED1S8s9V7c=
+maunium.net/go/mautrix v0.19.1-0.20240726171246-426921e00a7c h1:FMS7nXQ1HKcncWaM5/xoM3Cqeakf/BSEcZ04MYun+18=
+maunium.net/go/mautrix v0.19.1-0.20240726171246-426921e00a7c/go.mod h1:xP3DCXdPBUe1sPiugLbd5mRh/mJQWfGWyED1S8s9V7c=

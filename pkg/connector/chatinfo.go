@@ -19,6 +19,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -244,7 +245,7 @@ func (s *SlackClient) getTeamInfo() *bridgev2.ChatInfo {
 	return &bridgev2.ChatInfo{
 		Name:   &name,
 		Topic:  nil,
-		Avatar: makeAvatar(avatarURL),
+		Avatar: makeAvatar(avatarURL, ""),
 		Members: &bridgev2.ChatMemberList{
 			IsFull:           false,
 			TotalMemberCount: 0,
@@ -274,9 +275,13 @@ func (s *SlackClient) GetChatInfo(ctx context.Context, portal *bridgev2.Portal) 
 	}
 }
 
-func makeAvatar(avatarURL string) *bridgev2.Avatar {
+func makeAvatar(avatarURL, slackAvatarHash string) *bridgev2.Avatar {
+	avatarID := networkid.AvatarID(slackAvatarHash)
+	if avatarID == "" {
+		avatarID = networkid.AvatarID(avatarURL)
+	}
 	return &bridgev2.Avatar{
-		ID: networkid.AvatarID(avatarURL),
+		ID: avatarID,
 		Get: func(ctx context.Context) ([]byte, error) {
 			return downloadPlainFile(ctx, avatarURL, "avatar")
 		},
@@ -286,7 +291,7 @@ func makeAvatar(avatarURL string) *bridgev2.Avatar {
 
 func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *slack.Bot) *bridgev2.UserInfo {
 	var name *string
-	var avatarURL string
+	var avatarURL, avatarID string
 	isBot := userID == "USLACKBOT"
 	if info != nil {
 		name = ptr.Ptr(s.Main.Config.FormatDisplayname(&DisplaynameParams{
@@ -294,8 +299,16 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 			Team: &s.BootResp.Team,
 		}))
 		avatarURL = info.Profile.ImageOriginal
+		avatarID = info.Profile.AvatarHash
 		if avatarURL == "" && info.Profile.Image512 != "" {
 			avatarURL = info.Profile.Image512
+		}
+		if avatarURL == "" && info.Profile.AvatarHash != "" {
+			avatarURL = (&url.URL{
+				Scheme: "https",
+				Host:   "ca.slack-edge.com",
+				Path:   fmt.Sprintf("/%s-%s-%s-512", s.TeamID, info.ID, info.Profile.AvatarHash),
+			}).String()
 		}
 		isBot = isBot || info.IsBot || info.IsAppUser
 	} else if botInfo != nil {
@@ -306,7 +319,7 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 	return &bridgev2.UserInfo{
 		Identifiers: []string{fmt.Sprintf("slack-internal:%s", userID)},
 		Name:        name,
-		Avatar:      makeAvatar(avatarURL),
+		Avatar:      makeAvatar(avatarURL, avatarID),
 		IsBot:       &isBot,
 		ExtraUpdates: func(ctx context.Context, ghost *bridgev2.Ghost) bool {
 			meta := ghost.Metadata.(*slackid.GhostMetadata)
