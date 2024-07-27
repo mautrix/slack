@@ -114,7 +114,7 @@ func (s *SlackClient) handleUserChange(ctx context.Context, user *slack.User) {
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to get ghost")
 		return
 	}
-	ghost.UpdateInfo(ctx, s.wrapUserInfo(user.ID, user, nil))
+	ghost.UpdateInfo(ctx, s.wrapUserInfo(user.ID, user, nil, ghost))
 }
 
 func (s *SlackClient) handleUserInvalidated(ctx context.Context, userID string) {
@@ -123,7 +123,7 @@ func (s *SlackClient) handleUserInvalidated(ctx context.Context, userID string) 
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to get ghost")
 		return
 	}
-	info, err := s.fetchUserInfo(ctx, userID, ghost.Metadata.(*slackid.GhostMetadata).SlackUpdatedTS)
+	info, err := s.fetchUserInfo(ctx, userID, ghost.Metadata.(*slackid.GhostMetadata).SlackUpdatedTS, ghost)
 	if err != nil {
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to fetch user info after user invalidated event")
 	} else if info != nil {

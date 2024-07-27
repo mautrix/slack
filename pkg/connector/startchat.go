@@ -98,7 +98,7 @@ func (s *SlackClient) SearchUsers(ctx context.Context, query string) ([]*bridgev
 		results[i] = &bridgev2.ResolveIdentifierResponse{
 			Ghost:    ghost,
 			UserID:   userID,
-			UserInfo: s.wrapUserInfo(user.ID, user, nil),
+			UserInfo: s.wrapUserInfo(user.ID, user, nil, ghost),
 		}
 	}
 	return results, nil

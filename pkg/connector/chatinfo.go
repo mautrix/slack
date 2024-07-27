@@ -289,17 +289,17 @@ func makeAvatar(avatarURL, slackAvatarHash string) *bridgev2.Avatar {
 	}
 }
 
-func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *slack.Bot) *bridgev2.UserInfo {
+func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *slack.Bot, ghost *bridgev2.Ghost) *bridgev2.UserInfo {
 	var name *string
-	var avatarURL, avatarID string
+	var avatar *bridgev2.Avatar
+	var extraUpdateAvatarID networkid.AvatarID
 	isBot := userID == "USLACKBOT"
 	if info != nil {
 		name = ptr.Ptr(s.Main.Config.FormatDisplayname(&DisplaynameParams{
 			User: info,
 			Team: &s.BootResp.Team,
 		}))
-		avatarURL = info.Profile.ImageOriginal
-		avatarID = info.Profile.AvatarHash
+		avatarURL := info.Profile.ImageOriginal
 		if avatarURL == "" && info.Profile.Image512 != "" {
 			avatarURL = info.Profile.Image512
 		}
@@ -310,27 +310,37 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 				Path:   fmt.Sprintf("/%s-%s-%s-512", s.TeamID, info.ID, info.Profile.AvatarHash),
 			}).String()
 		}
+		avatar = makeAvatar(avatarURL, info.Profile.AvatarHash)
+		// Optimization to avoid updating legacy avatars
+		oldAvatarID := string(ghost.AvatarID)
+		if strings.HasPrefix(oldAvatarID, "https://") && (oldAvatarID == avatarURL || strings.Contains(oldAvatarID, info.Profile.AvatarHash)) {
+			extraUpdateAvatarID = avatar.ID
+			avatar = nil
+		}
 		isBot = isBot || info.IsBot || info.IsAppUser
 	} else if botInfo != nil {
 		name = ptr.Ptr(s.Main.Config.FormatBotDisplayname(botInfo, &s.BootResp.Team))
-		avatarURL = botInfo.Icons.Image72
+		avatar = makeAvatar(botInfo.Icons.Image72, botInfo.Icons.Image72)
 		isBot = true
 	}
 	return &bridgev2.UserInfo{
 		Identifiers: []string{fmt.Sprintf("slack-internal:%s", userID)},
 		Name:        name,
-		Avatar:      makeAvatar(avatarURL, avatarID),
+		Avatar:      avatar,
 		IsBot:       &isBot,
 		ExtraUpdates: func(ctx context.Context, ghost *bridgev2.Ghost) bool {
 			meta := ghost.Metadata.(*slackid.GhostMetadata)
 			meta.LastSync = jsontime.UnixNow()
 			meta.SlackUpdatedTS = int64(info.Updated)
+			if extraUpdateAvatarID != "" {
+				ghost.AvatarID = extraUpdateAvatarID
+			}
 			return true
 		},
 	}
 }
 
-func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string, lastUpdated int64) (*bridgev2.UserInfo, error) {
+func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string, lastUpdated int64, ghost *bridgev2.Ghost) (*bridgev2.UserInfo, error) {
 	if len(userID) == 0 {
 		return nil, fmt.Errorf("empty user ID")
 	}
@@ -360,7 +370,7 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string, lastUpda
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user info: %w", err)
 	}
-	return s.wrapUserInfo(userID, info, botInfo), nil
+	return s.wrapUserInfo(userID, info, botInfo, ghost), nil
 }
 
 const MinGhostSyncInterval = 4 * time.Hour
@@ -371,5 +381,5 @@ func (s *SlackClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*
 		return nil, nil
 	}
 	_, userID := slackid.ParseUserID(ghost.ID)
-	return s.fetchUserInfo(ctx, userID, meta.SlackUpdatedTS)
+	return s.fetchUserInfo(ctx, userID, meta.SlackUpdatedTS, ghost)
 }
