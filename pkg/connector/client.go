@@ -106,9 +106,11 @@ type SlackClient struct {
 	lastReadCacheLock sync.Mutex
 }
 
-var _ bridgev2.NetworkAPI = (*SlackClient)(nil)
-
-var _ msgconv.SlackClientProvider = (*SlackClient)(nil)
+var (
+	_ bridgev2.NetworkAPI                      = (*SlackClient)(nil)
+	_ msgconv.SlackClientProvider              = (*SlackClient)(nil)
+	_ status.StandaloneCustomBridgeStateFiller = (*SlackClient)(nil)
+)
 
 func (s *SlackClient) GetClient() *slack.Client {
 	return s.Client
@@ -355,4 +357,13 @@ func (s *SlackClient) invalidateSession(ctx context.Context, state status.Bridge
 
 func (s *SlackClient) IsThisUser(ctx context.Context, userID networkid.UserID) bool {
 	return slackid.UserIDToUserLoginID(userID) == s.UserLogin.ID
+}
+
+func (s *SlackClient) FillBridgeState(state status.BridgeState) status.BridgeState {
+	state.RemoteID = s.TeamID
+	if state.Info == nil {
+		state.Info = make(map[string]any)
+	}
+	state.Info["slack_user_id"] = s.UserID
+	return state
 }
