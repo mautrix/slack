@@ -331,7 +331,11 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 		ExtraUpdates: func(ctx context.Context, ghost *bridgev2.Ghost) bool {
 			meta := ghost.Metadata.(*slackid.GhostMetadata)
 			meta.LastSync = jsontime.UnixNow()
-			meta.SlackUpdatedTS = int64(info.Updated)
+			if info != nil {
+				meta.SlackUpdatedTS = int64(info.Updated)
+			} else if botInfo != nil {
+				meta.SlackUpdatedTS = int64(botInfo.Updated)
+			}
 			if extraUpdateAvatarID != "" {
 				ghost.AvatarID = extraUpdateAvatarID
 			}
@@ -368,7 +372,7 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string, lastUpda
 		}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to get user info: %w", err)
+		return nil, fmt.Errorf("failed to get user info for %q: %w", userID, err)
 	}
 	return s.wrapUserInfo(userID, info, botInfo, ghost), nil
 }
@@ -376,6 +380,9 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string, lastUpda
 const MinGhostSyncInterval = 4 * time.Hour
 
 func (s *SlackClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*bridgev2.UserInfo, error) {
+	if ghost.ID == "" {
+		return nil, nil
+	}
 	meta := ghost.Metadata.(*slackid.GhostMetadata)
 	if time.Since(meta.LastSync.Time) < MinGhostSyncInterval {
 		return nil, nil
