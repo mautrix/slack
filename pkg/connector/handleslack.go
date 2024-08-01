@@ -386,7 +386,7 @@ type SlackReadReceipt struct {
 	*SlackEventMeta
 }
 
-var _ bridgev2.RemoteReceipt = (*SlackReadReceipt)(nil)
+var _ bridgev2.RemoteReadReceipt = (*SlackReadReceipt)(nil)
 
 func (s *SlackReadReceipt) GetLastReceiptTarget() networkid.MessageID {
 	return s.ID

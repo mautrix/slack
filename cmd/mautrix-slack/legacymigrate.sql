@@ -19,7 +19,7 @@ SELECT
     COALESCE(avatar_url, ''), -- avatar_mxc
     name_set,
     avatar_set,
-    false, -- topic_set
+    true, -- topic_set
     false, -- in_space
     'space', -- room_type
     '{}' -- metadata
