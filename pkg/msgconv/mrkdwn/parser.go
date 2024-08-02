@@ -23,22 +23,45 @@ import (
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/util"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/format"
+	"maunium.net/go/mautrix/format/mdext"
 
 	"go.mau.fi/mautrix-slack/pkg/emoji"
 )
+
+// indentableParagraphParser is the default paragraph parser with CanAcceptIndentedLine.
+// Used when disabling CodeBlockParser (as disabling it without a replacement will make indented blocks disappear).
+type indentableParagraphParser struct {
+	parser.BlockParser
+}
+
+var defaultIndentableParagraphParser = &indentableParagraphParser{BlockParser: parser.NewParagraphParser()}
+
+func (b *indentableParagraphParser) CanAcceptIndentedLine() bool {
+	return true
+}
 
 type SlackMrkdwnParser struct {
 	Params   *Params
 	Markdown goldmark.Markdown
 }
 
+var removeFeatures = []any{
+	parser.NewListParser(), parser.NewListItemParser(), parser.NewHTMLBlockParser(), parser.NewRawHTMLParser(),
+	parser.NewSetextHeadingParser(), parser.NewThematicBreakParser(),
+	parser.NewCodeBlockParser(), parser.NewLinkParser(), parser.NewEmphasisParser(),
+}
+var fixIndentedParagraphs = goldmark.WithParserOptions(parser.WithBlockParsers(util.Prioritized(defaultIndentableParagraphParser, 500)))
+
 func New(options *Params) *SlackMrkdwnParser {
 	return &SlackMrkdwnParser{
 		Markdown: goldmark.New(
-			format.Extensions, format.HTMLOptions,
-			goldmark.WithExtensions(&slackTag{Params: options}),
+			goldmark.WithParser(mdext.ParserWithoutFeatures(removeFeatures...)),
+			fixIndentedParagraphs,
+			format.HTMLOptions,
+			goldmark.WithExtensions(mdext.ShortStrike, mdext.ShortEmphasis, &slackTag{Params: options}),
 		),
 	}
 }
