@@ -31,22 +31,29 @@ import (
 var (
 	_ bridgev2.IdentifierResolvingNetworkAPI = (*SlackClient)(nil)
 	_ bridgev2.UserSearchingNetworkAPI       = (*SlackClient)(nil)
+	_ bridgev2.GroupCreatingNetworkAPI       = (*SlackClient)(nil)
 )
 
 func (s *SlackClient) ResolveIdentifier(ctx context.Context, identifier string, createChat bool) (*bridgev2.ResolveIdentifierResponse, error) {
 	if s.Client == nil {
 		return nil, fmt.Errorf("not logged in")
 	}
-	if strings.ContainsRune(identifier, '-') {
-		var teamID string
-		teamID, identifier = slackid.ParseUserID(networkid.UserID(identifier))
-		if teamID != s.TeamID {
-			return nil, fmt.Errorf("identifier does not match team")
-		}
+	var userInfo *slack.User
+	var err error
+	if strings.ContainsRune(identifier, '@') {
+		userInfo, err = s.Client.GetUserByEmailContext(ctx, identifier)
 	} else {
-		identifier = strings.ToUpper(identifier)
+		if strings.ContainsRune(identifier, '-') {
+			var teamID string
+			teamID, identifier = slackid.ParseUserID(networkid.UserID(identifier))
+			if teamID != s.TeamID {
+				return nil, fmt.Errorf("identifier does not match team")
+			}
+		} else {
+			identifier = strings.ToUpper(identifier)
+		}
+		userInfo, err = s.Client.GetUserInfoContext(ctx, identifier)
 	}
-	userInfo, err := s.Client.GetUserInfoContext(ctx, identifier)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user info: %w", err)
 	}
@@ -77,6 +84,52 @@ func (s *SlackClient) ResolveIdentifier(ctx context.Context, identifier string, 
 		Ghost:  ghost,
 		UserID: userID,
 		Chat:   chatResp,
+	}, nil
+}
+
+func (s *SlackClient) CreateGroup(ctx context.Context, name string, users ...networkid.UserID) (*bridgev2.CreateChatResponse, error) {
+	if s.Client == nil {
+		return nil, fmt.Errorf("not logged in")
+	}
+	plainUsers := make([]string, len(users))
+	for i, user := range users {
+		var teamID string
+		teamID, plainUsers[i] = slackid.ParseUserID(user)
+		if teamID != s.TeamID || plainUsers[i] == "" {
+			return nil, fmt.Errorf("invalid user ID %q", user)
+		}
+	}
+	var resp *slack.Channel
+	var err error
+	if name != "" {
+		resp, err = s.Client.CreateConversationContext(ctx, slack.CreateConversationParams{
+			ChannelName: name,
+			IsPrivate:   true,
+			TeamID:      s.TeamID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create channel: %w", err)
+		}
+		resp, err = s.Client.InviteUsersToConversationContext(ctx, resp.ID, plainUsers...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to invite users: %w", err)
+		}
+	} else {
+		resp, _, _, err = s.Client.OpenConversationContext(ctx, &slack.OpenConversationParameters{
+			ReturnIM: true,
+			Users:    plainUsers,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to open conversation: %w", err)
+		}
+	}
+	chatInfo, err := s.wrapChatInfo(ctx, resp, true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to wrap chat info: %w", err)
+	}
+	return &bridgev2.CreateChatResponse{
+		PortalKey:  s.makePortalKey(resp),
+		PortalInfo: chatInfo,
 	}, nil
 }
 
