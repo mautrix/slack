@@ -40,6 +40,8 @@ var (
 	_ bridgev2.ReactionHandlingNetworkAPI    = (*SlackClient)(nil)
 	_ bridgev2.ReadReceiptHandlingNetworkAPI = (*SlackClient)(nil)
 	_ bridgev2.TypingHandlingNetworkAPI      = (*SlackClient)(nil)
+	_ bridgev2.RoomNameHandlingNetworkAPI    = (*SlackClient)(nil)
+	_ bridgev2.RoomTopicHandlingNetworkAPI   = (*SlackClient)(nil)
 )
 
 func (s *SlackClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.MatrixMessage) (*bridgev2.MatrixMessageResponse, error) {
@@ -202,4 +204,24 @@ func (s *SlackClient) HandleMatrixTyping(ctx context.Context, msg *bridgev2.Matr
 	}
 	s.RTM.SendMessage(s.RTM.NewTypingMessage(channelID))
 	return nil
+}
+
+func (s *SlackClient) HandleMatrixRoomName(ctx context.Context, msg *bridgev2.MatrixRoomName) (bool, error) {
+	_, channelID := slackid.ParsePortalID(msg.Portal.ID)
+	if channelID == "" {
+		return false, errors.New("invalid channel ID")
+	}
+	resp, err := s.Client.RenameConversationContext(ctx, channelID, msg.Content.Name)
+	zerolog.Ctx(ctx).Trace().Any("resp_data", resp).Msg("Renamed conversation")
+	return err == nil, err
+}
+
+func (s *SlackClient) HandleMatrixRoomTopic(ctx context.Context, msg *bridgev2.MatrixRoomTopic) (bool, error) {
+	_, channelID := slackid.ParsePortalID(msg.Portal.ID)
+	if channelID == "" {
+		return false, errors.New("invalid channel ID")
+	}
+	resp, err := s.Client.SetTopicOfConversationContext(ctx, channelID, msg.Content.Topic)
+	zerolog.Ctx(ctx).Trace().Any("resp_data", resp).Msg("Changed conversation topic")
+	return err == nil, err
 }
