@@ -344,6 +344,35 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 	}
 }
 
+func (s *SlackClient) syncManyUsers(ctx context.Context, ghosts map[string]*bridgev2.Ghost) {
+	params := slack.GetCachedUsersParameters{
+		CheckInteraction:        true,
+		IncludeProfileOnlyUsers: true,
+		UpdatedIDs:              make(map[string]int64, len(ghosts)),
+	}
+	for _, ghost := range ghosts {
+		meta := ghost.Metadata.(*slackid.GhostMetadata)
+		_, userID := slackid.ParseUserID(ghost.ID)
+		params.UpdatedIDs[userID] = meta.SlackUpdatedTS
+	}
+	zerolog.Ctx(ctx).Debug().Any("request_map", params.UpdatedIDs).Msg("Requesting user info")
+	infos, err := s.Client.GetUsersCacheContext(ctx, s.TeamID, params)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to get user info")
+		return
+	}
+	zerolog.Ctx(ctx).Debug().Int("updated_user_count", len(infos)).Msg("Got user info")
+	for userID, info := range infos {
+		ghost, ok := ghosts[userID]
+		if !ok {
+			zerolog.Ctx(ctx).Warn().Str("user_id", userID).Msg("Got unexpected user info")
+			continue
+		}
+		ghost.UpdateInfo(ctx, s.wrapUserInfo(userID, info, nil, ghost))
+	}
+	zerolog.Ctx(ctx).Debug().Msg("Finished syncing users")
+}
+
 func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string, lastUpdated int64, ghost *bridgev2.Ghost) (*bridgev2.UserInfo, error) {
 	if len(userID) == 0 {
 		return nil, fmt.Errorf("empty user ID")
@@ -388,6 +417,10 @@ func (s *SlackClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*
 	}
 	meta := ghost.Metadata.(*slackid.GhostMetadata)
 	if time.Since(meta.LastSync.Time) < MinGhostSyncInterval {
+		return nil, nil
+	}
+	if s.IsRealUser && (ghost.Name != "" || time.Since(s.initialConnect) < 1*time.Minute) {
+		s.userResyncQueue <- ghost
 		return nil, nil
 	}
 	_, userID := slackid.ParseUserID(ghost.ID)

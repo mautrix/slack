@@ -23,6 +23,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -74,8 +75,9 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 			TeamID:     teamID,
 			IsRealUser: strings.HasPrefix(meta.Token, "xoxs-") || strings.HasPrefix(meta.Token, "xoxc-"),
 
-			chatInfoCache: make(map[string]chatInfoCacheEntry),
-			lastReadCache: make(map[string]string),
+			chatInfoCache:   make(map[string]chatInfoCacheEntry),
+			lastReadCache:   make(map[string]string),
+			userResyncQueue: make(chan *bridgev2.Ghost, 16),
 		}
 		if sc.IsRealUser {
 			sc.RTM = client.NewRTM()
@@ -115,7 +117,10 @@ type SlackClient struct {
 	TeamPortal *bridgev2.Portal
 	IsRealUser bool
 
-	stopSocketMode context.CancelFunc
+	stopSocketMode  context.CancelFunc
+	stopResyncQueue atomic.Pointer[context.CancelFunc]
+	userResyncQueue chan *bridgev2.Ghost
+	initialConnect  time.Time
 
 	chatInfoCache     map[string]chatInfoCacheEntry
 	chatInfoCacheLock sync.Mutex
@@ -184,6 +189,7 @@ func (s *SlackClient) Connect(ctx context.Context) error {
 }
 
 func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientBootResponse) error {
+	s.initialConnect = time.Now()
 	s.BootResp = bootResp
 	err := s.syncTeamPortal(ctx)
 	if err != nil {
@@ -192,6 +198,7 @@ func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientBootRes
 	if s.IsRealUser {
 		go s.consumeRTMEvents()
 		go s.RTM.ManageConnection()
+		go s.resyncUsers()
 	} else {
 		go s.consumeSocketModeEvents()
 		go s.runSocketMode(ctx)
@@ -210,6 +217,43 @@ func (s *SlackClient) consumeRTMEvents() {
 func (s *SlackClient) consumeSocketModeEvents() {
 	for evt := range s.SocketMode.Events {
 		s.HandleSocketModeEvent(evt)
+	}
+}
+
+func (s *SlackClient) resyncUsers() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx = s.UserLogin.Log.With().Str("component", "user resync loop").Logger().WithContext(ctx)
+	if cancelOld := s.stopResyncQueue.Swap(&cancel); cancelOld != nil {
+		(*cancelOld)()
+	}
+	const resyncWait = 30 * time.Second
+	const shortResyncWait = 1 * time.Second
+	for entry := range s.userResyncQueue {
+		_, userID := slackid.ParseUserID(entry.ID)
+		entries := map[string]*bridgev2.Ghost{userID: entry}
+		var timer *time.Timer
+		if entry.Name == "" {
+			timer = time.NewTimer(shortResyncWait)
+		} else {
+			timer = time.NewTimer(resyncWait)
+		}
+	CollectLoop:
+		for {
+			select {
+			case entry = <-s.userResyncQueue:
+				_, userID = slackid.ParseUserID(entry.ID)
+				entries[userID] = entry
+				if entry.Name == "" {
+					timer.Reset(shortResyncWait)
+				} else {
+					timer.Reset(resyncWait)
+				}
+			case <-timer.C:
+				break CollectLoop
+			}
+		}
+		go s.syncManyUsers(ctx, entries)
 	}
 }
 
@@ -417,18 +461,11 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 }
 
 func (s *SlackClient) Disconnect() {
-	s.disconnectRTM()
-	s.disconnectSocketMode()
+	s.disconnect()
 	s.Client = nil
 }
 
-func (s *SlackClient) disconnectSocketMode() {
-	if stop := s.stopSocketMode; stop != nil {
-		stop()
-	}
-}
-
-func (s *SlackClient) disconnectRTM() {
+func (s *SlackClient) disconnect() {
 	if rtm := s.RTM; rtm != nil {
 		err := rtm.Disconnect()
 		if err != nil {
@@ -437,6 +474,13 @@ func (s *SlackClient) disconnectRTM() {
 		// TODO stop consumeEvents?
 		s.RTM = nil
 	}
+	if stop := s.stopSocketMode; stop != nil {
+		stop()
+		s.SocketMode = nil
+	}
+	if cancel := s.stopResyncQueue.Swap(nil); cancel != nil {
+		(*cancel)()
+	}
 }
 
 func (s *SlackClient) IsLoggedIn() bool {
@@ -444,17 +488,20 @@ func (s *SlackClient) IsLoggedIn() bool {
 }
 
 func (s *SlackClient) LogoutRemote(ctx context.Context) {
-	s.disconnectRTM()
-	if cli := s.Client; cli != nil {
-		_, err := cli.SendAuthSignoutContext(ctx)
-		if err != nil {
-			s.UserLogin.Log.Err(err).Msg("Failed to send sign out request to Slack")
+	s.disconnect()
+	if s.IsRealUser {
+		if cli := s.Client; cli != nil {
+			_, err := cli.SendAuthSignoutContext(ctx)
+			if err != nil {
+				s.UserLogin.Log.Err(err).Msg("Failed to send sign out request to Slack")
+			}
 		}
-		s.Client = nil
 	}
+	s.Client = nil
 	meta := s.UserLogin.Metadata.(*slackid.UserLoginMetadata)
 	meta.Token = ""
 	meta.CookieToken = ""
+	meta.AppToken = ""
 }
 
 func (s *SlackClient) invalidateSession(ctx context.Context, state status.BridgeState) {
