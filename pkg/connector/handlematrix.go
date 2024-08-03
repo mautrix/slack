@@ -45,17 +45,26 @@ var (
 )
 
 func (s *SlackClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.MatrixMessage) (*bridgev2.MatrixMessageResponse, error) {
+	if s.Client == nil {
+		return nil, bridgev2.ErrNotLoggedIn
+	}
 	_, channelID := slackid.ParsePortalID(msg.Portal.ID)
 	if channelID == "" {
 		return nil, errors.New("invalid channel ID")
 	}
-	conv, err := s.Main.MsgConv.ToSlack(ctx, s.Client, msg.Portal, msg.Content, msg.Event, msg.ThreadRoot, nil, msg.OrigSender)
+	conv, err := s.Main.MsgConv.ToSlack(ctx, s.Client, msg.Portal, msg.Content, msg.Event, msg.ThreadRoot, nil, msg.OrigSender, s.IsRealUser)
 	if err != nil {
 		return nil, err
 	}
-	timestamp, err := s.sendToSlack(ctx, channelID, conv)
+	timestamp, fileID, err := s.sendToSlack(ctx, channelID, conv)
 	if err != nil {
 		return nil, err
+	}
+	if timestamp == "" {
+		return &bridgev2.MatrixMessageResponse{
+			DB:      &database.Message{},
+			Pending: networkid.TransactionID(fmt.Sprintf("%s:%s", s.UserID, fileID)),
+		}, nil
 	}
 	return &bridgev2.MatrixMessageResponse{
 		DB: &database.Message{
@@ -66,18 +75,18 @@ func (s *SlackClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 	}, nil
 }
 
-func (s *SlackClient) sendToSlack(ctx context.Context, channelID string, conv *msgconv.ConvertedSlackMessage) (string, error) {
+func (s *SlackClient) sendToSlack(ctx context.Context, channelID string, conv *msgconv.ConvertedSlackMessage) (string, string, error) {
 	log := zerolog.Ctx(ctx)
 	if conv.SendReq != nil {
 		log.Debug().Msg("Sending message to Slack")
 		_, timestamp, err := s.Client.PostMessageContext(ctx, channelID, conv.SendReq)
-		return timestamp, err
+		return timestamp, "", err
 	} else if conv.FileUpload != nil {
 		log.Debug().Msg("Uploading attachment to Slack")
-		file, err := s.Client.UploadFileContext(ctx, *conv.FileUpload)
+		file, err := s.Client.UploadFileV2Context(ctx, *conv.FileUpload)
 		if err != nil {
 			log.Err(err).Msg("Failed to upload attachment to Slack")
-			return "", err
+			return "", "", err
 		}
 		var shareInfo slack.ShareFileInfo
 		// Slack puts the channel message info after uploading a file in either file.shares.private or file.shares.public
@@ -85,37 +94,41 @@ func (s *SlackClient) sendToSlack(ctx context.Context, channelID string, conv *m
 			shareInfo = info[0]
 		} else if info, found = file.Shares.Public[channelID]; found && len(info) > 0 {
 			shareInfo = info[0]
-		} else {
-			return "", errors.New("failed to upload media to Slack")
 		}
-		return shareInfo.Ts, nil
+		return shareInfo.Ts, file.ID, nil
 	} else if conv.FileShare != nil {
 		log.Debug().Msg("Sharing already uploaded attachment to Slack")
 		resp, err := s.Client.ShareFile(ctx, *conv.FileShare)
 		if err != nil {
 			log.Err(err).Msg("Failed to share attachment to Slack")
-			return "", err
+			return "", "", err
 		}
-		return resp.FileMsgTS, nil
+		return resp.FileMsgTS, "", nil
 	} else {
-		return "", errors.New("no message or attachment to send")
+		return "", "", errors.New("no message or attachment to send")
 	}
 }
 
 func (s *SlackClient) HandleMatrixEdit(ctx context.Context, msg *bridgev2.MatrixEdit) error {
+	if s.Client == nil {
+		return bridgev2.ErrNotLoggedIn
+	}
 	_, channelID := slackid.ParsePortalID(msg.Portal.ID)
 	if channelID == "" {
 		return errors.New("invalid channel ID")
 	}
-	conv, err := s.Main.MsgConv.ToSlack(ctx, s.Client, msg.Portal, msg.Content, msg.Event, nil, msg.EditTarget, msg.OrigSender)
+	conv, err := s.Main.MsgConv.ToSlack(ctx, s.Client, msg.Portal, msg.Content, msg.Event, nil, msg.EditTarget, msg.OrigSender, s.IsRealUser)
 	if err != nil {
 		return err
 	}
-	_, err = s.sendToSlack(ctx, channelID, conv)
+	_, _, err = s.sendToSlack(ctx, channelID, conv)
 	return err
 }
 
 func (s *SlackClient) HandleMatrixMessageRemove(ctx context.Context, msg *bridgev2.MatrixMessageRemove) error {
+	if s.Client == nil {
+		return bridgev2.ErrNotLoggedIn
+	}
 	_, channelID, messageID, ok := slackid.ParseMessageID(msg.TargetMessage.ID)
 	if !ok {
 		return errors.New("invalid message ID")
@@ -150,6 +163,9 @@ func (s *SlackClient) PreHandleMatrixReaction(ctx context.Context, msg *bridgev2
 }
 
 func (s *SlackClient) HandleMatrixReaction(ctx context.Context, msg *bridgev2.MatrixReaction) (reaction *database.Reaction, err error) {
+	if s.Client == nil {
+		return nil, bridgev2.ErrNotLoggedIn
+	}
 	_, channelID, messageID, ok := slackid.ParseMessageID(msg.TargetMessage.ID)
 	if !ok {
 		return nil, errors.New("invalid message ID")
@@ -162,6 +178,9 @@ func (s *SlackClient) HandleMatrixReaction(ctx context.Context, msg *bridgev2.Ma
 }
 
 func (s *SlackClient) HandleMatrixReactionRemove(ctx context.Context, msg *bridgev2.MatrixReactionRemove) error {
+	if s.Client == nil {
+		return bridgev2.ErrNotLoggedIn
+	}
 	_, channelID, messageID, ok := slackid.ParseMessageID(msg.TargetReaction.MessageID)
 	if !ok {
 		return errors.New("invalid message ID")
@@ -177,6 +196,11 @@ func (s *SlackClient) HandleMatrixReactionRemove(ctx context.Context, msg *bridg
 }
 
 func (s *SlackClient) HandleMatrixReadReceipt(ctx context.Context, msg *bridgev2.MatrixReadReceipt) error {
+	if s.Client == nil {
+		return bridgev2.ErrNotLoggedIn
+	} else if !s.IsRealUser {
+		return nil
+	}
 	if msg.ExactMessage != nil {
 		_, channelID, messageTS, ok := slackid.ParseMessageID(msg.ExactMessage.ID)
 		if !ok {
@@ -198,6 +222,11 @@ func (s *SlackClient) HandleMatrixReadReceipt(ctx context.Context, msg *bridgev2
 }
 
 func (s *SlackClient) HandleMatrixTyping(ctx context.Context, msg *bridgev2.MatrixTyping) error {
+	if s.Client == nil {
+		return bridgev2.ErrNotLoggedIn
+	} else if !s.IsRealUser {
+		return nil
+	}
 	_, channelID := slackid.ParsePortalID(msg.Portal.ID)
 	if channelID == "" {
 		return nil

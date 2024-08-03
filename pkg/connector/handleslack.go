@@ -23,6 +23,8 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
+	"github.com/slack-go/slack/slackevents"
+	"github.com/slack-go/slack/socketmode"
 	"maunium.net/go/mautrix/bridge/status"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
@@ -47,8 +49,8 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnecting})
 	case *slack.ConnectedEvent:
 		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnected})
-	//case *slack.DisconnectedEvent:
-	// TODO handle?
+	case *slack.DisconnectedEvent:
+		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateTransientDisconnect, Error: "slack-rtm-disconnected"})
 	case *slack.HelloEvent:
 		// Ignored for now
 	case *slack.InvalidAuthEvent:
@@ -90,6 +92,33 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 			logEvt = logEvt.Any("event_data", evt)
 		}
 		logEvt.Msg("Unrecognized Slack event type")
+	}
+}
+
+func (s *SlackClient) HandleSocketModeEvent(evt socketmode.Event) {
+	switch evt.Type {
+	case socketmode.EventTypeConnecting:
+		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnecting})
+	case socketmode.EventTypeConnectionError:
+		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateTransientDisconnect, Error: "slack-socketmode-connection-error"})
+	case socketmode.EventTypeConnected:
+		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnected})
+	case socketmode.EventTypeEventsAPI:
+		eaEvt, ok := evt.Data.(slackevents.EventsAPIEvent)
+		if !ok {
+			s.UserLogin.Log.Warn().Type("data_type", evt.Data).Msg("Unexpected event type in socket mode")
+			return
+		}
+		if eaEvt.Type == slackevents.CallbackEvent {
+			s.HandleSlackEvent(eaEvt.InnerEvent.Data)
+		}
+	case socketmode.EventTypeInteractive:
+		//callback, ok := evt.Data.(slack.InteractionCallback)
+	case socketmode.EventTypeSlashCommand:
+		//cmd, ok := evt.Data.(slack.SlashCommand)
+	}
+	if evt.Request != nil && evt.Request.EnvelopeID != "" {
+		s.SocketMode.Ack(*evt.Request)
 	}
 }
 
@@ -191,10 +220,10 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
 		wrapped = wrapMemberChange(&meta, meta.Sender, event.MembershipLeave, event.MembershipJoin)
 	case *slack.MemberJoinedChannelEvent:
-		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, evt.User, "")
+		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, evt.User, evt.EventTimestamp)
 		wrapped = wrapMemberChange(&meta, meta.Sender, event.MembershipJoin, "")
 	case *slack.MemberLeftChannelEvent:
-		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, evt.User, "")
+		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, evt.User, evt.EventTimestamp)
 		wrapped = wrapMemberChange(&meta, meta.Sender, event.MembershipLeave, event.MembershipJoin)
 
 	case *slack.ChannelUpdateEvent:
@@ -431,11 +460,19 @@ type SlackMessage struct {
 	Client *SlackClient
 }
 
+func (s *SlackMessage) GetTransactionID() networkid.TransactionID {
+	if len(s.Data.Files) != 1 {
+		return ""
+	}
+	return networkid.TransactionID(fmt.Sprintf("%s:%s", s.Data.User, s.Data.Files[0].ID))
+}
+
 var (
-	_ bridgev2.RemoteMessage       = (*SlackMessage)(nil)
-	_ bridgev2.RemoteEdit          = (*SlackMessage)(nil)
-	_ bridgev2.RemoteMessageRemove = (*SlackMessage)(nil)
-	_ bridgev2.RemoteChatResync    = (*SlackMessage)(nil)
+	_ bridgev2.RemoteMessage                  = (*SlackMessage)(nil)
+	_ bridgev2.RemoteEdit                     = (*SlackMessage)(nil)
+	_ bridgev2.RemoteMessageRemove            = (*SlackMessage)(nil)
+	_ bridgev2.RemoteChatResync               = (*SlackMessage)(nil)
+	_ bridgev2.RemoteMessageWithTransactionID = (*SlackMessage)(nil)
 )
 
 type SlackChatResync struct {

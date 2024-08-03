@@ -355,8 +355,7 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string, lastUpda
 		botInfo, err = s.Client.GetBotInfoContext(ctx, slack.GetBotInfoParameters{
 			Bot: userID,
 		})
-	} else {
-		//info, err = s.Client.GetUserInfoContext(ctx, userID)
+	} else if s.IsRealUser {
 		var infos map[string]*slack.User
 		infos, err = s.Client.GetUsersCacheContext(ctx, s.TeamID, slack.GetCachedUsersParameters{
 			CheckInteraction:        true,
@@ -372,6 +371,8 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string, lastUpda
 				return nil, nil
 			}
 		}
+	} else {
+		info, err = s.Client.GetUserInfoContext(ctx, userID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user info for %q: %w", userID, err)

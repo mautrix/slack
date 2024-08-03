@@ -48,7 +48,7 @@ func isMediaMsgtype(msgType event.MessageType) bool {
 
 type ConvertedSlackMessage struct {
 	SendReq    slack.MsgOption
-	FileUpload *slack.FileUploadParameters
+	FileUpload *slack.UploadFileV2Parameters
 	FileShare  *slack.ShareFileParams
 }
 
@@ -61,6 +61,7 @@ func (mc *MessageConverter) ToSlack(
 	threadRoot *database.Message,
 	editTarget *database.Message,
 	origSender *bridgev2.OrigSender,
+	isRealUser bool,
 ) (conv *ConvertedSlackMessage, err error) {
 	log := zerolog.Ctx(ctx)
 
@@ -139,7 +140,6 @@ func (mc *MessageConverter) ToSlack(
 			caption = content.Body
 			captionHTML = content.FormattedBody
 		}
-		useFileUpload := false
 		if content.MSC3245Voice != nil && ffmpeg.Supported() {
 			data, err = ffmpeg.ConvertBytes(ctx, data, ".webm", []string{}, []string{"-c:a", "copy"}, content.Info.MimeType)
 			if err != nil {
@@ -151,12 +151,12 @@ func (mc *MessageConverter) ToSlack(
 			subtype = "slack_audio"
 		}
 		_, channelID := slackid.ParsePortalID(portal.ID)
-		if useFileUpload {
-			fileUpload := &slack.FileUploadParameters{
+		if !isRealUser {
+			fileUpload := &slack.UploadFileV2Parameters{
 				Filename:        filename,
-				Filetype:        content.Info.MimeType,
 				Reader:          bytes.NewReader(data),
-				Channels:        []string{channelID},
+				FileSize:        len(data),
+				Channel:         channelID,
 				ThreadTimestamp: threadRootID,
 			}
 			if caption != "" {

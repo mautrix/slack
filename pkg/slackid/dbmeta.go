@@ -34,6 +34,7 @@ type UserLoginMetadata struct {
 	Email       string `json:"email"`
 	Token       string `json:"token"`
 	CookieToken string `json:"cookie_token,omitempty"`
+	AppToken    string `json:"app_token,omitempty"`
 }
 
 type MessageMetadata struct {

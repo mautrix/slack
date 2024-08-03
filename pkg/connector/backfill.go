@@ -35,7 +35,7 @@ var _ bridgev2.BackfillingNetworkAPI = (*SlackClient)(nil)
 
 func (s *SlackClient) FetchMessages(ctx context.Context, params bridgev2.FetchMessagesParams) (*bridgev2.FetchMessagesResponse, error) {
 	if s.Client == nil {
-		return nil, fmt.Errorf("not logged in")
+		return nil, bridgev2.ErrNotLoggedIn
 	}
 	_, channelID := slackid.ParsePortalID(params.Portal.ID)
 	if channelID == "" {

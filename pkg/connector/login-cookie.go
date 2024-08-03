@@ -35,16 +35,26 @@ func (s *SlackConnector) GetLoginFlows() []bridgev2.LoginFlow {
 		Name:        "Auth token & cookie",
 		Description: "Log in with an auth token (and a cookie, if the token is from a browser)",
 		ID:          LoginFlowIDAuthToken,
+	}, {
+		Name:        "Slack app",
+		Description: "Log in with a Slack app",
+		ID:          LoginFlowIDApp,
 	}}
 }
 
 func (s *SlackConnector) CreateLogin(ctx context.Context, user *bridgev2.User, flowID string) (bridgev2.LoginProcess, error) {
-	if flowID != LoginFlowIDAuthToken {
+	switch flowID {
+	case LoginFlowIDAuthToken:
+		return &SlackTokenLogin{
+			User: user,
+		}, nil
+	case LoginFlowIDApp:
+		return &SlackAppLogin{
+			User: user,
+		}, nil
+	default:
 		return nil, fmt.Errorf("unknown login flow %s", flowID)
 	}
-	return &SlackTokenLogin{
-		User: user,
-	}, nil
 }
 
 type SlackTokenLogin struct {
@@ -114,7 +124,7 @@ func (s *SlackTokenLogin) Cancel() {}
 
 func (s *SlackTokenLogin) SubmitCookies(ctx context.Context, input map[string]string) (*bridgev2.LoginStep, error) {
 	token, cookieToken := input["auth_token"], input["cookie_token"]
-	client := makeSlackClient(&s.User.Log, token, cookieToken)
+	client := makeSlackClient(&s.User.Log, token, cookieToken, "")
 	info, err := client.ClientBootContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("client.boot failed: %w", err)

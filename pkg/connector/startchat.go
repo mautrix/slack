@@ -36,7 +36,7 @@ var (
 
 func (s *SlackClient) ResolveIdentifier(ctx context.Context, identifier string, createChat bool) (*bridgev2.ResolveIdentifierResponse, error) {
 	if s.Client == nil {
-		return nil, fmt.Errorf("not logged in")
+		return nil, bridgev2.ErrNotLoggedIn
 	}
 	var userInfo *slack.User
 	var err error
@@ -89,7 +89,7 @@ func (s *SlackClient) ResolveIdentifier(ctx context.Context, identifier string, 
 
 func (s *SlackClient) CreateGroup(ctx context.Context, name string, users ...networkid.UserID) (*bridgev2.CreateChatResponse, error) {
 	if s.Client == nil {
-		return nil, fmt.Errorf("not logged in")
+		return nil, bridgev2.ErrNotLoggedIn
 	}
 	plainUsers := make([]string, len(users))
 	for i, user := range users {
@@ -135,7 +135,7 @@ func (s *SlackClient) CreateGroup(ctx context.Context, name string, users ...net
 
 func (s *SlackClient) SearchUsers(ctx context.Context, query string) ([]*bridgev2.ResolveIdentifierResponse, error) {
 	if s.Client == nil {
-		return nil, fmt.Errorf("not logged in")
+		return nil, bridgev2.ErrNotLoggedIn
 	}
 	resp, err := s.Client.SearchUsersCacheContext(ctx, s.TeamID, query)
 	if err != nil {

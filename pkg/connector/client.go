@@ -27,6 +27,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
+	"github.com/slack-go/slack/socketmode"
 	"maunium.net/go/mautrix/bridge/status"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
@@ -44,13 +45,15 @@ func init() {
 	})
 }
 
-func makeSlackClient(log *zerolog.Logger, token, cookieToken string) *slack.Client {
+func makeSlackClient(log *zerolog.Logger, token, cookieToken, appToken string) *slack.Client {
 	options := []slack.Option{
 		slack.OptionLog(slackgoZerolog{Logger: log.With().Str("component", "slackgo").Logger()}),
 		slack.OptionDebug(log.GetLevel() == zerolog.TraceLevel),
 	}
 	if cookieToken != "" {
 		options = append(options, slack.OptionCookie("d", cookieToken))
+	} else if appToken != "" {
+		options = append(options, slack.OptionAppLevelToken(appToken))
 	}
 	return slack.New(token, options...)
 }
@@ -62,17 +65,27 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 	if meta.Token == "" {
 		sc = &SlackClient{Main: s, UserLogin: login, UserID: userID, TeamID: teamID}
 	} else {
-		client := makeSlackClient(&login.Log, meta.Token, meta.CookieToken)
+		client := makeSlackClient(&login.Log, meta.Token, meta.CookieToken, meta.AppToken)
 		sc = &SlackClient{
-			Main:      s,
-			UserLogin: login,
-			Client:    client,
-			RTM:       client.NewRTM(),
-			UserID:    userID,
-			TeamID:    teamID,
+			Main:       s,
+			UserLogin:  login,
+			Client:     client,
+			UserID:     userID,
+			TeamID:     teamID,
+			IsRealUser: strings.HasPrefix(meta.Token, "xoxs-") || strings.HasPrefix(meta.Token, "xoxc-"),
 
 			chatInfoCache: make(map[string]chatInfoCacheEntry),
 			lastReadCache: make(map[string]string),
+		}
+		if sc.IsRealUser {
+			sc.RTM = client.NewRTM()
+		} else {
+			log := login.Log.With().Str("component", "slackgo socketmode").Logger()
+			sc.SocketMode = socketmode.New(
+				sc.Client,
+				socketmode.OptionLog(slackgoZerolog{Logger: log}),
+				socketmode.OptionDebug(log.GetLevel() == zerolog.TraceLevel),
+			)
 		}
 	}
 	teamPortalKey := networkid.PortalKey{ID: slackid.MakeTeamPortalID(teamID)}
@@ -95,10 +108,14 @@ type SlackClient struct {
 	UserLogin  *bridgev2.UserLogin
 	Client     *slack.Client
 	RTM        *slack.RTM
+	SocketMode *socketmode.Client
 	UserID     string
 	TeamID     string
 	BootResp   *slack.ClientBootResponse
 	TeamPortal *bridgev2.Portal
+	IsRealUser bool
+
+	stopSocketMode context.CancelFunc
 
 	chatInfoCache     map[string]chatInfoCacheEntry
 	chatInfoCacheLock sync.Mutex
@@ -116,6 +133,21 @@ func (s *SlackClient) GetClient() *slack.Client {
 	return s.Client
 }
 
+func (s *SlackClient) handleBootError(ctx context.Context, err error) {
+	if err.Error() == "user_removed_from_team" || err.Error() == "invalid_auth" {
+		s.invalidateSession(ctx, status.BridgeState{
+			StateEvent: status.StateBadCredentials,
+			Error:      status.BridgeStateErrorCode(fmt.Sprintf("slack-%s", strings.ReplaceAll(err.Error(), "_", "-"))),
+		})
+	} else {
+		s.UserLogin.BridgeState.Send(status.BridgeState{
+			StateEvent: status.StateUnknownError,
+			Error:      "slack-unknown-fetch-error",
+			Message:    fmt.Sprintf("Unknown error from Slack: %s", err.Error()),
+		})
+	}
+}
+
 func (s *SlackClient) Connect(ctx context.Context) error {
 	if s.Client == nil {
 		s.UserLogin.BridgeState.Send(status.BridgeState{
@@ -124,21 +156,29 @@ func (s *SlackClient) Connect(ctx context.Context) error {
 		})
 		return nil
 	}
-	bootResp, err := s.Client.ClientBootContext(ctx)
-	if err != nil {
-		if err.Error() == "user_removed_from_team" || err.Error() == "invalid_auth" {
-			s.invalidateSession(ctx, status.BridgeState{
-				StateEvent: status.StateBadCredentials,
-				Error:      status.BridgeStateErrorCode(fmt.Sprintf("slack-%s", strings.ReplaceAll(err.Error(), "_", "-"))),
-			})
-		} else {
-			s.UserLogin.BridgeState.Send(status.BridgeState{
-				StateEvent: status.StateUnknownError,
-				Error:      "slack-unknown-fetch-error",
-				Message:    fmt.Sprintf("Unknown error from Slack: %s", err.Error()),
-			})
+	var bootResp *slack.ClientBootResponse
+	if s.IsRealUser {
+		var err error
+		bootResp, err = s.Client.ClientBootContext(ctx)
+		if err != nil {
+			s.handleBootError(ctx, err)
+			return err
 		}
-		return err
+	} else {
+		teamResp, err := s.Client.GetTeamInfoContext(ctx)
+		if err != nil {
+			s.handleBootError(ctx, err)
+			return fmt.Errorf("failed to fetch team info: %w", err)
+		}
+		userResp, err := s.Client.GetUserInfoContext(ctx, s.UserID)
+		if err != nil {
+			s.handleBootError(ctx, err)
+			return fmt.Errorf("failed to fetch user info: %w", err)
+		}
+		bootResp = &slack.ClientBootResponse{
+			Self: *userResp,
+			Team: *teamResp,
+		}
 	}
 	return s.connect(ctx, bootResp)
 }
@@ -149,11 +189,51 @@ func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientBootRes
 	if err != nil {
 		return err
 	}
-	go s.consumeEvents()
-	go s.RTM.ManageConnection()
+	if s.IsRealUser {
+		go s.consumeRTMEvents()
+		go s.RTM.ManageConnection()
+	} else {
+		go s.consumeSocketModeEvents()
+		go s.runSocketMode(ctx)
+	}
 	go s.SyncEmojis(ctx)
 	go s.SyncChannels(ctx)
 	return nil
+}
+
+func (s *SlackClient) consumeRTMEvents() {
+	for evt := range s.RTM.IncomingEvents {
+		s.HandleSlackEvent(evt.Data)
+	}
+}
+
+func (s *SlackClient) consumeSocketModeEvents() {
+	for evt := range s.SocketMode.Events {
+		s.HandleSocketModeEvent(evt)
+	}
+}
+
+func (s *SlackClient) runSocketMode(ctx context.Context) {
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithCancel(ctx)
+	defer cancel()
+	s.stopSocketMode = cancel
+	log := zerolog.Ctx(ctx)
+	for ctx.Err() == nil {
+		err := s.SocketMode.RunContext(ctx)
+		if err != nil {
+			log.Err(err).Msg("Error in socket mode connection")
+			s.UserLogin.BridgeState.Send(status.BridgeState{
+				StateEvent: status.StateTransientDisconnect,
+				Error:      "slack-socketmode-error",
+				Message:    err.Error(),
+			})
+			time.Sleep(10 * time.Second)
+		} else {
+			log.Info().Msg("Socket disconnected without error")
+			return
+		}
+	}
 }
 
 func (s *SlackClient) syncTeamPortal(ctx context.Context) error {
@@ -181,7 +261,10 @@ func (s *SlackClient) getLastReadCache(channelID string) string {
 	return s.lastReadCache[channelID]
 }
 
-func (s *SlackClient) SyncChannels(ctx context.Context) {
+func (s *SlackClient) getLatestMessageIDs(ctx context.Context) map[string]string {
+	if !s.IsRealUser {
+		return nil
+	}
 	log := zerolog.Ctx(ctx)
 	clientCounts, err := s.Client.ClientCountsContext(ctx, &slack.ClientCountsParams{
 		ThreadCountsByChannel: true,
@@ -190,7 +273,7 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 	})
 	if err != nil {
 		log.Err(err).Msg("Failed to fetch client counts")
-		return
+		return nil
 	}
 	latestMessageIDs := make(map[string]string, len(clientCounts.Channels)+len(clientCounts.MpIMs)+len(clientCounts.IMs))
 	lastReadCache := make(map[string]string, len(clientCounts.Channels)+len(clientCounts.MpIMs)+len(clientCounts.IMs))
@@ -209,6 +292,12 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 	s.lastReadCacheLock.Lock()
 	s.lastReadCache = lastReadCache
 	s.lastReadCacheLock.Unlock()
+	return latestMessageIDs
+}
+
+func (s *SlackClient) SyncChannels(ctx context.Context) {
+	log := zerolog.Ctx(ctx)
+	latestMessageIDs := s.getLatestMessageIDs(ctx)
 	userPortals, err := s.UserLogin.Bridge.DB.UserPortal.GetAllForLogin(ctx, s.UserLogin.UserLogin)
 	if err != nil {
 		log.Err(err).Msg("Failed to fetch user portals")
@@ -220,7 +309,7 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 	}
 	var channels []*slack.Channel
 	token := s.UserLogin.Metadata.(*slackid.UserLoginMetadata).Token
-	if strings.HasPrefix(token, "xoxs") || s.Main.Config.Backfill.ConversationCount == -1 {
+	if s.IsRealUser && (strings.HasPrefix(token, "xoxs-") || s.Main.Config.Backfill.ConversationCount == -1) {
 		for _, ch := range s.BootResp.Channels {
 			ch.IsMember = true
 			channels = append(channels, &ch.Channel)
@@ -232,6 +321,9 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 		log.Debug().Int("channel_count", len(channels)).Msg("Using channels from boot response for sync")
 	} else {
 		totalLimit := s.Main.Config.Backfill.ConversationCount
+		if totalLimit < 0 {
+			totalLimit = 50
+		}
 		var cursor string
 		log.Debug().Int("total_limit", totalLimit).Msg("Fetching conversation list for sync")
 		for totalLimit > 0 {
@@ -259,18 +351,39 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 			cursor = nextCursor
 		}
 	}
-	slices.SortFunc(channels, func(a, b *slack.Channel) int {
-		return cmp.Compare(latestMessageIDs[a.ID], latestMessageIDs[b.ID])
-	})
+	if latestMessageIDs != nil {
+		slices.SortFunc(channels, func(a, b *slack.Channel) int {
+			return cmp.Compare(latestMessageIDs[a.ID], latestMessageIDs[b.ID])
+		})
+	}
 	for _, ch := range channels {
 		portalKey := s.makePortalKey(ch)
 		delete(existingPortals, portalKey)
-		latestMessageID, hasCounts := latestMessageIDs[ch.ID]
+		var latestMessageID string
+		var hasCounts bool
+		if !s.IsRealUser {
+			ch, err = s.Client.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
+				ChannelID:         ch.ID,
+				IncludeLocale:     true,
+				IncludeNumMembers: true,
+			})
+			if err != nil {
+				log.Err(err).Str("channel_id", ch.ID).Msg("Failed to fetch channel info")
+				continue
+			}
+			hasCounts = ch.Latest != nil
+			if hasCounts {
+				latestMessageID = ch.Latest.Timestamp
+			}
+		} else {
+			latestMessageID, hasCounts = latestMessageIDs[ch.ID]
+		}
+		// TODO fetch latest message from channel info when using bot account?
 		s.Main.br.QueueRemoteEvent(s.UserLogin, &SlackChatResync{
 			SlackEventMeta: &SlackEventMeta{
 				Type:         bridgev2.RemoteEventChatResync,
 				PortalKey:    portalKey,
-				CreatePortal: hasCounts || !(ch.IsIM || ch.IsMpIM),
+				CreatePortal: hasCounts || (!ch.IsIM && !ch.IsMpIM),
 				LogContext: func(c zerolog.Context) zerolog.Context {
 					return c.
 						Object("portal_key", portalKey).
@@ -303,15 +416,16 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 	}
 }
 
-func (s *SlackClient) consumeEvents() {
-	for evt := range s.RTM.IncomingEvents {
-		s.HandleSlackEvent(evt.Data)
-	}
-}
-
 func (s *SlackClient) Disconnect() {
 	s.disconnectRTM()
+	s.disconnectSocketMode()
 	s.Client = nil
+}
+
+func (s *SlackClient) disconnectSocketMode() {
+	if stop := s.stopSocketMode; stop != nil {
+		stop()
+	}
 }
 
 func (s *SlackClient) disconnectRTM() {
