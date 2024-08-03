@@ -60,6 +60,7 @@ func (mc *MessageConverter) ToSlack(
 	evt *event.Event,
 	threadRoot *database.Message,
 	editTarget *database.Message,
+	origSender *bridgev2.OrigSender,
 ) (conv *ConvertedSlackMessage, err error) {
 	log := zerolog.Ctx(ctx)
 
@@ -111,6 +112,16 @@ func (mc *MessageConverter) ToSlack(
 		}
 		if content.MsgType == event.MsgEmote {
 			options = append(options, slack.MsgOptionMeMessage())
+		}
+		if origSender != nil {
+			options = append(options, slack.MsgOptionUsername(origSender.FormattedName))
+			urlProvider, ok := mc.Bridge.Matrix.(bridgev2.MatrixConnectorWithPublicMedia)
+			if ok && origSender.AvatarURL != "" {
+				publicAvatarURL := urlProvider.GetPublicMediaAddress(origSender.AvatarURL)
+				if publicAvatarURL != "" {
+					options = append(options, slack.MsgOptionIconURL(publicAvatarURL))
+				}
+			}
 		}
 		return &ConvertedSlackMessage{SendReq: slack.MsgOptionCompose(options...)}, nil
 	case event.MsgAudio, event.MsgFile, event.MsgImage, event.MsgVideo:
