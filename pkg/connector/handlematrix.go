@@ -70,7 +70,7 @@ func (s *SlackClient) sendToSlack(ctx context.Context, channelID string, conv *m
 	log := zerolog.Ctx(ctx)
 	if conv.SendReq != nil {
 		log.Debug().Msg("Sending message to Slack")
-		_, timestamp, err := s.Client.PostMessageContext(ctx, channelID, slack.MsgOptionAsUser(true), conv.SendReq)
+		_, timestamp, err := s.Client.PostMessageContext(ctx, channelID, conv.SendReq)
 		return timestamp, err
 	} else if conv.FileUpload != nil {
 		log.Debug().Msg("Uploading attachment to Slack")

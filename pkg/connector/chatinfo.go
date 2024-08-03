@@ -352,7 +352,9 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string, lastUpda
 	var botInfo *slack.Bot
 	var err error
 	if userID[0] == 'B' {
-		botInfo, err = s.Client.GetBotInfoContext(ctx, userID)
+		botInfo, err = s.Client.GetBotInfoContext(ctx, slack.GetBotInfoParameters{
+			Bot: userID,
+		})
 	} else {
 		//info, err = s.Client.GetUserInfoContext(ctx, userID)
 		var infos map[string]*slack.User

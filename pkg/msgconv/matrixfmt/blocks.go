@@ -191,11 +191,11 @@ func listDepth(ts format.TagStack) (depth int) {
 }
 
 func (parser *HTMLParser) listToElement(node *html.Node, ctx Context) []slack.RichTextElement {
-	style := slack.RTELStyleBullet
+	style := slack.RTEListBullet
 	offset := 0
 	depth := listDepth(ctx.TagStack) - 1
 	if node.Data == "ol" {
-		style = slack.RTELStyleOrdered
+		style = slack.RTEListOrdered
 		startStr := parser.getAttribute(node, "start")
 		if len(startStr) > 0 {
 			var err error

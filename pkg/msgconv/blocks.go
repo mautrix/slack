@@ -307,7 +307,7 @@ func getBlockquoteDepth(rawElem slack.RichTextElement) int {
 	}
 }
 
-func acceptListNest(elem slack.RichTextElement, minDepth int, typeAtMinDepth slack.RichTextListStyle) bool {
+func acceptListNest(elem slack.RichTextElement, minDepth int, typeAtMinDepth slack.RichTextListElementType) bool {
 	list, ok := elem.(*slack.RichTextList)
 	return ok && list.Indent >= minDepth && (list.Indent > minDepth || list.Style == typeAtMinDepth)
 }
@@ -322,7 +322,7 @@ func (mc *MessageConverter) renderSlackRichTextLists(
 	firstList := lists[0]
 	style := listStyles[firstList.Indent%len(listStyles)]
 	offset := firstList.Offset + 1
-	if firstList.Style == slack.RTELStyleOrdered {
+	if firstList.Style == slack.RTEListOrdered {
 		if offset > 1 {
 			_, _ = fmt.Fprintf(into, `<ol start="%d" type="%s">`, offset, style)
 		} else {
