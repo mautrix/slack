@@ -46,21 +46,6 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 			Msg("Connecting to Slack")
 		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnecting})
 	case *slack.ConnectedEvent:
-		if evt.Info == nil || evt.Info.Team == nil || evt.Info.User == nil {
-			log.Warn().Any("event_data", evt).Msg("Got connected event without info")
-			return
-		}
-		if evt.Info.Team.ID != s.TeamID || evt.Info.User.ID != s.UserID {
-			log.Error().
-				Str("event_team_id", evt.Info.Team.ID).
-				Str("event_user_id", evt.Info.User.ID).
-				Msg("User login ID mismatch in Connected event")
-			s.invalidateSession(ctx, status.BridgeState{
-				StateEvent: status.StateUnknownError,
-				Error:      "slack-id-mismatch",
-			})
-			return
-		}
 		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnected})
 	//case *slack.DisconnectedEvent:
 	// TODO handle?
