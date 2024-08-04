@@ -86,6 +86,15 @@ func (mc *MessageConverter) ToMatrix(
 			CaptionMerged: true,
 		}
 	}
+	if msg.Username != "" {
+		for _, part := range output.Parts {
+			// TODO reupload avatar
+			part.Content.BeeperPerMessageProfile = &event.BeeperPerMessageProfile{
+				ID:          msg.Username,
+				Displayname: msg.Username,
+			}
+		}
+	}
 	return output
 }
 
@@ -140,6 +149,12 @@ func (mc *MessageConverter) EditToMatrix(
 				}
 				captionMerged = true
 			}
+		}
+	}
+	if msg.Username != "" {
+		modifiedPart.Content.BeeperPerMessageProfile = &event.BeeperPerMessageProfile{
+			ID:          msg.Username,
+			Displayname: msg.Username,
 		}
 	}
 	// TODO this doesn't handle edits to captions in msg.Attachments gifs properly

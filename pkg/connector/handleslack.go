@@ -160,6 +160,9 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		}
 		if sender == "" && evt.SubMessage != nil {
 			sender = evt.SubMessage.User
+			if sender == "" {
+				sender = evt.SubMessage.BotID
+			}
 		}
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, sender, "")
 		meta.CreatePortal = true
@@ -559,6 +562,11 @@ func (s *SlackMessage) GetTargetMessage() networkid.MessageID {
 	case slack.MsgSubTypeMessageDeleted:
 		return slackid.MakeMessageID(s.Client.TeamID, s.Data.Channel, s.Data.DeletedTimestamp)
 	case slack.MsgSubTypeMessageChanged:
+		// Socket mode events don't have the target timestamp at the top level
+		// TODO always just use the submessage timestamp?
+		if s.Data.EventTimestamp == s.Data.Timestamp {
+			return slackid.MakeMessageID(s.Client.TeamID, s.Data.Channel, s.Data.SubMessage.Timestamp)
+		}
 		return s.GetID()
 	default:
 		return ""
