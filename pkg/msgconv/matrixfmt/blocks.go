@@ -36,27 +36,15 @@ import (
 	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
 
-const (
-	ctxPortalKey          = "portal"
-	ctxAllowedMentionsKey = "allowed_mentions"
-)
-
 type Context struct {
-	Ctx        context.Context
-	ReturnData map[string]any
-	TagStack   format.TagStack
-	Style      slack.RichTextSectionTextStyle
-	Link       string
+	Ctx      context.Context
+	Portal   *bridgev2.Portal
+	Mentions *event.Mentions
+	TagStack format.TagStack
+	Style    slack.RichTextSectionTextStyle
+	Link     string
 
 	PreserveWhitespace bool
-}
-
-func NewContext(ctx context.Context) Context {
-	return Context{
-		Ctx:        ctx,
-		ReturnData: map[string]any{},
-		TagStack:   make(format.TagStack, 0, 4),
-	}
 }
 
 func (ctx Context) WithTag(tag string) Context {
@@ -112,8 +100,7 @@ func New2(br *bridgev2.Bridge, db *slackdb.SlackDB) *HTMLParser {
 }
 
 func (parser *HTMLParser) GetMentionedUserID(mxid id.UserID, ctx Context) string {
-	allowedMentions := ctx.ReturnData[ctxAllowedMentionsKey].(*event.Mentions)
-	if allowedMentions != nil && !slices.Contains(allowedMentions.UserIDs, id.UserID(mxid)) {
+	if ctx.Mentions != nil && !slices.Contains(ctx.Mentions.UserIDs, mxid) {
 		// If `m.mentions` is set and doesn't contain this user, don't convert the mention
 		// TODO does slack have some way to do silent mentions?
 		return ""
@@ -127,8 +114,7 @@ func (parser *HTMLParser) GetMentionedUserID(mxid id.UserID, ctx Context) string
 	if err != nil {
 		zerolog.Ctx(ctx.Ctx).Err(err).Msg("Failed to get user by MXID to convert mention")
 	} else if user != nil {
-		portal := ctx.ReturnData[ctxPortalKey].(*bridgev2.Portal)
-		portalTeamID, _ := slackid.ParsePortalID(portal.ID)
+		portalTeamID, _ := slackid.ParsePortalID(ctx.Portal.ID)
 		for _, userLoginID := range user.GetUserLoginIDs() {
 			userTeamID, userID := slackid.ParseUserLoginID(userLoginID)
 			if userTeamID == portalTeamID {
@@ -360,8 +346,7 @@ func (parser *HTMLParser) textToElements(text string, ctx Context) []slack.RichT
 	if text == "" {
 		return nil
 	}
-	mentions := ctx.ReturnData[ctxAllowedMentionsKey].(*event.Mentions)
-	if mentions != nil && mentions.Room && strings.Contains(text, "@room") && !ctx.TagStack.Has("code") {
+	if ctx.Mentions != nil && ctx.Mentions.Room && strings.Contains(text, "@room") && !ctx.TagStack.Has("code") {
 		parts := strings.Split(text, "@room")
 		elems := make([]slack.RichTextSectionElement, len(parts)*2-1)
 		for i, part := range parts {
@@ -424,9 +409,12 @@ func (parser *HTMLParser) nodeToBlock(node *html.Node, ctx Context) *slack.RichT
 
 // Parse converts Matrix HTML into text using the settings in this parser.
 func (parser *HTMLParser) Parse(ctx context.Context, htmlData string, mentions *event.Mentions, portal *bridgev2.Portal) *slack.RichTextBlock {
-	formatCtx := NewContext(ctx)
-	formatCtx.ReturnData[ctxPortalKey] = portal
-	formatCtx.ReturnData[ctxAllowedMentionsKey] = mentions
+	formatCtx := Context{
+		Ctx:      ctx,
+		TagStack: make(format.TagStack, 0, 4),
+		Portal:   portal,
+		Mentions: mentions,
+	}
 	node, _ := html.Parse(strings.NewReader(htmlData))
 	return parser.nodeToBlock(node, formatCtx)
 }
