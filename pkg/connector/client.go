@@ -116,6 +116,7 @@ type SlackClient struct {
 	BootResp   *slack.ClientBootResponse
 	TeamPortal *bridgev2.Portal
 	IsRealUser bool
+	Ghost      *bridgev2.Ghost
 
 	stopSocketMode  context.CancelFunc
 	stopResyncQueue atomic.Pointer[context.CancelFunc]
@@ -195,6 +196,18 @@ func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientBootRes
 	if err != nil {
 		return err
 	}
+	ghost, err := s.Main.br.GetGhostByID(ctx, slackid.MakeUserID(s.TeamID, s.UserID))
+	if err != nil {
+		return fmt.Errorf("failed to get own ghost: %w", err)
+	}
+	ghost.UpdateInfo(ctx, s.wrapUserInfo(s.UserID, &s.BootResp.Self, nil, ghost))
+	s.UserLogin.RemoteProfile = status.RemoteProfile{
+		Phone:  s.BootResp.Self.Profile.Phone,
+		Email:  s.BootResp.Self.Profile.Email,
+		Name:   ghost.Name,
+		Avatar: ghost.AvatarMXC,
+	}
+	s.Ghost = ghost
 	if s.IsRealUser {
 		go s.consumeRTMEvents()
 		go s.RTM.ManageConnection()
