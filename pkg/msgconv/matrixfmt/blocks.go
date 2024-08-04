@@ -36,6 +36,11 @@ import (
 	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
 
+const (
+	ctxPortalKey          = "portal"
+	ctxAllowedMentionsKey = "allowed_mentions"
+)
+
 type Context struct {
 	Ctx        context.Context
 	ReturnData map[string]any
