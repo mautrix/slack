@@ -487,7 +487,7 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 		if isImageAttachment(&attachment) {
 			continue
 		}
-		if attachment.FromURL != "" && attachment.OriginalURL != "" && attachment.Title != "" {
+		if attachment.FromURL != "" && attachment.OriginalURL != "" && attachment.Title != "" && len(attachment.Fields) == 0 && len(attachment.Actions) == 0 {
 			urlPreviews = append(urlPreviews, mc.attachmentToURLPreview(ctx, portal, intent, attachment))
 			continue
 		}
