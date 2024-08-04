@@ -1,0 +1,82 @@
+display_information:
+  name: mautrix-slack
+features:
+  bot_user:
+    display_name: mautrix-slack
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      - channels:history
+      - channels:read
+      - channels:write.invites
+      - channels:write.topic
+      - chat:write
+      - chat:write.customize
+      - conversations.connect:write
+      - emoji:read
+      - files:read
+      - files:write
+      - groups:history
+      - groups:read
+      - groups:write
+      - groups:write.invites
+      - groups:write.topic
+      - im:history
+      - im:read
+      - im:write
+      - im:write.topic
+      - mpim:history
+      - mpim:read
+      - mpim:write
+      - mpim:write.topic
+      - pins:read
+      - pins:write
+      - reactions:read
+      - reactions:write
+      - team:read
+      - users:read
+      - users.profile:read
+      - users:read.email
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_uninstalled
+      - channel_archive
+      - channel_created
+      - channel_deleted
+      - channel_history_changed
+      - channel_id_changed
+      - channel_left
+      - channel_rename
+      - channel_shared
+      - channel_unarchive
+      - channel_unshared
+      - email_domain_changed
+      - emoji_changed
+      - group_archive
+      - group_deleted
+      - group_history_changed
+      - group_left
+      - group_rename
+      - group_unarchive
+      - im_history_changed
+      - member_joined_channel
+      - member_left_channel
+      - message.channels
+      - message.groups
+      - message.im
+      - message.mpim
+      - pin_added
+      - pin_removed
+      - reaction_added
+      - reaction_removed
+      - team_domain_change
+      - team_join
+      - team_rename
+      - user_change
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
