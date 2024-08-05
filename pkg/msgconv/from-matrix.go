@@ -103,7 +103,7 @@ func (mc *MessageConverter) ToSlack(
 		if content.Format == event.FormatHTML {
 			block = mc.MatrixHTMLParser.Parse(ctx, content.FormattedBody, content.Mentions, portal)
 		} else {
-			block = slack.NewRichTextBlock("", slack.NewRichTextSection(slack.NewRichTextSectionTextElement(content.Body, nil)))
+			block = mc.MatrixHTMLParser.ParseText(ctx, content.Body, content.Mentions, portal)
 		}
 		options = append(options, slack.MsgOptionBlocks(block))
 		if editTargetID != "" {
@@ -113,6 +113,9 @@ func (mc *MessageConverter) ToSlack(
 		}
 		if content.MsgType == event.MsgEmote {
 			options = append(options, slack.MsgOptionMeMessage())
+		}
+		if content.BeeperLinkPreviews != nil && len(content.BeeperLinkPreviews) == 0 {
+			options = append(options, slack.MsgOptionDisableLinkUnfurl(), slack.MsgOptionDisableMediaUnfurl())
 		}
 		if origSender != nil {
 			options = append(options, slack.MsgOptionUsername(origSender.FormattedName))

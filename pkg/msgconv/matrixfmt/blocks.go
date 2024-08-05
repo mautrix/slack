@@ -19,6 +19,7 @@ package matrixfmt
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -339,6 +340,20 @@ func (parser *HTMLParser) textToElement(text string, ctx Context) slack.RichText
 	return slack.NewRichTextSectionTextElement(text, ctx.StylePtr())
 }
 
+const SlackApprovedTLDs = "ac|ad|ae|af|ag|ai|al|am|ao|aq|ar|as|at|au|aw|ax|az|ba|bb|bd|be|bf|bg|bh|bi|bj|bm|bn|bo|br|" +
+	"bs|bt|bw|bz|ca|cd|cf|cg|ch|ci|ck|cl|cm|cn|co|cr|cv|cw|cx|cy|cz|de|dj|dk|dm|dz|ec|ee|eg|er|es|et|eu|fi|fj|fk|fm|" +
+	"fo|fr|ga|gd|ge|gf|gg|gh|gi|gl|gm|gn|gp|gq|gr|gs|gt|gw|gy|hk|hm|hn|hr|ht|hu|ie|il|im|in|io|iq|it|je|jm|jo|jp|ke|" +
+	"kh|ki|km|kn|kr|kw|ky|kz|la|lb|lc|li|lk|lr|ls|lt|lu|lv|ly|ma|mc|mg|mh|mk|mm|mn|mo|mp|mq|mr|ms|mt|mu|mv|mw|mx|my|" +
+	"mz|na|nc|ne|nf|ng|ni|nl|no|np|nr|nu|nz|om|pa|pe|pf|pg|ph|pk|pm|pn|pr|ps|pt|pw|qa|re|ro|rs|ru|rw|sa|sb|sc|se|sg|" +
+	"si|sk|sl|sm|sn|sr|ss|st|su|sv|sx|sz|tc|td|tg|th|tj|tk|tl|tm|tn|to|tr|tt|tv|tw|tz|ua|ug|uk|us|uy|uz|va|vc|vg|vi|" +
+	"vn|vu|wf|ws|ye|yt|za|zm|zw|com|net|org|edu|gov|info|biz|int|dev"
+const URLWithProtocolPattern = `https?://[^\s/_*]+(?:/\S*)?`
+const URLWithoutProtocolPattern = `[^\s/_*:]+\.(?:` + SlackApprovedTLDs + `)(?:/\S*)?`
+const RoomPattern = `@room`
+
+var URLOrRoomRegex = regexp.MustCompile(fmt.Sprintf("%s|%s|%s", URLWithProtocolPattern, URLWithoutProtocolPattern, RoomPattern))
+var URLRegex = regexp.MustCompile(fmt.Sprintf("%s|%s", URLWithProtocolPattern, URLWithoutProtocolPattern))
+
 func (parser *HTMLParser) textToElements(text string, ctx Context) []slack.RichTextSectionElement {
 	if !ctx.PreserveWhitespace {
 		text = strings.Replace(text, "\n", "", -1)
@@ -346,17 +361,38 @@ func (parser *HTMLParser) textToElements(text string, ctx Context) []slack.RichT
 	if text == "" {
 		return nil
 	}
-	if ctx.Mentions != nil && ctx.Mentions.Room && strings.Contains(text, "@room") && !ctx.TagStack.Has("code") {
-		parts := strings.Split(text, "@room")
-		elems := make([]slack.RichTextSectionElement, len(parts)*2-1)
-		for i, part := range parts {
-			elems[i*2] = parser.textToElement(part, ctx)
-			if i < len(parts)-1 {
-				elems[i*2+1] = slack.NewRichTextSectionBroadcastElement(slack.RichTextBroadcastRangeChannel)
-			}
+	if ctx.TagStack.Has("code") || ctx.TagStack.Has("pre") || ctx.TagStack.Has("a") {
+		return []slack.RichTextSectionElement{parser.textToElement(text, ctx)}
+	}
+	var pattern *regexp.Regexp
+	if ctx.Mentions != nil && ctx.Mentions.Room {
+		pattern = URLOrRoomRegex
+	} else {
+		pattern = URLRegex
+	}
+	indexPairs := pattern.FindAllStringIndex(text, -1)
+	prevEnd := 0
+	elems := make([]slack.RichTextSectionElement, 0, len(indexPairs)*2+1)
+	for _, pair := range indexPairs {
+		start, end := pair[0], pair[1]
+		prefix := text[prevEnd:start]
+		part := text[start:end]
+		prevEnd = end
+		if len(prefix) > 0 {
+			elems = append(elems, parser.textToElement(prefix, ctx))
+		}
+		if part == "@room" {
+			elems = append(elems, slack.NewRichTextSectionBroadcastElement(slack.RichTextBroadcastRangeChannel))
+		} else if strings.HasPrefix(part, "http://") || strings.HasPrefix(part, "https://") {
+			elems = append(elems, slack.NewRichTextSectionLinkElement(part, part, ctx.StylePtr()))
+		} else {
+			elems = append(elems, slack.NewRichTextSectionLinkElement("http://"+part, part, ctx.StylePtr()))
 		}
 	}
-	return []slack.RichTextSectionElement{parser.textToElement(text, ctx)}
+	if prevEnd < len(text) {
+		elems = append(elems, parser.textToElement(text[prevEnd:], ctx))
+	}
+	return elems
 }
 
 func (parser *HTMLParser) nodeToElement(node *html.Node, ctx Context) ([]slack.RichTextSectionElement, []slack.RichTextElement) {
@@ -405,6 +441,17 @@ func (parser *HTMLParser) nodeToBlock(node *html.Node, ctx Context) *slack.RichT
 		elems = append([]slack.RichTextElement{slack.NewRichTextSection(sectionElems...)}, elems...)
 	}
 	return slack.NewRichTextBlock("", elems...)
+}
+
+func (parser *HTMLParser) ParseText(ctx context.Context, text string, mentions *event.Mentions, portal *bridgev2.Portal) *slack.RichTextBlock {
+	formatCtx := Context{
+		Ctx:      ctx,
+		TagStack: make(format.TagStack, 0),
+		Portal:   portal,
+		Mentions: mentions,
+	}
+	elems := parser.textToElements(text, formatCtx)
+	return slack.NewRichTextBlock("", slack.NewRichTextSection(elems...))
 }
 
 // Parse converts Matrix HTML into text using the settings in this parser.
