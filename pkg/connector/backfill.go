@@ -26,12 +26,31 @@ import (
 	"github.com/slack-go/slack"
 
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 
 	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
 
-var _ bridgev2.BackfillingNetworkAPI = (*SlackClient)(nil)
+var (
+	_ bridgev2.BackfillingNetworkAPI           = (*SlackClient)(nil)
+	_ bridgev2.BackfillingNetworkAPIWithLimits = (*SlackClient)(nil)
+)
+
+func (s *SlackClient) GetBackfillMaxBatchCount(ctx context.Context, portal *bridgev2.Portal, task *database.BackfillTask) int {
+	switch portal.RoomType {
+	case database.RoomTypeSpace:
+		return 0
+	case database.RoomTypeDefault:
+		return s.Main.br.Config.Backfill.Queue.GetOverride("channel")
+	case database.RoomTypeGroupDM:
+		return s.Main.br.Config.Backfill.Queue.GetOverride("group_dm")
+	case database.RoomTypeDM:
+		return s.Main.br.Config.Backfill.Queue.GetOverride("dm")
+	default:
+		return s.Main.br.Config.Backfill.Queue.MaxBatches
+	}
+}
 
 func (s *SlackClient) FetchMessages(ctx context.Context, params bridgev2.FetchMessagesParams) (*bridgev2.FetchMessagesResponse, error) {
 	if s.Client == nil {
