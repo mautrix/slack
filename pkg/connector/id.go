@@ -18,7 +18,6 @@ package connector
 
 import (
 	"github.com/slack-go/slack"
-
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 

@@ -32,7 +32,13 @@ var (
 	_ bridgev2.IdentifierResolvingNetworkAPI = (*SlackClient)(nil)
 	_ bridgev2.UserSearchingNetworkAPI       = (*SlackClient)(nil)
 	_ bridgev2.GroupCreatingNetworkAPI       = (*SlackClient)(nil)
+	_ bridgev2.IdentifierValidatingNetwork   = (*SlackConnector)(nil)
 )
+
+func (s *SlackConnector) ValidateUserID(id networkid.UserID) bool {
+	teamID, userID := slackid.ParseUserID(id)
+	return teamID != "" && userID != ""
+}
 
 func (s *SlackClient) ResolveIdentifier(ctx context.Context, identifier string, createChat bool) (*bridgev2.ResolveIdentifierResponse, error) {
 	if s.Client == nil {
@@ -42,12 +48,13 @@ func (s *SlackClient) ResolveIdentifier(ctx context.Context, identifier string, 
 	var err error
 	if strings.ContainsRune(identifier, '@') {
 		userInfo, err = s.Client.GetUserByEmailContext(ctx, identifier)
+		// TODO return err try next for not found users?
 	} else {
 		if strings.ContainsRune(identifier, '-') {
 			var teamID string
 			teamID, identifier = slackid.ParseUserID(networkid.UserID(identifier))
 			if teamID != s.TeamID {
-				return nil, fmt.Errorf("identifier does not match team")
+				return nil, fmt.Errorf("%w: identifier does not match team", bridgev2.ErrResolveIdentifierTryNext)
 			}
 		} else {
 			identifier = strings.ToUpper(identifier)
