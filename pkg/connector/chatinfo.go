@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -362,14 +363,21 @@ func (s *SlackClient) syncManyUsers(ctx context.Context, ghosts map[string]*brid
 		return
 	}
 	zerolog.Ctx(ctx).Debug().Int("updated_user_count", len(infos)).Msg("Got user info")
+	var wg sync.WaitGroup
+	wg.Add(len(infos))
 	for userID, info := range infos {
 		ghost, ok := ghosts[userID]
 		if !ok {
+			wg.Done()
 			zerolog.Ctx(ctx).Warn().Str("user_id", userID).Msg("Got unexpected user info")
 			continue
 		}
-		ghost.UpdateInfo(ctx, s.wrapUserInfo(userID, info, nil, ghost))
+		go func() {
+			defer wg.Done()
+			ghost.UpdateInfo(ctx, s.wrapUserInfo(userID, info, nil, ghost))
+		}()
 	}
+	wg.Wait()
 	zerolog.Ctx(ctx).Debug().Msg("Finished syncing users")
 }
 
