@@ -242,11 +242,13 @@ func (s *SlackClient) resyncUsers() {
 	}
 	const resyncWait = 30 * time.Second
 	const shortResyncWait = 1 * time.Second
+	forceShortWait := false
 	for entry := range s.userResyncQueue {
 		_, userID := slackid.ParseUserID(entry.ID)
 		entries := map[string]*bridgev2.Ghost{userID: entry}
 		var timer *time.Timer
-		if entry.Name == "" {
+		if entry.Name == "" || forceShortWait {
+			forceShortWait = true
 			timer = time.NewTimer(shortResyncWait)
 		} else {
 			timer = time.NewTimer(resyncWait)
@@ -257,7 +259,8 @@ func (s *SlackClient) resyncUsers() {
 			case entry = <-s.userResyncQueue:
 				_, userID = slackid.ParseUserID(entry.ID)
 				entries[userID] = entry
-				if entry.Name == "" {
+				if entry.Name == "" || forceShortWait {
+					forceShortWait = true
 					timer.Reset(shortResyncWait)
 				} else {
 					timer.Reset(resyncWait)
@@ -267,6 +270,7 @@ func (s *SlackClient) resyncUsers() {
 			}
 		}
 		go s.syncManyUsers(ctx, entries)
+		forceShortWait = false
 	}
 }
 
