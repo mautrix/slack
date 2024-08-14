@@ -250,7 +250,7 @@ func (s *SlackClient) getTeamInfo() *bridgev2.ChatInfo {
 			IsFull:           false,
 			TotalMemberCount: 0,
 			Members:          []bridgev2.ChatMember{{EventSender: s.makeEventSender(s.UserID)}},
-			PowerLevels:      &bridgev2.PowerLevelChanges{EventsDefault: ptr.Ptr(100)},
+			PowerLevels:      &bridgev2.PowerLevelOverrides{EventsDefault: ptr.Ptr(100)},
 		},
 		Type: ptr.Ptr(database.RoomTypeSpace),
 		ExtraUpdates: func(ctx context.Context, portal *bridgev2.Portal) (changed bool) {
