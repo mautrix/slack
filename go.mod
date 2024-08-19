@@ -11,7 +11,7 @@ require (
 	go.mau.fi/util v0.7.0
 	golang.org/x/net v0.28.0
 	gopkg.in/yaml.v3 v3.0.1
-	maunium.net/go/mautrix v0.20.0
+	maunium.net/go/mautrix v0.20.1-0.20240819145254-7f392b17b656
 )
 
 require (
@@ -33,6 +33,7 @@ require (
 	go.mau.fi/zeroconfig v0.1.3 // indirect
 	golang.org/x/crypto v0.26.0 // indirect
 	golang.org/x/exp v0.0.0-20240808152545-0cdaa3abc0fa // indirect
+	golang.org/x/sync v0.8.0 // indirect
 	golang.org/x/sys v0.24.0 // indirect
 	golang.org/x/text v0.17.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
