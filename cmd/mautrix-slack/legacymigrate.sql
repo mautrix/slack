@@ -78,6 +78,13 @@ SELECT
 FROM puppet_old
 WHERE user_id=UPPER(user_id);
 
+DELETE FROM message_old WHERE NOT EXISTS(
+    SELECT 1 FROM puppet_old WHERE puppet_old.user_id=message_old.author_id AND puppet_old.team_id=message_old.team_id
+);
+DELETE FROM reaction_old WHERE NOT EXISTS(
+    SELECT 1 FROM puppet_old WHERE puppet_old.user_id=reaction_old.author_id AND puppet_old.team_id=reaction_old.team_id
+);
+
 INSERT INTO message (
     bridge_id, id, part_id, mxid, room_id, room_receiver, sender_id,
     sender_mxid, timestamp, edit_count,
