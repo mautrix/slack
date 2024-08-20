@@ -21,7 +21,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	"io"
 	"net/http"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -223,6 +226,21 @@ func makeErrorMessage(partID networkid.PartID, message string, args ...any) *bri
 	}
 }
 
+type doctypeCheckingWriteProxy struct {
+	io.Writer
+	isStart bool
+}
+
+var errHTMLFile = errors.New("received HTML file")
+
+func (dtwp *doctypeCheckingWriteProxy) Write(p []byte) (n int, err error) {
+	if dtwp.isStart && bytes.HasPrefix(p, []byte("<!DOCTYPE html>")) {
+		return 0, errHTMLFile
+	}
+	dtwp.isStart = false
+	return dtwp.Writer.Write(p)
+}
+
 func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, client *slack.Client, partID networkid.PartID, file *slack.File) *bridgev2.ConvertedMessagePart {
 	log := zerolog.Ctx(ctx).With().Str("file_id", file.ID).Logger()
 	if file.FileAccess == "check_file_info" {
@@ -238,71 +256,94 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 		return makeErrorMessage(partID, "Too large file (%d MB)", file.Size/1_000_000)
 	}
 	content := convertSlackFileMetadata(file)
-	var data bytes.Buffer
-	var err error
 	var url string
 	if file.URLPrivateDownload != "" {
 		url = file.URLPrivateDownload
 	} else if file.URLPrivate != "" {
 		url = file.URLPrivate
 	}
-	if url != "" {
-		err = client.GetFileContext(ctx, url, &data)
-		if bytes.HasPrefix(data.Bytes(), []byte("<!DOCTYPE html>")) {
-			log.Warn().Msg("Received HTML file from Slack, retrying in 5 seconds")
-			time.Sleep(5 * time.Second)
-			data.Reset()
-			err = client.GetFileContext(ctx, file.URLPrivate, &data)
-		}
-	} else if file.PermalinkPublic != "" {
-		var resp *http.Response
-		resp, err = http.DefaultClient.Get(file.PermalinkPublic)
-		if err == nil {
-			_, err = data.ReadFrom(resp.Body)
-		}
-	} else {
+	if url == "" && file.PermalinkPublic == "" {
 		log.Warn().Msg("No usable URL found in file object")
 		return makeErrorMessage(partID, "File URL not found")
 	}
-	if err != nil {
-		log.Err(err).Msg("Failed to download file from Slack")
-		return makeErrorMessage(partID, "Failed to download file from Slack")
-	}
-	dataBytes := data.Bytes()
-	if file.SubType == "slack_audio" && ffmpeg.Supported() {
-		sourceMime := file.Mimetype
-		// Slack claims audio messages are webm/opus, but actually stores mp4/aac?
-		if strings.HasSuffix(url, ".mp4") {
-			sourceMime = "audio/mp4"
+	convertAudio := file.SubType == "slack_audio" && ffmpeg.Supported()
+	needsMediaSize := content.Info.Width == 0 && content.Info.Height == 0 && strings.HasPrefix(content.Info.MimeType, "image/")
+	requireFile := convertAudio || needsMediaSize
+	var retErr *bridgev2.ConvertedMessagePart
+	var uploadErr error
+	content.URL, content.File, uploadErr = intent.UploadMediaStream(ctx, portal.MXID, int64(file.Size), requireFile, file.Name, content.Info.MimeType, func(dest io.Writer) (replPath string, err error) {
+		if url != "" {
+			err = client.GetFileContext(ctx, url, &doctypeCheckingWriteProxy{Writer: dest})
+			if errors.Is(err, errHTMLFile) {
+				log.Warn().Msg("Received HTML file from Slack, retrying in 5 seconds")
+				time.Sleep(5 * time.Second)
+				err = client.GetFileContext(ctx, url, dest)
+			}
+		} else if file.PermalinkPublic != "" {
+			var resp *http.Response
+			// TODO don't use DefaultClient and use context
+			resp, err = http.DefaultClient.Get(file.PermalinkPublic)
+			if err == nil {
+				_, err = io.Copy(dest, resp.Body)
+			}
 		}
-		dataBytes, err = ffmpeg.ConvertBytes(ctx, dataBytes, ".ogg", []string{}, []string{"-c:a", "libopus"}, sourceMime)
 		if err != nil {
-			log.Err(err).Msg("Failed to convert voice message")
-			return makeErrorMessage(partID, "Failed to convert voice message")
+			log.Err(err).Msg("Failed to download file from Slack")
+			retErr = makeErrorMessage(partID, "Failed to download file from Slack")
+			return
 		}
-		content.Info.MimeType = "audio/ogg"
-		content.Body += ".ogg"
-		if file.AudioWaveSamples == nil {
-			file.AudioWaveSamples = []int{}
+		if convertAudio {
+			destFile := dest.(*os.File)
+			_ = destFile.Close()
+			sourceMime := file.Mimetype
+			// Slack claims audio messages are webm/opus, but actually stores mp4/aac?
+			if strings.HasSuffix(url, ".mp4") {
+				sourceMime = "audio/mp4"
+			}
+			tempFileWithExt := destFile.Name() + exmime.ExtensionFromMimetype(sourceMime)
+			err = os.Rename(destFile.Name(), tempFileWithExt)
+			if err != nil {
+				log.Err(err).Msg("Failed to rename temp file")
+				retErr = makeErrorMessage(partID, "Failed to rename temp file")
+				return
+			}
+			replPath, err = ffmpeg.ConvertPath(ctx, tempFileWithExt, ".ogg", []string{}, []string{"-c:a", "libopus"}, true)
+			if err != nil {
+				log.Err(err).Msg("Failed to convert voice message")
+				retErr = makeErrorMessage(partID, "Failed to convert voice message")
+				return
+			}
+			content.Info.MimeType = "audio/ogg"
+			content.Body += ".ogg"
+			if file.AudioWaveSamples == nil {
+				file.AudioWaveSamples = []int{}
+			}
+			for i, val := range file.AudioWaveSamples {
+				// Slack's waveforms are in the range 0-100, we need to convert them to 0-256
+				file.AudioWaveSamples[i] = min(int(float64(val)*2.56), 256)
+			}
+			content.MSC1767Audio = &event.MSC1767Audio{
+				Duration: content.Info.Duration,
+				Waveform: file.AudioWaveSamples,
+			}
+			content.MSC3245Voice = &event.MSC3245Voice{}
 		}
-		for i, val := range file.AudioWaveSamples {
-			// Slack's waveforms are in the range 0-100, we need to convert them to 0-256
-			file.AudioWaveSamples[i] = min(int(float64(val)*2.56), 256)
+		if needsMediaSize {
+			cfg, _, _ := image.DecodeConfig(dest.(*os.File))
+			content.Info.Width, content.Info.Height = cfg.Width, cfg.Height
 		}
-		content.MSC1767Audio = &event.MSC1767Audio{
-			Duration: content.Info.Duration,
-			Waveform: file.AudioWaveSamples,
+		return
+	})
+	if uploadErr != nil {
+		if retErr != nil {
+			return retErr
 		}
-		content.MSC3245Voice = &event.MSC3245Voice{}
-	}
-	err = mc.uploadMedia(ctx, portal, intent, dataBytes, &content)
-	if err != nil {
-		if errors.Is(err, mautrix.MTooLarge) {
-			log.Err(err).Msg("Homeserver rejected too large file")
-		} else if httpErr := (mautrix.HTTPError{}); errors.As(err, &httpErr) && httpErr.IsStatus(413) {
-			log.Err(err).Msg("Proxy rejected too large file")
+		if errors.Is(uploadErr, mautrix.MTooLarge) {
+			log.Err(uploadErr).Msg("Homeserver rejected too large file")
+		} else if httpErr := (mautrix.HTTPError{}); errors.As(uploadErr, &httpErr) && httpErr.IsStatus(413) {
+			log.Err(uploadErr).Msg("Proxy rejected too large file")
 		} else {
-			log.Err(err).Msg("Failed to upload file to Matrix")
+			log.Err(uploadErr).Msg("Failed to upload file to Matrix")
 		}
 		return makeErrorMessage(partID, "Failed to transfer file")
 	}
