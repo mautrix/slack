@@ -51,6 +51,10 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnected})
 	case *slack.DisconnectedEvent:
 		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateTransientDisconnect, Error: "slack-rtm-disconnected"})
+	case *slack.IncomingEventError:
+		log.Warn().Err(evt.ErrorObj).Msg("Incoming event error")
+	case *slack.UnmarshallingErrorEvent:
+		log.Debug().Err(evt.ErrorObj).Msg("Unmarshalling error")
 	case *slack.HelloEvent:
 		// Ignored for now
 	case *slack.InvalidAuthEvent:
