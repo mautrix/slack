@@ -42,13 +42,17 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 	ctx := log.WithContext(context.TODO())
 	switch evt := rawEvt.(type) {
 	case *slack.ConnectingEvent:
+		omitBridgeState := s.UserLogin.BridgeState.GetPrevUnsent().StateEvent == status.StateTransientDisconnect
 		log.Debug().
 			Int("attempt_num", evt.Attempt).
 			Int("connection_count", evt.ConnectionCount).
+			Bool("omit_bridge_state", omitBridgeState).
 			Msg("Connecting to Slack")
-		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnecting})
+		if !omitBridgeState {
+			s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnecting})
+		}
 	case *slack.ConnectedEvent:
-		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnected})
+		log.Debug().Msg("Connected to websocket, waiting for hello event")
 	case *slack.DisconnectedEvent:
 		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateTransientDisconnect, Error: "slack-rtm-disconnected"})
 	case *slack.IncomingEventError:
@@ -56,7 +60,8 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 	case *slack.UnmarshallingErrorEvent:
 		log.Debug().Err(evt.ErrorObj).Msg("Unmarshalling error")
 	case *slack.HelloEvent:
-		// Ignored for now
+		log.Debug().Msg("Received hello event from websocket (now really connected)")
+		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnected})
 	case *slack.InvalidAuthEvent:
 		s.invalidateSession(ctx, status.BridgeState{
 			StateEvent: status.StateBadCredentials,
