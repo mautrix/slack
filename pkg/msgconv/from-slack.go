@@ -271,7 +271,12 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 	requireFile := convertAudio || needsMediaSize
 	var retErr *bridgev2.ConvertedMessagePart
 	var uploadErr error
-	content.URL, content.File, uploadErr = intent.UploadMediaStream(ctx, portal.MXID, int64(file.Size), requireFile, file.Name, content.Info.MimeType, func(dest io.Writer) (replPath string, err error) {
+	content.URL, content.File, uploadErr = intent.UploadMediaStream(ctx, portal.MXID, int64(file.Size), requireFile, func(dest io.Writer) (res *bridgev2.FileStreamResult, err error) {
+		res = &bridgev2.FileStreamResult{
+			ReplacementFile: "",
+			FileName:        file.Name,
+			MimeType:        content.Info.MimeType,
+		}
 		if url != "" {
 			err = client.GetFileContext(ctx, url, &doctypeCheckingWriteProxy{Writer: dest})
 			if errors.Is(err, errHTMLFile) {
@@ -307,7 +312,7 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 				retErr = makeErrorMessage(partID, "Failed to rename temp file")
 				return
 			}
-			replPath, err = ffmpeg.ConvertPath(ctx, tempFileWithExt, ".ogg", []string{}, []string{"-c:a", "libopus"}, true)
+			res.ReplacementFile, err = ffmpeg.ConvertPath(ctx, tempFileWithExt, ".ogg", []string{}, []string{"-c:a", "libopus"}, true)
 			if err != nil {
 				log.Err(err).Msg("Failed to convert voice message")
 				retErr = makeErrorMessage(partID, "Failed to convert voice message")
@@ -315,6 +320,8 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 			}
 			content.Info.MimeType = "audio/ogg"
 			content.Body += ".ogg"
+			res.MimeType = "audio/ogg"
+			res.FileName += ".ogg"
 			if file.AudioWaveSamples == nil {
 				file.AudioWaveSamples = []int{}
 			}
@@ -327,10 +334,13 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 				Waveform: file.AudioWaveSamples,
 			}
 			content.MSC3245Voice = &event.MSC3245Voice{}
-		}
-		if needsMediaSize {
-			cfg, _, _ := image.DecodeConfig(dest.(*os.File))
-			content.Info.Width, content.Info.Height = cfg.Width, cfg.Height
+		} else if needsMediaSize {
+			destRS := dest.(io.ReadSeeker)
+			_, err = destRS.Seek(0, io.SeekStart)
+			if err == nil {
+				cfg, _, _ := image.DecodeConfig(destRS)
+				content.Info.Width, content.Info.Height = cfg.Width, cfg.Height
+			}
 		}
 		return
 	})
