@@ -87,7 +87,7 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 	case *slack.UserInvalidatedEvent:
 		go s.handleUserInvalidated(ctx, evt.User.ID)
 	default:
-		logEvt := log.Warn()
+		logEvt := log.Debug()
 		if log.GetLevel() == zerolog.TraceLevel {
 			logEvt = logEvt.Any("event_data", evt)
 		}
