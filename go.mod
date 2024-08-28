@@ -8,13 +8,14 @@ require (
 	github.com/slack-go/slack v0.13.1
 	github.com/stretchr/testify v1.9.0
 	github.com/yuin/goldmark v1.7.4
-	go.mau.fi/util v0.7.0
+	go.mau.fi/util v0.7.1-0.20240827112829-84c63841c264
 	golang.org/x/net v0.28.0
 	gopkg.in/yaml.v3 v3.0.1
-	maunium.net/go/mautrix v0.20.1-0.20240821134612-8ab31c8c4682
+	maunium.net/go/mautrix v0.20.1-0.20240827221252-892e5cf01fc8
 )
 
 require (
+	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/gorilla/mux v1.8.0 // indirect

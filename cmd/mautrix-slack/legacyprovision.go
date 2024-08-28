@@ -50,7 +50,7 @@ type Response struct {
 func legacyProvPing(w http.ResponseWriter, r *http.Request) {
 	user := m.Matrix.Provisioning.GetUser(r)
 	puppets := []any{}
-	for _, login := range user.GetCachedUserLogins() {
+	for _, login := range user.GetUserLogins() {
 		teamID, userID := slackid.ParseUserLoginID(login.ID)
 		client, _ := login.Client.(*connector.SlackClient)
 		var teamName string

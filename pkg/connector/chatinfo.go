@@ -62,8 +62,9 @@ func (s *SlackClient) fetchChatInfoWithCache(ctx context.Context, channelID stri
 	return info, nil
 }
 
-func (s *SlackClient) fetchChannelMembers(ctx context.Context, channelID string, limit int) (output []bridgev2.ChatMember) {
+func (s *SlackClient) fetchChannelMembers(ctx context.Context, channelID string, limit int) (output map[networkid.UserID]bridgev2.ChatMember) {
 	var cursor string
+	output = make(map[networkid.UserID]bridgev2.ChatMember)
 	for limit > 0 {
 		chunkLimit := limit
 		if chunkLimit > 200 {
@@ -79,7 +80,8 @@ func (s *SlackClient) fetchChannelMembers(ctx context.Context, channelID string,
 			break
 		}
 		for _, member := range membersChunk {
-			output = append(output, bridgev2.ChatMember{EventSender: s.makeEventSender(member)})
+			evtSender := s.makeEventSender(member)
+			output[evtSender.Sender] = bridgev2.ChatMember{EventSender: evtSender}
 		}
 		cursor = nextCursor
 		limit -= len(membersChunk)
@@ -136,18 +138,13 @@ func (s *SlackClient) generateGroupDMName(ctx context.Context, members []string)
 
 func (s *SlackClient) generateMemberList(ctx context.Context, info *slack.Channel, fetchList bool) (members bridgev2.ChatMemberList) {
 	if fetchList {
-		members.Members = s.fetchChannelMembers(ctx, info.ID, s.Main.Config.ParticipantSyncCount)
+		members.MemberMap = s.fetchChannelMembers(ctx, info.ID, s.Main.Config.ParticipantSyncCount)
 	}
-	hasSelf := false
-	for _, mem := range members.Members {
-		if mem.IsFromMe {
-			hasSelf = true
-		}
+	selfUserID := slackid.MakeUserID(s.TeamID, s.UserID)
+	if _, hasSelf := members.MemberMap[selfUserID]; !hasSelf {
+		members.MemberMap[selfUserID] = bridgev2.ChatMember{EventSender: s.makeEventSender(s.UserID)}
 	}
-	if !hasSelf && info.IsMember {
-		members.Members = append(members.Members, bridgev2.ChatMember{EventSender: s.makeEventSender(s.UserID)})
-	}
-	members.IsFull = info.NumMembers > 0 && len(members.Members) >= info.NumMembers
+	members.IsFull = info.NumMembers > 0 && len(members.MemberMap) >= info.NumMembers
 	return
 }
 
@@ -162,9 +159,10 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 	case info.IsMpIM:
 		roomType = database.RoomTypeGroupDM
 		members.IsFull = true
-		members.Members = make([]bridgev2.ChatMember, len(info.Members))
-		for i, member := range info.Members {
-			members.Members[i] = bridgev2.ChatMember{EventSender: s.makeEventSender(member)}
+		members.MemberMap = make(map[networkid.UserID]bridgev2.ChatMember, len(info.Members))
+		for _, member := range info.Members {
+			evtSender := s.makeEventSender(member)
+			members.MemberMap[evtSender.Sender] = bridgev2.ChatMember{EventSender: evtSender}
 		}
 		info.Name, err = s.generateGroupDMName(ctx, info.Members)
 		if err != nil {
@@ -176,10 +174,9 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 		selfMember := bridgev2.ChatMember{EventSender: s.makeEventSender(s.UserID)}
 		otherMember := bridgev2.ChatMember{EventSender: s.makeEventSender(info.User)}
 		members.OtherUserID = otherMember.Sender
-		if s.UserID == info.User {
-			members.Members = []bridgev2.ChatMember{selfMember}
-		} else {
-			members.Members = []bridgev2.ChatMember{selfMember, otherMember}
+		members.MemberMap = map[networkid.UserID]bridgev2.ChatMember{
+			selfMember.Sender:  selfMember,
+			otherMember.Sender: otherMember,
 		}
 		ghost, err := s.UserLogin.Bridge.GetGhostByID(ctx, slackid.MakeUserID(s.TeamID, info.User))
 		if err != nil {
@@ -207,7 +204,7 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 	}
 	members.TotalMemberCount = info.NumMembers
 	var name *string
-	if roomType != database.RoomTypeDM || len(members.Members) == 1 {
+	if roomType != database.RoomTypeDM || len(members.MemberMap) == 1 {
 		name = ptr.Ptr(s.Main.Config.FormatChannelName(&ChannelNameParams{
 			Channel:      info,
 			Team:         &s.BootResp.Team,
@@ -243,6 +240,7 @@ func (s *SlackClient) getTeamInfo() *bridgev2.ChatInfo {
 	if s.BootResp.Team.Icon["image_default"] == true {
 		avatarURL = ""
 	}
+	selfEvtSender := s.makeEventSender(s.UserID)
 	return &bridgev2.ChatInfo{
 		Name:   &name,
 		Topic:  nil,
@@ -250,7 +248,7 @@ func (s *SlackClient) getTeamInfo() *bridgev2.ChatInfo {
 		Members: &bridgev2.ChatMemberList{
 			IsFull:           false,
 			TotalMemberCount: 0,
-			Members:          []bridgev2.ChatMember{{EventSender: s.makeEventSender(s.UserID)}},
+			MemberMap:        map[networkid.UserID]bridgev2.ChatMember{selfEvtSender.Sender: {EventSender: selfEvtSender}},
 			PowerLevels:      &bridgev2.PowerLevelOverrides{EventsDefault: ptr.Ptr(100)},
 		},
 		Type: ptr.Ptr(database.RoomTypeSpace),
