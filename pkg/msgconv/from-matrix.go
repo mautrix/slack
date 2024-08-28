@@ -193,8 +193,9 @@ func (mc *MessageConverter) ToSlack(
 				block = slack.NewRichTextBlock("", slack.NewRichTextSection(slack.NewRichTextSectionTextElement(caption, nil)))
 			}
 			fileShare := &slack.ShareFileParams{
-				Files:   []string{resp.File},
-				Channel: channelID,
+				Files:    []string{resp.File},
+				Channel:  channelID,
+				ThreadTS: threadRootID,
 			}
 			if block != nil {
 				fileShare.Blocks = []slack.Block{block}
