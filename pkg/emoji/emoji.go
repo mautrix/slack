@@ -24,6 +24,7 @@ import (
 	"sync"
 
 	"go.mau.fi/util/exerrors"
+	"go.mau.fi/util/variationselector"
 )
 
 //go:generate go run ./emoji-generate.go
@@ -41,14 +42,14 @@ func doInit() {
 	exerrors.PanicIfNotNil(file.Close())
 	unicodeToShortcodeMap = make(map[string]string, len(shortcodeToUnicodeMap))
 	for shortcode, emoji := range shortcodeToUnicodeMap {
-		unicodeToShortcodeMap[emoji] = shortcode
+		unicodeToShortcodeMap[variationselector.Remove(emoji)] = shortcode
 	}
 	shortcodeRegex = regexp.MustCompile(`:[^:\s]*:`)
 }
 
 func GetShortcode(unicode string) string {
 	initOnce.Do(doInit)
-	return unicodeToShortcodeMap[unicode]
+	return unicodeToShortcodeMap[variationselector.Remove(unicode)]
 }
 
 func GetUnicode(shortcode string) string {
