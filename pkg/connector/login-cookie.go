@@ -65,13 +65,15 @@ var _ bridgev2.LoginProcessCookies = (*SlackTokenLogin)(nil)
 
 const ExtractSlackTokenJS = `
 new Promise(resolve => {
-	let mautrixSlackTokenCheckInterval
+	let mautrixSlackTokenCheckInterval;
+	let useSlackInBrowserClicked = false;
 	function mautrixFindSlackToken() {
 		// Automatically click the "Use Slack in Browser" button
 		if (/\.slack\.com$/.test(window.location.host)) {
 			const link = document?.querySelector?.(".p-ssb_redirect__body")?.querySelector?.(".c-link");
-			if (link) {
+			if (link && !useSlackInBrowserClicked) {
 				location.href = link.getAttribute("href");
+				useSlackInBrowserClicked = true;
 			}
 		}
 		if (!localStorage.localConfig_v2?.includes("xoxc-")) {
