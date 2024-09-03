@@ -543,5 +543,6 @@ func (s *SlackClient) FillBridgeState(state status.BridgeState) status.BridgeSta
 		state.Info = make(map[string]any)
 	}
 	state.Info["slack_user_id"] = s.UserID
+	state.Info["real_login_id"] = s.UserLogin.ID
 	return state
 }
