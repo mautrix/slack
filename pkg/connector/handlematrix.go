@@ -56,15 +56,12 @@ func (s *SlackClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 	if err != nil {
 		return nil, err
 	}
-	timestamp, fileID, err := s.sendToSlack(ctx, channelID, conv)
+	timestamp, err := s.sendToSlack(ctx, channelID, conv, msg)
 	if err != nil {
 		return nil, err
 	}
 	if timestamp == "" {
-		return &bridgev2.MatrixMessageResponse{
-			DB:      &database.Message{},
-			Pending: networkid.TransactionID(fmt.Sprintf("%s:%s", s.UserID, fileID)),
-		}, nil
+		return &bridgev2.MatrixMessageResponse{Pending: true}, nil
 	}
 	return &bridgev2.MatrixMessageResponse{
 		DB: &database.Message{
@@ -75,18 +72,23 @@ func (s *SlackClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 	}, nil
 }
 
-func (s *SlackClient) sendToSlack(ctx context.Context, channelID string, conv *msgconv.ConvertedSlackMessage) (string, string, error) {
+func (s *SlackClient) sendToSlack(
+	ctx context.Context,
+	channelID string,
+	conv *msgconv.ConvertedSlackMessage,
+	msg *bridgev2.MatrixMessage,
+) (string, error) {
 	log := zerolog.Ctx(ctx)
 	if conv.SendReq != nil {
 		log.Debug().Msg("Sending message to Slack")
 		_, timestamp, err := s.Client.PostMessageContext(ctx, channelID, conv.SendReq)
-		return timestamp, "", err
+		return timestamp, err
 	} else if conv.FileUpload != nil {
 		log.Debug().Msg("Uploading attachment to Slack")
 		file, err := s.Client.UploadFileV2Context(ctx, *conv.FileUpload)
 		if err != nil {
 			log.Err(err).Msg("Failed to upload attachment to Slack")
-			return "", "", err
+			return "", err
 		}
 		var shareInfo slack.ShareFileInfo
 		// Slack puts the channel message info after uploading a file in either file.shares.private or file.shares.public
@@ -95,17 +97,23 @@ func (s *SlackClient) sendToSlack(ctx context.Context, channelID string, conv *m
 		} else if info, found = file.Shares.Public[channelID]; found && len(info) > 0 {
 			shareInfo = info[0]
 		}
-		return shareInfo.Ts, file.ID, nil
+		if shareInfo.Ts != "" {
+			return shareInfo.Ts, nil
+		}
+		if msg != nil {
+			msg.AddPendingToSave(nil, networkid.TransactionID(fmt.Sprintf("%s:%s", s.UserID, file.ID)), nil)
+		}
+		return "", nil
 	} else if conv.FileShare != nil {
 		log.Debug().Msg("Sharing already uploaded attachment to Slack")
 		resp, err := s.Client.ShareFile(ctx, *conv.FileShare)
 		if err != nil {
 			log.Err(err).Msg("Failed to share attachment to Slack")
-			return "", "", err
+			return "", err
 		}
-		return resp.FileMsgTS, "", nil
+		return resp.FileMsgTS, nil
 	} else {
-		return "", "", errors.New("no message or attachment to send")
+		return "", errors.New("no message or attachment to send")
 	}
 }
 
@@ -121,7 +129,7 @@ func (s *SlackClient) HandleMatrixEdit(ctx context.Context, msg *bridgev2.Matrix
 	if err != nil {
 		return err
 	}
-	_, _, err = s.sendToSlack(ctx, channelID, conv)
+	_, err = s.sendToSlack(ctx, channelID, conv, nil)
 	return err
 }
 
