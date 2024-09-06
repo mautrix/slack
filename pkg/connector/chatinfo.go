@@ -137,11 +137,18 @@ func (s *SlackClient) generateGroupDMName(ctx context.Context, members []string)
 }
 
 func (s *SlackClient) generateMemberList(ctx context.Context, info *slack.Channel, fetchList bool) (members bridgev2.ChatMemberList) {
-	if fetchList {
-		members.MemberMap = s.fetchChannelMembers(ctx, info.ID, s.Main.Config.ParticipantSyncCount)
-	}
 	selfUserID := slackid.MakeUserID(s.TeamID, s.UserID)
-	if _, hasSelf := members.MemberMap[selfUserID]; !hasSelf {
+	if !fetchList {
+		return bridgev2.ChatMemberList{
+			IsFull:           false,
+			TotalMemberCount: info.NumMembers,
+			MemberMap: map[networkid.UserID]bridgev2.ChatMember{
+				selfUserID: {EventSender: s.makeEventSender(s.UserID)},
+			},
+		}
+	}
+	members.MemberMap = s.fetchChannelMembers(ctx, info.ID, s.Main.Config.ParticipantSyncCount)
+	if _, hasSelf := members.MemberMap[selfUserID]; !hasSelf && info.IsMember {
 		members.MemberMap[selfUserID] = bridgev2.ChatMember{EventSender: s.makeEventSender(s.UserID)}
 	}
 	members.IsFull = info.NumMembers > 0 && len(members.MemberMap) >= info.NumMembers
