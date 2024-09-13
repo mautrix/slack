@@ -13,7 +13,7 @@ require (
 	go.mau.fi/util v0.7.1-0.20240913091524-7617daa66719
 	golang.org/x/net v0.29.0
 	gopkg.in/yaml.v3 v3.0.1
-	maunium.net/go/mautrix v0.20.1-0.20240913095532-e12ecbe82d36
+	maunium.net/go/mautrix v0.20.1-0.20240913182028-ff4126b5d04d
 )
 
 require (
@@ -43,4 +43,4 @@ require (
 	maunium.net/go/mauflag v1.0.0 // indirect
 )
 
-replace github.com/slack-go/slack => github.com/beeper/slackgo v0.0.0-20240913122159-3311ebb8bafe
+replace github.com/slack-go/slack => github.com/beeper/slackgo v0.0.0-20240913184704-a53c45716dc4
