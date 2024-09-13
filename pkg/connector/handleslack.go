@@ -55,7 +55,12 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 	case *slack.ConnectedEvent:
 		log.Debug().Msg("Connected to websocket, waiting for hello event")
 	case *slack.DisconnectedEvent:
-		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateTransientDisconnect, Error: "slack-rtm-disconnected"})
+		if evt.Intentional {
+			log.Debug().Bool("intentional", evt.Intentional).Err(evt.Cause).Msg("Disconnected from Slack")
+		} else {
+			log.Warn().Bool("intentional", evt.Intentional).Err(evt.Cause).Msg("Disconnected from Slack")
+			s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateTransientDisconnect, Error: "slack-rtm-disconnected"})
+		}
 	case *slack.IncomingEventError:
 		log.Warn().Err(evt.ErrorObj).Msg("Incoming event error")
 	case *slack.UnmarshallingErrorEvent:
