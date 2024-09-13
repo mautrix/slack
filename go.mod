@@ -1,6 +1,8 @@
 module go.mau.fi/mautrix-slack
 
-go 1.22
+go 1.22.0
+
+toolchain go1.23.1
 
 require (
 	github.com/lib/pq v1.10.9
@@ -8,10 +10,10 @@ require (
 	github.com/slack-go/slack v0.13.1
 	github.com/stretchr/testify v1.9.0
 	github.com/yuin/goldmark v1.7.4
-	go.mau.fi/util v0.7.1-0.20240904173517-ca3b3fe376c2
-	golang.org/x/net v0.28.0
+	go.mau.fi/util v0.7.1-0.20240913091524-7617daa66719
+	golang.org/x/net v0.29.0
 	gopkg.in/yaml.v3 v3.0.1
-	maunium.net/go/mautrix v0.20.1-0.20240906105454-33d724bf4c78
+	maunium.net/go/mautrix v0.20.1-0.20240913095532-e12ecbe82d36
 )
 
 require (
@@ -32,8 +34,8 @@ require (
 	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	go.mau.fi/zeroconfig v0.1.3 // indirect
-	golang.org/x/crypto v0.26.0 // indirect
-	golang.org/x/exp v0.0.0-20240823005443-9b4947da3948 // indirect
+	golang.org/x/crypto v0.27.0 // indirect
+	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0 // indirect
 	golang.org/x/sync v0.8.0 // indirect
 	golang.org/x/sys v0.25.0 // indirect
 	golang.org/x/text v0.18.0 // indirect
