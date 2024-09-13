@@ -19,6 +19,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -58,7 +59,11 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 	case *slack.IncomingEventError:
 		log.Warn().Err(evt.ErrorObj).Msg("Incoming event error")
 	case *slack.UnmarshallingErrorEvent:
-		log.Debug().Err(evt.ErrorObj).Msg("Unmarshalling error")
+		logEvt := log.Debug().Err(evt.ErrorObj)
+		if log.GetLevel() == zerolog.TraceLevel || strings.Contains(evt.ErrorObj.Error(), `Received unmapped event "error"`) {
+			logEvt = logEvt.RawJSON("raw_data", evt.Raw)
+		}
+		logEvt.Msg("Unmarshalling error")
 	case *slack.HelloEvent:
 		log.Debug().Msg("Received hello event from websocket (now really connected)")
 		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnected})
