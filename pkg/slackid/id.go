@@ -113,9 +113,9 @@ func ParsePortalID(id networkid.PortalID) (teamID, channelID string) {
 	}
 }
 
-func MakePortalKey(teamID, channelID string, userLoginID networkid.UserLoginID, isPrivateChat bool) (key networkid.PortalKey) {
+func MakePortalKey(teamID, channelID string, userLoginID networkid.UserLoginID, wantReceiver bool) (key networkid.PortalKey) {
 	key.ID = MakePortalID(teamID, channelID)
-	if isPrivateChat {
+	if wantReceiver {
 		key.Receiver = userLoginID
 	}
 	return

@@ -25,7 +25,7 @@ import (
 )
 
 func (s *SlackClient) makePortalKey(ch *slack.Channel) networkid.PortalKey {
-	return slackid.MakePortalKey(s.TeamID, ch.ID, s.UserLogin.ID, ch.IsIM || ch.IsMpIM)
+	return slackid.MakePortalKey(s.TeamID, ch.ID, s.UserLogin.ID, s.Main.br.Config.SplitPortals || ch.IsIM || ch.IsMpIM)
 }
 
 func (s *SlackClient) makeEventSender(userID string) bridgev2.EventSender {
@@ -34,4 +34,14 @@ func (s *SlackClient) makeEventSender(userID string) bridgev2.EventSender {
 		SenderLogin: slackid.MakeUserLoginID(s.TeamID, userID),
 		Sender:      slackid.MakeUserID(s.TeamID, userID),
 	}
+}
+
+func (s *SlackClient) makeTeamPortalKey(teamID string) networkid.PortalKey {
+	key := networkid.PortalKey{
+		ID: slackid.MakeTeamPortalID(teamID),
+	}
+	if s.Main.br.Config.SplitPortals {
+		key.Receiver = s.UserLogin.ID
+	}
+	return key
 }

@@ -149,7 +149,13 @@ func (parser *HTMLParser) GetMentionedEventLink(roomID id.RoomID, eventID id.Eve
 	if !ok {
 		return ""
 	}
-	teamPortal, err := parser.br.GetPortalByKey(ctx.Ctx, networkid.PortalKey{ID: slackid.MakeTeamPortalID(teamID)})
+	teamPortalKey := networkid.PortalKey{
+		ID: slackid.MakeTeamPortalID(teamID),
+	}
+	if parser.br.Config.SplitPortals {
+		teamPortalKey.Receiver = ctx.Portal.Receiver
+	}
+	teamPortal, err := parser.br.GetPortalByKey(ctx.Ctx, teamPortalKey)
 	if err != nil {
 		zerolog.Ctx(ctx.Ctx).Err(err).Msg("Failed to get team portal to convert message link")
 		return ""
