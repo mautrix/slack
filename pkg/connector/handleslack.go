@@ -69,6 +69,11 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 			logEvt = logEvt.RawJSON("raw_data", evt.Raw)
 		}
 		logEvt.Msg("Unmarshalling error")
+	case *slack.RTMErrorEvent:
+		log.Error().
+			Str(zerolog.ErrorFieldName, evt.Error.Msg).
+			Int("error_code", evt.Error.Code).
+			Msg("Got RTM error")
 	case *slack.HelloEvent:
 		log.Debug().Msg("Received hello event from websocket (now really connected)")
 		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnected})
