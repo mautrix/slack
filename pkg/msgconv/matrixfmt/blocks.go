@@ -451,10 +451,11 @@ func (parser *HTMLParser) nodeToBlock(node *html.Node, ctx Context) *slack.RichT
 
 func (parser *HTMLParser) ParseText(ctx context.Context, text string, mentions *event.Mentions, portal *bridgev2.Portal) *slack.RichTextBlock {
 	formatCtx := Context{
-		Ctx:      ctx,
-		TagStack: make(format.TagStack, 0),
-		Portal:   portal,
-		Mentions: mentions,
+		Ctx:                ctx,
+		TagStack:           make(format.TagStack, 0),
+		Portal:             portal,
+		Mentions:           mentions,
+		PreserveWhitespace: true,
 	}
 	elems := parser.textToElements(text, formatCtx)
 	return slack.NewRichTextBlock("", slack.NewRichTextSection(elems...))
