@@ -1,4 +1,4 @@
-# v0.1.2 (unreleased)
+# v0.1.2 (2024-10-16)
 
 * Fixed bridging newlines in plaintext messages from Matrix to Slack
   (thanks to [@redgoat650] in [#61]).
