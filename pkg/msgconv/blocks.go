@@ -408,7 +408,7 @@ func (mc *MessageConverter) renderSlackRichTextElement(ctx context.Context, numE
 		return fmt.Sprintf("<p>%s</p>", children)
 	case *slack.RichTextPreformatted:
 		children := mc.renderRichTextSectionElements(ctx, e.Elements, mentions)
-		return fmt.Sprintf("<pre>%s</pre>", children)
+		return fmt.Sprintf("<pre><code>%s</code></pre>", children)
 	case *slack.RichTextQuote:
 		return mc.renderRichTextSectionElements(ctx, e.Elements, mentions)
 	case *slack.RichTextList:
