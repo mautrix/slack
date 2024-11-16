@@ -1,3 +1,8 @@
+# v0.1.3 (2024-11-16)
+
+* Fixed bridged code blocks not being wrapped in a `<code>` element.
+* Fixed login command not url-decoding cookies properly.
+
 # v0.1.2 (2024-10-16)
 
 * Fixed bridging newlines in plaintext messages from Matrix to Slack
