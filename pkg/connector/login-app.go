@@ -81,10 +81,7 @@ func (s *SlackAppLogin) SubmitUserInput(ctx context.Context, input map[string]st
 		return nil, err
 	}
 	sc := ul.Client.(*SlackClient)
-	err = sc.Connect(ul.Log.WithContext(context.Background()))
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect after login: %w", err)
-	}
+	go sc.Connect(ul.Log.WithContext(context.Background()))
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeComplete,
 		StepID:       LoginStepIDComplete,

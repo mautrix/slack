@@ -154,13 +154,13 @@ func (s *SlackClient) handleBootError(ctx context.Context, err error) {
 	}
 }
 
-func (s *SlackClient) Connect(ctx context.Context) error {
+func (s *SlackClient) Connect(ctx context.Context) {
 	if s.Client == nil {
 		s.UserLogin.BridgeState.Send(status.BridgeState{
 			StateEvent: status.StateBadCredentials,
 			Error:      "slack-not-logged-in",
 		})
-		return nil
+		return
 	}
 	var bootResp *slack.ClientBootResponse
 	if s.IsRealUser {
@@ -168,25 +168,35 @@ func (s *SlackClient) Connect(ctx context.Context) error {
 		bootResp, err = s.Client.ClientBootContext(ctx)
 		if err != nil {
 			s.handleBootError(ctx, err)
-			return err
+			return
 		}
 	} else {
 		teamResp, err := s.Client.GetTeamInfoContext(ctx)
 		if err != nil {
+			zerolog.Ctx(ctx).Err(err).Msg("Failed to fetch team info")
 			s.handleBootError(ctx, err)
-			return fmt.Errorf("failed to fetch team info: %w", err)
+			return
 		}
 		userResp, err := s.Client.GetUserInfoContext(ctx, s.UserID)
 		if err != nil {
+			zerolog.Ctx(ctx).Err(err).Msg("Failed to fetch user info")
 			s.handleBootError(ctx, err)
-			return fmt.Errorf("failed to fetch user info: %w", err)
+			return
 		}
 		bootResp = &slack.ClientBootResponse{
 			Self: *userResp,
 			Team: *teamResp,
 		}
 	}
-	return s.connect(ctx, bootResp)
+	err := s.connect(ctx, bootResp)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to connect")
+		s.UserLogin.BridgeState.Send(status.BridgeState{
+			StateEvent: status.StateUnknownError,
+			Error:      "slack-unknown-connect-error",
+			Message:    fmt.Sprintf("Unknown error from Slack: %s", err.Error()),
+		})
+	}
 }
 
 func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientBootResponse) error {
