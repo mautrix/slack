@@ -113,7 +113,7 @@ type SlackClient struct {
 	SocketMode *socketmode.Client
 	UserID     string
 	TeamID     string
-	BootResp   *slack.ClientBootResponse
+	BootResp   *slack.ClientUserBootResponse
 	TeamPortal *bridgev2.Portal
 	IsRealUser bool
 	Ghost      *bridgev2.Ghost
@@ -162,10 +162,14 @@ func (s *SlackClient) Connect(ctx context.Context) {
 		})
 		return
 	}
-	var bootResp *slack.ClientBootResponse
+	var bootResp *slack.ClientUserBootResponse
 	if s.IsRealUser {
-		var err error
-		bootResp, err = s.Client.ClientBootContext(ctx)
+		err := s.Client.FetchVersionData(ctx)
+		if err != nil {
+			zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to fetch version data")
+		}
+		// TODO do actual warm boots by saving last received ts somewhere
+		bootResp, err = s.Client.ClientUserBootContext(ctx, time.Time{})
 		if err != nil {
 			s.handleBootError(ctx, err)
 			return
@@ -183,7 +187,7 @@ func (s *SlackClient) Connect(ctx context.Context) {
 			s.handleBootError(ctx, err)
 			return
 		}
-		bootResp = &slack.ClientBootResponse{
+		bootResp = &slack.ClientUserBootResponse{
 			Self: *userResp,
 			Team: *teamResp,
 		}
@@ -199,7 +203,7 @@ func (s *SlackClient) Connect(ctx context.Context) {
 	}
 }
 
-func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientBootResponse) error {
+func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientUserBootResponse) error {
 	s.initialConnect = time.Now()
 	s.BootResp = bootResp
 	err := s.syncTeamPortal(ctx)

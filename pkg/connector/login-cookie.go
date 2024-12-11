@@ -19,7 +19,9 @@ package connector
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 
@@ -127,7 +129,12 @@ func (s *SlackTokenLogin) Cancel() {}
 func (s *SlackTokenLogin) SubmitCookies(ctx context.Context, input map[string]string) (*bridgev2.LoginStep, error) {
 	token, cookieToken := input["auth_token"], input["cookie_token"]
 	client := makeSlackClient(&s.User.Log, token, cookieToken, "")
-	info, err := client.ClientBootContext(ctx)
+	err := client.FetchVersionData(ctx)
+	if err != nil {
+		zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to fetch version data")
+		return nil, err
+	}
+	info, err := client.ClientUserBootContext(ctx, time.Time{})
 	if err != nil {
 		return nil, fmt.Errorf("client.boot failed: %w", err)
 	}
