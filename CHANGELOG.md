@@ -1,3 +1,8 @@
+# v0.1.4 (2024-12-16)
+
+* Switched to new API for loading initial chats.
+* Updated Docker imager to Alpine 3.21.
+
 # v0.1.3 (2024-11-16)
 
 * Fixed bridged code blocks not being wrapped in a `<code>` element.
