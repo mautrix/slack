@@ -327,6 +327,8 @@ func (parser *HTMLParser) textToElement(text string, ctx Context) slack.RichText
 				if userID != "" {
 					return slack.NewRichTextSectionUserElement(userID, ctx.StylePtr())
 				}
+				// Don't fall back to a link for mentions of unknown users
+				return slack.NewRichTextSectionTextElement(text, ctx.StylePtr())
 			} else if parsedMatrix.Sigil1 == '!' && parsedMatrix.Sigil2 == 0 {
 				channelID := parser.GetMentionedChannelID(parsedMatrix.RoomID(), ctx)
 				if channelID != "" {
