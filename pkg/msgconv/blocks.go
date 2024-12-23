@@ -126,6 +126,7 @@ func (mc *MessageConverter) attachmentToURLPreview(ctx context.Context, portal *
 			ImageSize:    imageSize,
 			ImageWidth:   imageWidth,
 			ImageHeight:  imageHeight,
+			ImageType:    imageMime,
 		},
 		MatchedURL:      attachment.OriginalURL,
 		ImageEncryption: file,
