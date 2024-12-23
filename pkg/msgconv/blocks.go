@@ -92,13 +92,23 @@ func (mc *MessageConverter) attachmentToURLPreview(ctx context.Context, portal *
 	var mxc id.ContentURIString
 	var file *event.EncryptedFileInfo
 	var imageMime string
-	if attachment.ImageURL != "" {
-		bytes, err := mc.downloadExternalImage(ctx, attachment.ImageURL)
+	imageURL := attachment.ImageURL
+	imageSize := attachment.ImageBytes
+	imageWidth := attachment.ImageWidth
+	imageHeight := attachment.ImageHeight
+	if imageURL == "" {
+		imageURL = attachment.ThumbURL
+		imageSize = 0
+		imageWidth = attachment.ThumbWidth
+		imageHeight = attachment.ThumbHeight
+	}
+	if imageURL != "" {
+		bytes, err := mc.downloadExternalImage(ctx, imageURL)
 		if err != nil {
 			zerolog.Ctx(ctx).Err(err).Msg("Failed to download link preview image")
 		} else {
 			imageMime = http.DetectContentType(bytes)
-			mxc, file, err = intent.UploadMedia(ctx, portal.MXID, bytes, path.Base(attachment.ImageURL), imageMime)
+			mxc, file, err = intent.UploadMedia(ctx, portal.MXID, bytes, path.Base(imageURL), imageMime)
 			if err != nil {
 				zerolog.Ctx(ctx).Err(err).Msg("Failed to reupload link preview image")
 			}
@@ -109,12 +119,13 @@ func (mc *MessageConverter) attachmentToURLPreview(ctx context.Context, portal *
 		LinkPreview: event.LinkPreview{
 			CanonicalURL: attachment.FromURL,
 			Title:        attachment.Title,
+			SiteName:     attachment.ServiceName,
 			Type:         "website",
 			Description:  attachment.Text,
 			ImageURL:     mxc,
-			ImageSize:    attachment.ImageBytes,
-			ImageWidth:   attachment.ImageWidth,
-			ImageHeight:  attachment.ImageHeight,
+			ImageSize:    imageSize,
+			ImageWidth:   imageWidth,
+			ImageHeight:  imageHeight,
 		},
 		MatchedURL:      attachment.OriginalURL,
 		ImageEncryption: file,
