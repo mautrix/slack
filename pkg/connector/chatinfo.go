@@ -214,7 +214,7 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 	if roomType != database.RoomTypeDM || len(members.MemberMap) == 1 {
 		name = ptr.Ptr(s.Main.Config.FormatChannelName(&ChannelNameParams{
 			Channel:      info,
-			Team:         &s.BootResp.Team,
+			Team:         &s.BootResp.Team.TeamInfo,
 			IsNoteToSelf: info.IsIM && info.User == s.UserID,
 		}))
 	}
@@ -242,7 +242,7 @@ func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, isNew
 }
 
 func (s *SlackClient) getTeamInfo() *bridgev2.ChatInfo {
-	name := s.Main.Config.FormatTeamName(&s.BootResp.Team)
+	name := s.Main.Config.FormatTeamName(&s.BootResp.Team.TeamInfo)
 	avatarURL, _ := s.BootResp.Team.Icon["image_230"].(string)
 	if s.BootResp.Team.Icon["image_default"] == true {
 		avatarURL = ""
@@ -263,6 +263,15 @@ func (s *SlackClient) getTeamInfo() *bridgev2.ChatInfo {
 			meta := portal.Metadata.(*slackid.PortalMetadata)
 			if meta.TeamDomain != s.BootResp.Team.Domain {
 				meta.TeamDomain = s.BootResp.Team.Domain
+				changed = true
+			}
+			prefs := s.BootResp.Team.Prefs
+			if prefs.MsgEditWindowMins != nil && (meta.EditMaxAge == nil || *meta.EditMaxAge != *prefs.MsgEditWindowMins) {
+				meta.EditMaxAge = prefs.MsgEditWindowMins
+				changed = true
+			}
+			if prefs.AllowMessageDeletion != nil && (meta.AllowDelete == nil || *meta.AllowDelete != *prefs.AllowMessageDeletion) {
+				meta.AllowDelete = prefs.AllowMessageDeletion
 				changed = true
 			}
 			return
@@ -303,7 +312,7 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 	if info != nil {
 		name = ptr.Ptr(s.Main.Config.FormatDisplayname(&DisplaynameParams{
 			User: info,
-			Team: &s.BootResp.Team,
+			Team: &s.BootResp.Team.TeamInfo,
 		}))
 		avatarURL := info.Profile.ImageOriginal
 		if avatarURL == "" && info.Profile.Image512 != "" {
@@ -325,7 +334,7 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 		}
 		isBot = isBot || info.IsBot || info.IsAppUser
 	} else if botInfo != nil {
-		name = ptr.Ptr(s.Main.Config.FormatBotDisplayname(botInfo, &s.BootResp.Team))
+		name = ptr.Ptr(s.Main.Config.FormatBotDisplayname(botInfo, &s.BootResp.Team.TeamInfo))
 		avatar = makeAvatar(botInfo.Icons.Image72, botInfo.Icons.Image72)
 		isBot = true
 	}

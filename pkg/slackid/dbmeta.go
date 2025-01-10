@@ -22,7 +22,9 @@ import (
 
 type PortalMetadata struct {
 	// Only present for team portals, not channels
-	TeamDomain string `json:"team_domain"`
+	TeamDomain  string `json:"team_domain,omitempty"`
+	EditMaxAge  *int   `json:"edit_max_age,omitempty"`
+	AllowDelete *bool  `json:"allow_delete,omitempty"`
 }
 
 type GhostMetadata struct {

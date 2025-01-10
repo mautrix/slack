@@ -189,7 +189,9 @@ func (s *SlackClient) Connect(ctx context.Context) {
 		}
 		bootResp = &slack.ClientUserBootResponse{
 			Self: *userResp,
-			Team: *teamResp,
+			Team: slack.BootTeam{
+				TeamInfo: *teamResp,
+			},
 		}
 	}
 	err := s.connect(ctx, bootResp)

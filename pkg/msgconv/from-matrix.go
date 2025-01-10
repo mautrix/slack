@@ -143,14 +143,16 @@ func (mc *MessageConverter) ToSlack(
 			caption = content.Body
 			captionHTML = content.FormattedBody
 		}
-		if content.MSC3245Voice != nil && ffmpeg.Supported() {
+		if content.MSC3245Voice != nil && content.Info.MimeType != "audio/webm; codecs=opus" && ffmpeg.Supported() {
 			data, err = ffmpeg.ConvertBytes(ctx, data, ".webm", []string{}, []string{"-c:a", "copy"}, content.Info.MimeType)
 			if err != nil {
 				log.Err(err).Msg("Failed to convert voice message")
 				return nil, ErrMediaConvertFailed
 			}
 			filename += ".webm"
-			content.Info.MimeType = "audio/webm;codecs=opus"
+			content.Info.MimeType = "audio/webm; codecs=opus"
+			subtype = "slack_audio"
+		} else if content.MSC3245Voice != nil && content.Info.MimeType == "audio/webm; codecs=opus" {
 			subtype = "slack_audio"
 		}
 		_, channelID := slackid.ParsePortalID(portal.ID)

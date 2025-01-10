@@ -18,8 +18,16 @@ package connector
 
 import (
 	"context"
+	"strconv"
+	"time"
 
+	"go.mau.fi/util/ffmpeg"
+	"go.mau.fi/util/jsontime"
+	"go.mau.fi/util/ptr"
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/event"
+
+	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
 
 func (s *SlackConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities {
@@ -30,25 +38,139 @@ func (s *SlackConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities 
 	}
 }
 
-var roomCaps = &bridgev2.NetworkRoomCapabilities{
-	FormattedText:          true,
-	UserMentions:           true,
-	RoomMentions:           true,
-	LocationMessages:       false,
-	Captions:               true,
-	MaxTextLength:          40000,
-	MaxCaptionLength:       40000,
-	Threads:                true,
-	Replies:                false,
-	Edits:                  true,
-	EditMaxAge:             0, // TODO workspaces can have edit max age limits
-	Deletes:                true,
-	DefaultFileRestriction: &bridgev2.FileRestriction{MaxSize: 1 * 1000 * 1000 * 1000},
-	ReadReceipts:           false,
-	Reactions:              true,
-	ReactionCount:          0, // unlimited
+func (s *SlackConnector) GetBridgeInfoVersion() (info, caps int) {
+	return 1, 1
 }
 
-func (s *SlackClient) GetCapabilities(ctx context.Context, portal *bridgev2.Portal) *bridgev2.NetworkRoomCapabilities {
-	return roomCaps
+func supportedIfFFmpeg() event.CapabilitySupportLevel {
+	if ffmpeg.Supported() {
+		return event.CapLevelPartialSupport
+	}
+	return event.CapLevelRejected
+}
+
+func capID() string {
+	base := "fi.mau.slack.capabilities.2025_01_10"
+	if ffmpeg.Supported() {
+		return base + "+ffmpeg"
+	}
+	return base
+}
+
+const MaxFileSize = 1 * 1000 * 1000 * 1000
+const MaxTextLength = 40000
+
+var roomCaps = &event.RoomFeatures{
+	ID: capID(),
+	Formatting: event.FormattingFeatureMap{
+		event.FmtBold:               event.CapLevelFullySupported,
+		event.FmtItalic:             event.CapLevelFullySupported,
+		event.FmtStrikethrough:      event.CapLevelFullySupported,
+		event.FmtInlineCode:         event.CapLevelFullySupported,
+		event.FmtCodeBlock:          event.CapLevelFullySupported,
+		event.FmtSyntaxHighlighting: event.CapLevelDropped,
+		event.FmtBlockquote:         event.CapLevelFullySupported,
+		event.FmtInlineLink:         event.CapLevelFullySupported,
+		event.FmtUserLink:           event.CapLevelFullySupported,
+		event.FmtRoomLink:           event.CapLevelFullySupported,
+		event.FmtEventLink:          event.CapLevelUnsupported,
+		event.FmtAtRoomMention:      event.CapLevelFullySupported,
+		event.FmtUnorderedList:      event.CapLevelFullySupported,
+		event.FmtOrderedList:        event.CapLevelFullySupported,
+		event.FmtListStart:          event.CapLevelFullySupported,
+		event.FmtListJumpValue:      event.CapLevelDropped,
+		event.FmtCustomEmoji:        event.CapLevelFullySupported,
+	},
+	File: event.FileFeatureMap{
+		event.MsgImage: {
+			MimeTypes: map[string]event.CapabilitySupportLevel{
+				"image/jpeg": event.CapLevelFullySupported,
+				"image/png":  event.CapLevelFullySupported,
+				"image/gif":  event.CapLevelFullySupported,
+				"image/webp": event.CapLevelFullySupported,
+			},
+			Caption:          event.CapLevelFullySupported,
+			MaxCaptionLength: MaxTextLength,
+			MaxSize:          MaxFileSize,
+		},
+		event.MsgVideo: {
+			MimeTypes: map[string]event.CapabilitySupportLevel{
+				"video/mp4":  event.CapLevelFullySupported,
+				"video/webm": event.CapLevelFullySupported,
+			},
+			Caption:          event.CapLevelFullySupported,
+			MaxCaptionLength: MaxTextLength,
+			MaxSize:          MaxFileSize,
+		},
+		event.MsgAudio: {
+			MimeTypes: map[string]event.CapabilitySupportLevel{
+				"audio/mp3":  event.CapLevelFullySupported,
+				"audio/webm": event.CapLevelFullySupported,
+				"audio/wav":  event.CapLevelFullySupported,
+			},
+			Caption:          event.CapLevelFullySupported,
+			MaxCaptionLength: MaxTextLength,
+			MaxSize:          MaxFileSize,
+		},
+		event.MsgFile: {
+			MimeTypes: map[string]event.CapabilitySupportLevel{
+				// TODO Slack Connect rejects some types
+				// https://slack.com/intl/en-gb/help/articles/1500002249342-Restricted-file-types-in-Slack-Connect
+				"*/*": event.CapLevelFullySupported,
+			},
+			Caption:          event.CapLevelFullySupported,
+			MaxCaptionLength: MaxTextLength,
+			MaxSize:          MaxFileSize,
+		},
+		event.CapMsgGIF: {
+			MimeTypes: map[string]event.CapabilitySupportLevel{
+				"image/gif": event.CapLevelFullySupported,
+			},
+			Caption:          event.CapLevelFullySupported,
+			MaxCaptionLength: MaxTextLength,
+			MaxSize:          MaxFileSize,
+		},
+		event.CapMsgVoice: {
+			MimeTypes: map[string]event.CapabilitySupportLevel{
+				"audio/ogg":               supportedIfFFmpeg(),
+				"audio/webm; codecs=opus": event.CapLevelFullySupported,
+			},
+			Caption:          event.CapLevelFullySupported,
+			MaxCaptionLength: MaxTextLength,
+			MaxSize:          MaxFileSize,
+			MaxDuration:      ptr.Ptr(jsontime.S(5 * time.Minute)),
+		},
+	},
+	LocationMessage: event.CapLevelRejected,
+	MaxTextLength:   MaxTextLength,
+	Thread:          event.CapLevelFullySupported,
+	Edit:            event.CapLevelFullySupported,
+	EditMaxAge:      nil,
+	Delete:          event.CapLevelFullySupported,
+	Reaction:        event.CapLevelFullySupported,
+}
+
+func (s *SlackClient) GetCapabilities(ctx context.Context, portal *bridgev2.Portal) *event.RoomFeatures {
+	meta := &slackid.PortalMetadata{}
+	topLevel := portal.GetTopLevelParent()
+	if topLevel != nil {
+		meta = topLevel.Metadata.(*slackid.PortalMetadata)
+	}
+	caps := roomCaps
+	if meta.EditMaxAge != nil && *meta.EditMaxAge >= 0 {
+		caps = ptr.Clone(roomCaps)
+		caps.ID += "+edit_max_age=" + strconv.Itoa(*meta.EditMaxAge)
+		caps.EditMaxAge = ptr.Ptr(jsontime.S(time.Duration(*meta.EditMaxAge) * time.Minute))
+		if *meta.EditMaxAge == 0 {
+			caps.Edit = event.CapLevelRejected
+		}
+	}
+	if meta.AllowDelete != nil && !*meta.AllowDelete {
+		if caps == roomCaps {
+			caps = ptr.Clone(roomCaps)
+		}
+		caps.ID += "+disallow_delete"
+		caps.Delete = event.CapLevelRejected
+	}
+	return caps
 }
