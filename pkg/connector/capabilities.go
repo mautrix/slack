@@ -104,7 +104,7 @@ var roomCaps = &event.RoomFeatures{
 		},
 		event.MsgAudio: {
 			MimeTypes: map[string]event.CapabilitySupportLevel{
-				"audio/mp3":  event.CapLevelFullySupported,
+				"audio/mpeg": event.CapLevelFullySupported,
 				"audio/webm": event.CapLevelFullySupported,
 				"audio/wav":  event.CapLevelFullySupported,
 			},
