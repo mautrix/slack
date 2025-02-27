@@ -1,3 +1,10 @@
+# unreleased
+
+* Bumped minimum Go version to 1.23.
+* Added support for signaling supported features to clients using the
+  `com.beeper.room_features` state event.
+* Changed mention bridging to never bridge as matrix.to URLs.
+
 # v0.1.4 (2024-12-16)
 
 * Switched to new API for loading initial chats.
