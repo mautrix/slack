@@ -40,5 +40,6 @@ type UserLoginMetadata struct {
 }
 
 type MessageMetadata struct {
-	CaptionMerged bool `json:"caption_merged"`
+	CaptionMerged bool   `json:"caption_merged"`
+	LastEditTS    string `json:"last_edit_ts"`
 }

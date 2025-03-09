@@ -565,6 +565,13 @@ func (s *SlackMessage) ConvertMessage(ctx context.Context, portal *bridgev2.Port
 }
 
 func (s *SlackMessage) ConvertEdit(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, existing []*database.Message) (*bridgev2.ConvertedEdit, error) {
+	meta := existing[0].Metadata.(*slackid.MessageMetadata)
+	if meta.LastEditTS >= s.Data.SubMessage.Edited.Timestamp {
+		return nil, fmt.Errorf(
+			"%w: last bridged edit is same as or newer than this one (%s >= %s)",
+			bridgev2.ErrIgnoringRemoteEvent, meta.LastEditTS, s.Data.SubMessage.Edited.Timestamp,
+		)
+	}
 	return s.Client.Main.MsgConv.EditToMatrix(ctx, portal, intent, s.Client.UserLogin, s.Data.SubMessage, s.Data.PreviousMessage, existing), nil
 }
 

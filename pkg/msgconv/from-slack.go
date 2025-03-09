@@ -129,6 +129,7 @@ func (mc *MessageConverter) EditToMatrix(
 		}
 	}
 	editTargetPart := existing[0]
+	editTargetPart.Metadata.(*slackid.MessageMetadata).LastEditTS = msg.Edited.Timestamp
 	modifiedPart := mc.makeTextPart(ctx, msg, portal, intent)
 	captionMerged := false
 	for i, file := range msg.Files {

@@ -7,13 +7,13 @@ toolchain go1.24.0
 require (
 	github.com/lib/pq v1.10.9
 	github.com/rs/zerolog v1.33.0
-	github.com/slack-go/slack v0.15.0
+	github.com/slack-go/slack v0.16.0
 	github.com/stretchr/testify v1.10.0
 	github.com/yuin/goldmark v1.7.8
-	go.mau.fi/util v0.8.5
-	golang.org/x/net v0.35.0
+	go.mau.fi/util v0.8.6-0.20250227184636-7ff63b0b9d95
+	golang.org/x/net v0.37.0
 	gopkg.in/yaml.v3 v3.0.1
-	maunium.net/go/mautrix v0.23.2-0.20250226205639-b72caa948c18
+	maunium.net/go/mautrix v0.23.2-0.20250309171631-d83b63aeaf64
 )
 
 require (
@@ -34,13 +34,13 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	go.mau.fi/zeroconfig v0.1.3 // indirect
-	golang.org/x/crypto v0.33.0 // indirect
+	golang.org/x/crypto v0.36.0 // indirect
 	golang.org/x/exp v0.0.0-20250215185904-eff6e970281f // indirect
-	golang.org/x/sync v0.11.0 // indirect
-	golang.org/x/sys v0.30.0 // indirect
-	golang.org/x/text v0.22.0 // indirect
+	golang.org/x/sync v0.12.0 // indirect
+	golang.org/x/sys v0.31.0 // indirect
+	golang.org/x/text v0.23.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	maunium.net/go/mauflag v1.0.0 // indirect
 )
 
-replace github.com/slack-go/slack => github.com/beeper/slackgo v0.0.0-20250110160232-abcc246721a4
+replace github.com/slack-go/slack => github.com/beeper/slackgo v0.0.0-20250309192538-8fa8f3a4b11c
