@@ -29,9 +29,9 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
-	"maunium.net/go/mautrix/bridge/status"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
+	"maunium.net/go/mautrix/bridgev2/status"
 
 	"go.mau.fi/mautrix-slack/pkg/msgconv"
 	"go.mau.fi/mautrix-slack/pkg/slackid"
