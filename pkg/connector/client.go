@@ -130,9 +130,9 @@ type SlackClient struct {
 }
 
 var (
-	_ bridgev2.NetworkAPI                      = (*SlackClient)(nil)
-	_ msgconv.SlackClientProvider              = (*SlackClient)(nil)
-	_ status.StandaloneCustomBridgeStateFiller = (*SlackClient)(nil)
+	_ bridgev2.NetworkAPI         = (*SlackClient)(nil)
+	_ msgconv.SlackClientProvider = (*SlackClient)(nil)
+	_ status.BridgeStateFiller    = (*SlackClient)(nil)
 )
 
 func (s *SlackClient) GetClient() *slack.Client {
