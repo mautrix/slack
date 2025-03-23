@@ -36,3 +36,8 @@
 # v0.1.0 (2024-08-16)
 
 Initial release.
+
+Note that when upgrading from an older version, the config file will have to be
+recreated. Migrating old configs is not supported. If encryption is used, the
+`pickle_key` config option must be set to `maunium.net/go/mautrix-whatsapp` to
+be able to read the old database.
