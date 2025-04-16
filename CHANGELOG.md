@@ -1,3 +1,8 @@
+# v0.2.1 (2025-04-16)
+
+* Fixed auto-linkification in outgoing messages of links whose top-level domain
+  contains another shorter top-level domain (e.g. `.dev` which contains `.de`).
+
 # v0.2.0 (2025-03-16)
 
 * Bumped minimum Go version to 1.23.
