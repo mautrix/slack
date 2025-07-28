@@ -17,8 +17,6 @@
 package main
 
 import (
-	"net/http"
-
 	"github.com/lib/pq"
 	"maunium.net/go/mautrix/bridgev2/matrix/mxmain"
 
@@ -54,9 +52,9 @@ func main() {
 	}
 	m.PostStart = func() {
 		if m.Matrix.Provisioning != nil {
-			m.Matrix.Provisioning.Router.HandleFunc("/v1/ping", legacyProvPing).Methods(http.MethodGet)
-			m.Matrix.Provisioning.Router.HandleFunc("/v1/login", legacyProvLogin).Methods(http.MethodPost)
-			m.Matrix.Provisioning.Router.HandleFunc("/v1/logout", legacyProvLogout).Methods(http.MethodPost)
+			m.Matrix.Provisioning.Router.HandleFunc("GET /v1/ping", legacyProvPing)
+			m.Matrix.Provisioning.Router.HandleFunc("POST /v1/login", legacyProvLogin)
+			m.Matrix.Provisioning.Router.HandleFunc("POST /v1/logout", legacyProvLogout)
 		}
 	}
 	m.InitVersion(Tag, Commit, BuildTime)
