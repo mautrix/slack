@@ -486,8 +486,8 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 	}
 
 	mentions := &event.Mentions{}
+	urlPreviews := make([]*event.BeeperLinkPreview, 0)
 	var htmlText strings.Builder
-	var urlPreviews []*event.BeeperLinkPreview
 
 	htmlText.WriteString(mc.blocksToHTML(ctx, blocks, false, mentions))
 
