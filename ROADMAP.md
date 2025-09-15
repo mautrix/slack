@@ -14,7 +14,7 @@
     * [x] Message redaction
     * [x] Mark room as read
 * Slack → Matrix
-    * [ ] Message content
+    * [x] Message content
         * [x] Plain text
         * [x] Formatted text
         * [x] User pings
@@ -45,7 +45,7 @@
         * [x] On login (with token, not with password)
         * [x] When receiving message
         * [ ] When added to conversation
-    * [ ] Creating DM by inviting user to Matrix room
+    * [x] Creating DM by inviting user to Matrix room
     * [x] Using your own Matrix account for messages sent from your Slack client
     * [x] Shared channel portals between different Matrix users
-    * [ ] Using relay bot to bridge to Slack
+    * [x] Using a Slack app as a relay bot
