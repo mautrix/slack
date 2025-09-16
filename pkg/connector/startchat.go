@@ -94,12 +94,12 @@ func (s *SlackClient) ResolveIdentifier(ctx context.Context, identifier string, 
 	}, nil
 }
 
-func (s *SlackClient) CreateGroup(ctx context.Context, name string, users ...networkid.UserID) (*bridgev2.CreateChatResponse, error) {
+func (s *SlackClient) CreateGroup(ctx context.Context, params *bridgev2.GroupCreateParams) (*bridgev2.CreateChatResponse, error) {
 	if s.Client == nil {
 		return nil, bridgev2.ErrNotLoggedIn
 	}
-	plainUsers := make([]string, len(users))
-	for i, user := range users {
+	plainUsers := make([]string, len(params.Participants))
+	for i, user := range params.Participants {
 		var teamID string
 		teamID, plainUsers[i] = slackid.ParseUserID(user)
 		if teamID != s.TeamID || plainUsers[i] == "" {
@@ -108,10 +108,14 @@ func (s *SlackClient) CreateGroup(ctx context.Context, name string, users ...net
 	}
 	var resp *slack.Channel
 	var err error
-	if name != "" {
+	switch params.Type {
+	case "public-channel", "private-channel":
+		if params.Name == nil {
+			return nil, fmt.Errorf("missing name for channel")
+		}
 		resp, err = s.Client.CreateConversationContext(ctx, slack.CreateConversationParams{
-			ChannelName: name,
-			IsPrivate:   true,
+			ChannelName: params.Name.Name,
+			IsPrivate:   params.Type == "private-channel",
 			TeamID:      s.TeamID,
 		})
 		if err != nil {
@@ -121,13 +125,21 @@ func (s *SlackClient) CreateGroup(ctx context.Context, name string, users ...net
 		if err != nil {
 			return nil, fmt.Errorf("failed to invite users: %w", err)
 		}
-	} else {
+	case "group":
 		resp, _, _, err = s.Client.OpenConversationContext(ctx, &slack.OpenConversationParameters{
 			ReturnIM: true,
 			Users:    plainUsers,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to open conversation: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("unrecognized group type %q", params.Type)
+	}
+	if params.Topic != nil {
+		resp, err = s.Client.SetTopicOfConversationContext(ctx, resp.ID, params.Topic.Topic)
+		if err != nil {
+			return nil, fmt.Errorf("failed to set topic: %w", err)
 		}
 	}
 	chatInfo, err := s.wrapChatInfo(ctx, resp, true)

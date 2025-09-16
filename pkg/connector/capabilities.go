@@ -35,6 +35,31 @@ func (s *SlackConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities 
 		// GetUserInfo has an internal rate limit of 1 fetch per 24 hours,
 		// so we're fine to tell the bridge to fetch user info all the time.
 		AggressiveUpdateInfo: true,
+		Provisioning: bridgev2.ProvisioningCapabilities{
+			ResolveIdentifier: bridgev2.ResolveIdentifierCapabilities{
+				CreateDM:    true,
+				LookupEmail: true,
+				ContactList: false, // TODO allow fetching all users in a workspace? (requires pagination)
+				Search:      true,
+			},
+			GroupCreation: map[string]bridgev2.GroupTypeCapabilities{
+				"public-channel": {
+					TypeDescription: "Public channel",
+					Name:            bridgev2.GroupFieldCapability{Allowed: true, Required: true, MinLength: 1, MaxLength: 80},
+					Topic:           bridgev2.GroupFieldCapability{Allowed: true},
+				},
+				"private-channel": {
+					TypeDescription: "Private channel",
+					Name:            bridgev2.GroupFieldCapability{Allowed: true, Required: true, MinLength: 1, MaxLength: 80},
+					Topic:           bridgev2.GroupFieldCapability{Allowed: true},
+				},
+				"group": {
+					TypeDescription: "Group DM",
+					Participants:    bridgev2.GroupFieldCapability{Allowed: true, Required: true, MinLength: 2, MaxLength: 8},
+					Topic:           bridgev2.GroupFieldCapability{Allowed: true},
+				},
+			},
+		},
 	}
 }
 
