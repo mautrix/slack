@@ -41,17 +41,20 @@ import (
 
 const ChatInfoCacheExpiry = 1 * time.Hour
 
-func (s *SlackClient) fetchChatInfoWithCache(ctx context.Context, channelID string) (*slack.Channel, error) {
+func (s *SlackClient) fetchChatInfoWithCache(ctx context.Context, channelID string, onlyIfNotAttempted bool) (*slack.Channel, error) {
 	s.chatInfoCacheLock.Lock()
 	defer s.chatInfoCacheLock.Unlock()
 	if cached, ok := s.chatInfoCache[channelID]; ok && time.Since(cached.ts) < ChatInfoCacheExpiry {
 		return cached.data, nil
+	} else if onlyIfNotAttempted && s.chatInfoFetchAttempted[channelID] {
+		return nil, fmt.Errorf("chat info fetch already attempted for channel %s", channelID)
 	}
 	info, err := s.Client.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
 		ChannelID:         channelID,
 		IncludeLocale:     true,
 		IncludeNumMembers: true,
 	})
+	s.chatInfoFetchAttempted[channelID] = true
 	if err != nil {
 		return nil, err
 	}
@@ -60,6 +63,19 @@ func (s *SlackClient) fetchChatInfoWithCache(ctx context.Context, channelID stri
 		data: info,
 	}
 	return info, nil
+}
+
+func (s *SlackClient) GetChannelInfoForMention(ctx context.Context, channelID string) (*slack.Channel, *bridgev2.Portal, error) {
+	info, err := s.fetchChatInfoWithCache(ctx, channelID, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	portal, err := s.UserLogin.Bridge.GetPortalByKey(ctx, s.makePortalKey(info))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get portal for channel %s: %w", channelID, err)
+	}
+	//portal.UpdateInfo(ctx, s.wrapChatInfo(ctx, info, false), s.UserLogin, nil, time.Time{})
+	return info, portal, nil
 }
 
 func (s *SlackClient) fetchChannelMembers(ctx context.Context, channelID string, limit int) (output map[networkid.UserID]bridgev2.ChatMember) {
@@ -232,7 +248,7 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 }
 
 func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, isNew bool) (*bridgev2.ChatInfo, error) {
-	info, err := s.fetchChatInfoWithCache(ctx, channelID)
+	info, err := s.fetchChatInfoWithCache(ctx, channelID, false)
 	if err != nil {
 		return nil, err
 	} else if isNew && info.IsChannel && !info.IsMember {

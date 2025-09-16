@@ -340,7 +340,7 @@ func (s *SlackClient) makeEventMeta(ctx context.Context, channelID string, chann
 			return
 		} else if meta.PortalKey.IsEmpty() {
 			var ch *slack.Channel
-			ch, err = s.fetchChatInfoWithCache(ctx, channelID)
+			ch, err = s.fetchChatInfoWithCache(ctx, channelID, false)
 			if err != nil {
 				err = fmt.Errorf("failed to fetch channel info: %w", err)
 				return
@@ -566,6 +566,7 @@ func (s *SlackMessage) ConvertMessage(ctx context.Context, portal *bridgev2.Port
 
 func (s *SlackMessage) ConvertEdit(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, existing []*database.Message) (*bridgev2.ConvertedEdit, error) {
 	meta := existing[0].Metadata.(*slackid.MessageMetadata)
+	// TODO this can panic?
 	if meta.LastEditTS >= s.Data.SubMessage.Edited.Timestamp {
 		return nil, fmt.Errorf(
 			"%w: last bridged edit is same as or newer than this one (%s >= %s)",

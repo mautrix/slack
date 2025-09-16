@@ -75,9 +75,10 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 			TeamID:     teamID,
 			IsRealUser: strings.HasPrefix(meta.Token, "xoxs-") || strings.HasPrefix(meta.Token, "xoxc-"),
 
-			chatInfoCache:   make(map[string]chatInfoCacheEntry),
-			lastReadCache:   make(map[string]string),
-			userResyncQueue: make(chan *bridgev2.Ghost, 16),
+			chatInfoCache:          make(map[string]chatInfoCacheEntry),
+			chatInfoFetchAttempted: make(map[string]bool),
+			lastReadCache:          make(map[string]string),
+			userResyncQueue:        make(chan *bridgev2.Ghost, 16),
 		}
 		if sc.IsRealUser {
 			sc.RTM = client.NewRTM()
@@ -123,10 +124,11 @@ type SlackClient struct {
 	userResyncQueue chan *bridgev2.Ghost
 	initialConnect  time.Time
 
-	chatInfoCache     map[string]chatInfoCacheEntry
-	chatInfoCacheLock sync.Mutex
-	lastReadCache     map[string]string
-	lastReadCacheLock sync.Mutex
+	chatInfoCache          map[string]chatInfoCacheEntry
+	chatInfoFetchAttempted map[string]bool
+	chatInfoCacheLock      sync.Mutex
+	lastReadCache          map[string]string
+	lastReadCacheLock      sync.Mutex
 }
 
 var (
