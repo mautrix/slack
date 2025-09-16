@@ -65,17 +65,17 @@ func (s *SlackClient) fetchChatInfoWithCache(ctx context.Context, channelID stri
 	return info, nil
 }
 
-func (s *SlackClient) GetChannelInfoForMention(ctx context.Context, channelID string) (*slack.Channel, *bridgev2.Portal, error) {
+func (s *SlackClient) GetChannelInfoForMention(ctx context.Context, channelID string) (string, *bridgev2.Portal, error) {
 	info, err := s.fetchChatInfoWithCache(ctx, channelID, true)
 	if err != nil {
-		return nil, nil, err
+		return "", nil, err
 	}
 	portal, err := s.UserLogin.Bridge.GetPortalByKey(ctx, s.makePortalKey(info))
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get portal for channel %s: %w", channelID, err)
+		return "", nil, fmt.Errorf("failed to get portal for channel %s: %w", channelID, err)
 	}
 	//portal.UpdateInfo(ctx, s.wrapChatInfo(ctx, info, false), s.UserLogin, nil, time.Time{})
-	return info, portal, nil
+	return s.formatChannelName(info), portal, nil
 }
 
 func (s *SlackClient) fetchChannelMembers(ctx context.Context, channelID string, limit int) (output map[networkid.UserID]bridgev2.ChatMember) {
@@ -228,11 +228,7 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 	members.TotalMemberCount = info.NumMembers
 	var name *string
 	if roomType != database.RoomTypeDM || len(members.MemberMap) == 1 {
-		name = ptr.Ptr(s.Main.Config.FormatChannelName(&ChannelNameParams{
-			Channel:      info,
-			Team:         &s.BootResp.Team.TeamInfo,
-			IsNoteToSelf: info.IsIM && info.User == s.UserID,
-		}))
+		name = ptr.Ptr(s.formatChannelName(info))
 	}
 	return &bridgev2.ChatInfo{
 		Name:         name,
@@ -245,6 +241,14 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 		UserLocal:    userLocal,
 		CanBackfill:  true,
 	}, nil
+}
+
+func (s *SlackClient) formatChannelName(info *slack.Channel) string {
+	return s.Main.Config.FormatChannelName(&ChannelNameParams{
+		Channel:      info,
+		Team:         &s.BootResp.Team.TeamInfo,
+		IsNoteToSelf: info.IsIM && info.User == s.UserID,
+	})
 }
 
 func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, isNew bool) (*bridgev2.ChatInfo, error) {

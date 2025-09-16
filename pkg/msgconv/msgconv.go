@@ -55,7 +55,7 @@ const (
 type SlackClientProvider interface {
 	GetClient() *slack.Client
 	GetEmoji(context.Context, string) (string, bool)
-	GetChannelInfoForMention(context.Context, string) (*slack.Channel, *bridgev2.Portal, error)
+	GetChannelInfoForMention(context.Context, string) (string, *bridgev2.Portal, error)
 }
 
 func (mc *MessageConverter) GetMentionedUserInfo(ctx context.Context, userID string) (mxid id.UserID, name string) {
@@ -90,12 +90,9 @@ func (mc *MessageConverter) GetMentionedRoomInfo(ctx context.Context, channelID 
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to get mentioned portal")
 		return
 	} else if portal == nil || portal.Name == "" {
-		var info *slack.Channel
-		info, _, err = source.Client.(SlackClientProvider).GetChannelInfoForMention(ctx, channelID)
+		name, _, err = source.Client.(SlackClientProvider).GetChannelInfoForMention(ctx, channelID)
 		if err != nil {
 			zerolog.Ctx(ctx).Err(err).Msg("Failed to get info of mentioned channel")
-		} else if info != nil {
-			return "", "", info.Name
 		}
 		return
 	} else {
