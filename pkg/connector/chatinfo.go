@@ -49,6 +49,7 @@ func (s *SlackClient) fetchChatInfoWithCache(ctx context.Context, channelID stri
 	} else if onlyIfNotAttempted && s.chatInfoFetchAttempted[channelID] {
 		return nil, fmt.Errorf("chat info fetch already attempted for channel %s", channelID)
 	}
+	zerolog.Ctx(ctx).Debug().Str("channel_id", channelID).Msg("Fetching channel info")
 	info, err := s.Client.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
 		ChannelID:         channelID,
 		IncludeLocale:     true,
@@ -58,6 +59,7 @@ func (s *SlackClient) fetchChatInfoWithCache(ctx context.Context, channelID stri
 	if err != nil {
 		return nil, err
 	}
+	zerolog.Ctx(ctx).Trace().Any("info", info).Msg("Fetched channel info")
 	s.chatInfoCache[channelID] = chatInfoCacheEntry{
 		ts:   time.Now(),
 		data: info,
