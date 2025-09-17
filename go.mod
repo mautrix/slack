@@ -13,7 +13,7 @@ require (
 	go.mau.fi/util v0.9.1
 	golang.org/x/net v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
-	maunium.net/go/mautrix v0.25.1
+	maunium.net/go/mautrix v0.25.2-0.20250917184543-35ac4fcb8d91
 )
 
 require (
