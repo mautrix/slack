@@ -336,6 +336,8 @@ func wrapMemberChange(meta *SlackEventMeta, sender bridgev2.EventSender, newMemb
 func (s *SlackClient) makeEventMeta(ctx context.Context, channelID string, channel *slack.Channel, senderID, timestamp string) (meta SlackEventMeta, err error) {
 	if channel != nil {
 		meta.PortalKey = s.makePortalKey(channel)
+	} else if s.Main.br.Config.SplitPortals {
+		meta.PortalKey = slackid.MakePortalKey(s.TeamID, channelID, s.UserLogin.ID, true)
 	} else {
 		meta.PortalKey, err = s.UserLogin.Bridge.FindPortalReceiver(ctx, slackid.MakePortalID(s.TeamID, channelID), s.UserLogin.ID)
 		if err != nil {
