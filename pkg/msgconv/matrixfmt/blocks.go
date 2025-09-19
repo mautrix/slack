@@ -208,7 +208,7 @@ func (parser *HTMLParser) listToElement(node *html.Node, ctx Context) []slack.Ri
 		border = 1
 	}
 	var output []slack.RichTextElement
-	var elements []slack.RichTextSection
+	var elements []slack.RichTextElement
 	for child := node.FirstChild; child != nil; child = child.NextSibling {
 		if child.Type != html.ElementNode || child.Data != "li" {
 			continue

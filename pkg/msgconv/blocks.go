@@ -365,7 +365,7 @@ func (mc *MessageConverter) renderSlackRichTextLists(
 				} else {
 					into.WriteString("<li>")
 				}
-				into.WriteString(mc.renderSlackRichTextElement(ctx, 1, &listItem, mentions))
+				into.WriteString(mc.renderSlackRichTextElement(ctx, 1, listItem, mentions))
 				if j < len(list.Elements)-1 {
 					into.WriteString("</li>")
 				}

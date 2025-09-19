@@ -26,7 +26,6 @@ import (
 	"net/http"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -80,7 +79,7 @@ func (mc *MessageConverter) ToMatrix(
 		if err != nil {
 			zerolog.Ctx(ctx).Err(err).Msg("Failed to render image block")
 		} else {
-			part.ID = slackid.MakePartID(slackid.PartTypeAttachment, len(msg.Files)+i, strconv.Itoa(att.ID))
+			part.ID = slackid.MakePartID(slackid.PartTypeAttachment, len(msg.Files)+i, att.IDString())
 			output.Parts = append(output.Parts, part)
 		}
 	}
@@ -119,9 +118,8 @@ func (mc *MessageConverter) EditToMatrix(
 		existingMap[part.PartID] = part
 		partType, _, innerPartID, ok := slackid.ParsePartID(part.PartID)
 		if ok && partType == slackid.PartTypeAttachment {
-			innerPartIDInt, _ := strconv.Atoi(innerPartID)
 			attachmentStillExists := slices.ContainsFunc(msg.Attachments, func(attachment slack.Attachment) bool {
-				return attachment.ID == innerPartIDInt
+				return attachment.IDString() == innerPartID
 			})
 			if !attachmentStillExists {
 				output.DeletedParts = append(output.DeletedParts, part)

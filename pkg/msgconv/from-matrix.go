@@ -178,7 +178,7 @@ func (mc *MessageConverter) ToSlack(
 				log.Err(err).Msg("Failed to get file upload URL")
 				return nil, ErrMediaUploadFailed
 			}
-			err = client.UploadToURL(ctx, resp, content.Info.MimeType, data)
+			err = client.UploadToURLB(ctx, resp, content.Info.MimeType, data)
 			if err != nil {
 				log.Err(err).Msg("Failed to upload file")
 				return nil, ErrMediaUploadFailed
