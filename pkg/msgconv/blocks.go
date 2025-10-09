@@ -68,7 +68,7 @@ func (mc *MessageConverter) renderImageBlock(ctx context.Context, portal *bridge
 	if err != nil {
 		return nil, fmt.Errorf("failed to download media: %w", err)
 	}
-	filename := path.Base(imageURL)
+	filename := strings.Split(path.Base(imageURL), "?")[0]
 	mimetype := http.DetectContentType(bytes)
 	content := event.MessageEventContent{
 		MsgType: event.MsgImage,
