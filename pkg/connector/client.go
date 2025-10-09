@@ -556,6 +556,7 @@ func (s *SlackClient) IsThisUser(ctx context.Context, userID networkid.UserID) b
 }
 
 func (s *SlackClient) FillBridgeState(state status.BridgeState) status.BridgeState {
+	state.RemoteID = networkid.UserLoginID(s.TeamID)
 	if state.Info == nil {
 		state.Info = make(map[string]any)
 	}
