@@ -1,3 +1,16 @@
+# v25.10 (unreleased)
+
+* Switched to calendar versioning.
+* Added automatic fetching of channel info when parsing channel mentions, so
+  the mention is converted to the channel name instead of showing the raw ID.
+* Fixed file name of external images (like gifs) bridged from Slack
+  (thanks to [@twouters] in [#70]).
+* The deletion of the legacy provisioning API was postponed, but they are
+  still deprecated.
+
+[@twouters]: https://github.com/twouters
+[#70]: https://github.com/mautrix/slack/pull/70
+
 # v0.2.3 (2025-08-16)
 
 * Deprecated legacy provisioning API. The `/_matrix/provision/v1` endpoints will
