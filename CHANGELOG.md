@@ -1,4 +1,4 @@
-# v25.10 (unreleased)
+# v25.10
 
 * Switched to calendar versioning.
 * Added automatic fetching of channel info when parsing channel mentions, so
