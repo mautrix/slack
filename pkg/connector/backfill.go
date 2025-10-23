@@ -106,7 +106,12 @@ func (s *SlackClient) FetchMessages(ctx context.Context, params bridgev2.FetchMe
 			maxMsgID = msg.Timestamp
 		}
 	}
-	slices.Reverse(convertedMessages)
+
+	// Reverse converted messages order for non-thread messages.
+	if params.ThreadRoot == "" {
+		slices.Reverse(convertedMessages)
+	}
+
 	lastRead := s.getLastReadCache(channelID)
 	return &bridgev2.FetchMessagesResponse{
 		Messages: convertedMessages,
