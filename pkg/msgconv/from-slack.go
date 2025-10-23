@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gabriel-vasile/mimetype"
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
 	"go.mau.fi/util/exhttp"
@@ -268,7 +269,7 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 	}
 	convertAudio := file.SubType == "slack_audio" && ffmpeg.Supported()
 	needsMediaSize := content.Info.Width == 0 && content.Info.Height == 0 && strings.HasPrefix(content.Info.MimeType, "image/")
-	requireFile := convertAudio || needsMediaSize
+	requireFile := convertAudio || needsMediaSize || content.Info.MimeType == ""
 	var retErr *bridgev2.ConvertedMessagePart
 	reuploadFunc := func(dest io.Writer) (res *bridgev2.FileStreamResult, err error) {
 		res = &bridgev2.FileStreamResult{
@@ -300,6 +301,19 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 			retErr = makeErrorMessage(partID, "Failed to download file from Slack")
 			return
 		}
+		if content.Info.MimeType == "" {
+			destFile := dest.(*os.File)
+			_, err = destFile.Seek(0, io.SeekStart)
+			if err != nil {
+				log.Err(err).Msg("Failed to seek to start of temp file to detect mimetype")
+			} else if mim, err := mimetype.DetectReader(destFile); err != nil {
+				log.Err(err).Msg("Failed to detect mimetype")
+			} else {
+				content.Info.MimeType = mim.String()
+				res.MimeType = mim.String()
+				content.MsgType = mimeToMsgType(mim.String())
+			}
+		}
 		if convertAudio {
 			destFile := dest.(*os.File)
 			_ = destFile.Close()
@@ -323,6 +337,7 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 			}
 			content.Info.MimeType = "audio/ogg"
 			content.Body += ".ogg"
+			content.MsgType = event.MsgAudio
 			res.MimeType = "audio/ogg"
 			res.FileName += ".ogg"
 			if file.AudioWaveSamples == nil {
@@ -414,15 +429,19 @@ func convertSlackFileMetadata(file *slack.File) event.MessageEventContent {
 		content.Body += exmime.ExtensionFromMimetype(file.Mimetype)
 	}
 
-	if strings.HasPrefix(file.Mimetype, "image") {
-		content.MsgType = event.MsgImage
-	} else if strings.HasPrefix(file.Mimetype, "video") {
-		content.MsgType = event.MsgVideo
-	} else if strings.HasPrefix(file.Mimetype, "audio") {
-		content.MsgType = event.MsgAudio
-	} else {
-		content.MsgType = event.MsgFile
-	}
+	content.MsgType = mimeToMsgType(file.Mimetype)
 
 	return content
+}
+
+func mimeToMsgType(mime string) event.MessageType {
+	if strings.HasPrefix(mime, "image/") {
+		return event.MsgImage
+	} else if strings.HasPrefix(mime, "video/") {
+		return event.MsgVideo
+	} else if strings.HasPrefix(mime, "audio/") {
+		return event.MsgAudio
+	} else {
+		return event.MsgFile
+	}
 }

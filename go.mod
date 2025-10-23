@@ -5,6 +5,7 @@ go 1.24.0
 toolchain go1.25.3
 
 require (
+	github.com/gabriel-vasile/mimetype v1.4.10
 	github.com/lib/pq v1.10.9
 	github.com/rs/zerolog v1.34.0
 	github.com/slack-go/slack v0.16.0
