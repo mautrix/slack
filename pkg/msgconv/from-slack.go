@@ -31,6 +31,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
+	"go.mau.fi/util/exhttp"
 	"go.mau.fi/util/exmime"
 	"go.mau.fi/util/ffmpeg"
 	"go.mau.fi/util/ptr"
@@ -269,8 +270,7 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 	needsMediaSize := content.Info.Width == 0 && content.Info.Height == 0 && strings.HasPrefix(content.Info.MimeType, "image/")
 	requireFile := convertAudio || needsMediaSize
 	var retErr *bridgev2.ConvertedMessagePart
-	var uploadErr error
-	content.URL, content.File, uploadErr = intent.UploadMediaStream(ctx, portal.MXID, int64(file.Size), requireFile, func(dest io.Writer) (res *bridgev2.FileStreamResult, err error) {
+	reuploadFunc := func(dest io.Writer) (res *bridgev2.FileStreamResult, err error) {
 		res = &bridgev2.FileStreamResult{
 			ReplacementFile: "",
 			FileName:        file.Name,
@@ -280,7 +280,11 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 			err = client.GetFileContext(ctx, url, &doctypeCheckingWriteProxy{Writer: dest})
 			if errors.Is(err, errHTMLFile) {
 				log.Warn().Msg("Received HTML file from Slack, retrying in 5 seconds")
-				time.Sleep(5 * time.Second)
+				select {
+				case <-time.After(5 * time.Second):
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
 				err = client.GetFileContext(ctx, url, dest)
 			}
 		} else if file.PermalinkPublic != "" {
@@ -342,7 +346,24 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 			}
 		}
 		return
-	})
+	}
+	var uploadErr error
+RetryLoop:
+	for retryCount := 0; ; retryCount++ {
+		content.URL, content.File, uploadErr = intent.UploadMediaStream(ctx, portal.MXID, int64(file.Size), requireFile, reuploadFunc)
+		if exhttp.IsNetworkError(uploadErr) && retryCount < 5 {
+			log.Err(uploadErr).Int("retry_count", retryCount).
+				Msg("Network error while transferring file from Slack, retrying in 5 seconds")
+			select {
+			case <-time.After(5 * time.Second):
+			case <-ctx.Done():
+				uploadErr = ctx.Err()
+				break RetryLoop
+			}
+			continue
+		}
+		break
+	}
 	if uploadErr != nil {
 		if retErr != nil {
 			return retErr
