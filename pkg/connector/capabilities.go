@@ -25,6 +25,7 @@ import (
 	"go.mau.fi/util/jsontime"
 	"go.mau.fi/util/ptr"
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/event"
 
 	"go.mau.fi/mautrix-slack/pkg/slackid"
@@ -166,6 +167,10 @@ var roomCaps = &event.RoomFeatures{
 			MaxDuration:      ptr.Ptr(jsontime.S(5 * time.Minute)),
 		},
 	},
+	State: event.StateFeatureMap{
+		event.StateRoomName.Type: {Level: event.CapLevelFullySupported},
+		event.StateTopic.Type:    {Level: event.CapLevelFullySupported},
+	},
 	LocationMessage: event.CapLevelRejected,
 	MaxTextLength:   MaxTextLength,
 	Thread:          event.CapLevelFullySupported,
@@ -175,6 +180,17 @@ var roomCaps = &event.RoomFeatures{
 	Reaction:        event.CapLevelFullySupported,
 }
 
+var dmCaps *event.RoomFeatures
+
+func init() {
+	dmCaps = ptr.Clone(roomCaps)
+	dmCaps.ID += "+dm"
+	dmCaps.State = event.StateFeatureMap{
+		// Weirdly enough, DMs and group DMs allow topics on Slack
+		event.StateTopic.Type: {Level: event.CapLevelFullySupported},
+	}
+}
+
 func (s *SlackClient) GetCapabilities(ctx context.Context, portal *bridgev2.Portal) *event.RoomFeatures {
 	meta := &slackid.PortalMetadata{}
 	topLevel := portal.GetTopLevelParent()
@@ -182,6 +198,9 @@ func (s *SlackClient) GetCapabilities(ctx context.Context, portal *bridgev2.Port
 		meta = topLevel.Metadata.(*slackid.PortalMetadata)
 	}
 	caps := roomCaps
+	if portal.RoomType == database.RoomTypeDM || portal.RoomType == database.RoomTypeGroupDM {
+		caps = dmCaps
+	}
 	if meta.EditMaxAge != nil && *meta.EditMaxAge >= 0 {
 		caps = ptr.Clone(roomCaps)
 		caps.ID += "+edit_max_age=" + strconv.Itoa(*meta.EditMaxAge)
