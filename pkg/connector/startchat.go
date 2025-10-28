@@ -44,23 +44,21 @@ func (s *SlackClient) ResolveIdentifier(ctx context.Context, identifier string, 
 	if s.Client == nil {
 		return nil, bridgev2.ErrNotLoggedIn
 	}
-	var userInfo *slack.User
-	var err error
-	if strings.ContainsRune(identifier, '@') {
-		userInfo, err = s.Client.GetUserByEmailContext(ctx, identifier)
-		// TODO return err try next for not found users?
-	} else {
-		if strings.ContainsRune(identifier, '-') {
-			var teamID string
-			teamID, identifier = slackid.ParseUserID(networkid.UserID(identifier))
-			if teamID != s.TeamID {
-				return nil, fmt.Errorf("%w: identifier does not match team", bridgev2.ErrResolveIdentifierTryNext)
-			}
-		} else {
-			identifier = strings.ToUpper(identifier)
+	if strings.ContainsRune(identifier, '-') {
+		var teamID string
+		teamID, identifier = slackid.ParseUserID(networkid.UserID(identifier))
+		if teamID != s.TeamID {
+			return nil, fmt.Errorf("%w: identifier does not match team", bridgev2.ErrResolveIdentifierTryNext)
 		}
-		userInfo, err = s.Client.GetUserInfoContext(ctx, identifier)
+	} else {
+		identifier = strings.ToUpper(identifier)
 	}
+	for _, chr := range identifier {
+		if (chr < 'A' || chr > 'Z') && (chr < '0' || chr > '9') {
+			return nil, fmt.Errorf("invalid character in identifier")
+		}
+	}
+	userInfo, err := s.Client.GetUserInfoContext(ctx, identifier)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user info: %w", err)
 	}
