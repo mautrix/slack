@@ -33,11 +33,28 @@ var (
 	_ bridgev2.UserSearchingNetworkAPI       = (*SlackClient)(nil)
 	_ bridgev2.GroupCreatingNetworkAPI       = (*SlackClient)(nil)
 	_ bridgev2.IdentifierValidatingNetwork   = (*SlackConnector)(nil)
+	_ bridgev2.GhostDMCreatingNetworkAPI     = (*SlackClient)(nil)
 )
 
 func (s *SlackConnector) ValidateUserID(id networkid.UserID) bool {
+	// Slack IDs are uppercase, but MXIDs are always lowercase, so require the input to be lowercase
+	if strings.ToLower(string(id)) != string(id) {
+		return false
+	}
 	teamID, userID := slackid.ParseUserID(id)
-	return teamID != "" && userID != ""
+	return isValidSlackID(teamID) && isValidSlackID(userID)
+}
+
+func isValidSlackID(userID string) bool {
+	if len(userID) == 0 {
+		return false
+	}
+	for _, chr := range userID {
+		if (chr < 'A' || chr > 'Z') && (chr < '0' || chr > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *SlackClient) ResolveIdentifier(ctx context.Context, identifier string, createChat bool) (*bridgev2.ResolveIdentifierResponse, error) {
@@ -53,10 +70,8 @@ func (s *SlackClient) ResolveIdentifier(ctx context.Context, identifier string, 
 	} else {
 		identifier = strings.ToUpper(identifier)
 	}
-	for _, chr := range identifier {
-		if (chr < 'A' || chr > 'Z') && (chr < '0' || chr > '9') {
-			return nil, fmt.Errorf("invalid character in identifier")
-		}
+	if !isValidSlackID(identifier) {
+		return nil, fmt.Errorf("invalid character in identifier")
 	}
 	userInfo, err := s.Client.GetUserInfoContext(ctx, identifier)
 	if err != nil {
@@ -69,26 +84,37 @@ func (s *SlackClient) ResolveIdentifier(ctx context.Context, identifier string, 
 	}
 	var chatResp *bridgev2.CreateChatResponse
 	if createChat {
-		resp, _, _, err := s.Client.OpenConversationContext(ctx, &slack.OpenConversationParameters{
-			ReturnIM: true,
-			Users:    []string{userInfo.ID},
-		})
+		chatResp, err = s.CreateChatWithGhost(ctx, ghost)
 		if err != nil {
-			return nil, fmt.Errorf("failed to open conversation: %w", err)
-		}
-		chatInfo, err := s.wrapChatInfo(ctx, resp, true)
-		if err != nil {
-			return nil, fmt.Errorf("failed to wrap chat info: %w", err)
-		}
-		chatResp = &bridgev2.CreateChatResponse{
-			PortalKey:  s.makePortalKey(resp),
-			PortalInfo: chatInfo,
+			return nil, err
 		}
 	}
 	return &bridgev2.ResolveIdentifierResponse{
 		Ghost:  ghost,
 		UserID: userID,
 		Chat:   chatResp,
+	}, nil
+}
+
+func (s *SlackClient) CreateChatWithGhost(ctx context.Context, ghost *bridgev2.Ghost) (*bridgev2.CreateChatResponse, error) {
+	teamID, identifier := slackid.ParseUserID(ghost.ID)
+	if teamID != s.TeamID {
+		return nil, fmt.Errorf("%w: identifier does not match team", bridgev2.ErrResolveIdentifierTryNext)
+	}
+	resp, _, _, err := s.Client.OpenConversationContext(ctx, &slack.OpenConversationParameters{
+		ReturnIM: true,
+		Users:    []string{identifier},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to open conversation: %w", err)
+	}
+	chatInfo, err := s.wrapChatInfo(ctx, resp, true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to wrap chat info: %w", err)
+	}
+	return &bridgev2.CreateChatResponse{
+		PortalKey:  s.makePortalKey(resp),
+		PortalInfo: chatInfo,
 	}, nil
 }
 
@@ -100,7 +126,7 @@ func (s *SlackClient) CreateGroup(ctx context.Context, params *bridgev2.GroupCre
 	for i, user := range params.Participants {
 		var teamID string
 		teamID, plainUsers[i] = slackid.ParseUserID(user)
-		if teamID != s.TeamID || plainUsers[i] == "" {
+		if teamID != s.TeamID || !isValidSlackID(plainUsers[i]) {
 			return nil, fmt.Errorf("invalid user ID %q", user)
 		}
 	}
