@@ -65,7 +65,7 @@ func (s *SlackConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities 
 }
 
 func (s *SlackConnector) GetBridgeInfoVersion() (info, caps int) {
-	return 1, 1
+	return 1, 2
 }
 
 func supportedIfFFmpeg() event.CapabilitySupportLevel {
@@ -76,7 +76,7 @@ func supportedIfFFmpeg() event.CapabilitySupportLevel {
 }
 
 func capID() string {
-	base := "fi.mau.slack.capabilities.2025_01_10"
+	base := "fi.mau.slack.capabilities.2025_10_29"
 	if ffmpeg.Supported() {
 		return base + "+ffmpeg"
 	}
