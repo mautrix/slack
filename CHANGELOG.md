@@ -1,3 +1,8 @@
+# v25.11
+
+* Added retrying for file uploads on network error.
+* Fixed media messages not being bridged correctly if the mime type is missing.
+
 # v25.10
 
 * Switched to calendar versioning.
