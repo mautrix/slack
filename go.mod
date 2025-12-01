@@ -4,6 +4,8 @@ go 1.24.0
 
 toolchain go1.25.4
 
+tool go.mau.fi/util/cmd/maubuild
+
 require (
 	github.com/gabriel-vasile/mimetype v1.4.11
 	github.com/lib/pq v1.10.9
@@ -11,10 +13,10 @@ require (
 	github.com/slack-go/slack v0.16.0
 	github.com/stretchr/testify v1.11.1
 	github.com/yuin/goldmark v1.7.13
-	go.mau.fi/util v0.9.3
+	go.mau.fi/util v0.9.4-0.20251128195053-c7fab4d88a04
 	golang.org/x/net v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
-	maunium.net/go/mautrix v0.26.1-0.20251119111538-57657d54eeac
+	maunium.net/go/mautrix v0.26.1-0.20251201150754-e22802b9bb27
 )
 
 require (
@@ -26,7 +28,7 @@ require (
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-sqlite3 v1.14.32 // indirect
-	github.com/petermattis/goid v0.0.0-20250904145737-900bdf8bb490 // indirect
+	github.com/petermattis/goid v0.0.0-20251121121749-a11dd1a45f9a // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e // indirect
@@ -35,8 +37,9 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	go.mau.fi/zeroconfig v0.2.0 // indirect
-	golang.org/x/crypto v0.44.0 // indirect
-	golang.org/x/exp v0.0.0-20251113190631-e25ba8c21ef6 // indirect
+	golang.org/x/crypto v0.45.0 // indirect
+	golang.org/x/exp v0.0.0-20251125195548-87e1e737ad39 // indirect
+	golang.org/x/mod v0.30.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
