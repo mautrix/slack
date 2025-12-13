@@ -2,21 +2,21 @@ module go.mau.fi/mautrix-slack
 
 go 1.24.0
 
-toolchain go1.25.4
+toolchain go1.25.5
 
 tool go.mau.fi/util/cmd/maubuild
 
 require (
-	github.com/gabriel-vasile/mimetype v1.4.11
+	github.com/gabriel-vasile/mimetype v1.4.12
 	github.com/lib/pq v1.10.9
 	github.com/rs/zerolog v1.34.0
 	github.com/slack-go/slack v0.16.0
 	github.com/stretchr/testify v1.11.1
 	github.com/yuin/goldmark v1.7.13
-	go.mau.fi/util v0.9.4-0.20251128195053-c7fab4d88a04
-	golang.org/x/net v0.47.0
+	go.mau.fi/util v0.9.4-0.20251211121531-f6527b4882ae
+	golang.org/x/net v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
-	maunium.net/go/mautrix v0.26.1-0.20251201150754-e22802b9bb27
+	maunium.net/go/mautrix v0.26.1-0.20251213084737-de52a753be8a
 )
 
 require (
@@ -37,12 +37,12 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	go.mau.fi/zeroconfig v0.2.0 // indirect
-	golang.org/x/crypto v0.45.0 // indirect
-	golang.org/x/exp v0.0.0-20251125195548-87e1e737ad39 // indirect
-	golang.org/x/mod v0.30.0 // indirect
-	golang.org/x/sync v0.18.0 // indirect
-	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/text v0.31.0 // indirect
+	golang.org/x/crypto v0.46.0 // indirect
+	golang.org/x/exp v0.0.0-20251209150349-8475f28825e9 // indirect
+	golang.org/x/mod v0.31.0 // indirect
+	golang.org/x/sync v0.19.0 // indirect
+	golang.org/x/sys v0.39.0 // indirect
+	golang.org/x/text v0.32.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	maunium.net/go/mauflag v1.0.0 // indirect
 )
