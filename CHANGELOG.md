@@ -1,3 +1,8 @@
+# v26.02
+
+* Bumped minimum Go version to 1.25.
+* Updated Docker image to Alpine 3.23.
+
 # v25.11
 
 * Added retrying for file uploads on network error.
