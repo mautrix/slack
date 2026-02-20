@@ -331,6 +331,7 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 	var avatar *bridgev2.Avatar
 	var extraUpdateAvatarID networkid.AvatarID
 	isBot := userID == "USLACKBOT"
+	var ep database.ExtraProfile
 	if info != nil {
 		name = ptr.Ptr(s.Main.Config.FormatDisplayname(&DisplaynameParams{
 			User: info,
@@ -354,6 +355,9 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 			extraUpdateAvatarID = avatar.ID
 			avatar = nil
 		}
+		if info.TZ != "" {
+			ep.With("m.tz", info.TZ)
+		}
 		isBot = isBot || info.IsBot || info.IsAppUser
 	} else if botInfo != nil {
 		name = ptr.Ptr(s.Main.Config.FormatBotDisplayname(botInfo, &s.BootResp.Team.TeamInfo))
@@ -361,10 +365,11 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 		isBot = true
 	}
 	return &bridgev2.UserInfo{
-		Identifiers: []string{fmt.Sprintf("slack-internal:%s", userID)},
-		Name:        name,
-		Avatar:      avatar,
-		IsBot:       &isBot,
+		Identifiers:  []string{fmt.Sprintf("slack-internal:%s", userID)},
+		Name:         name,
+		Avatar:       avatar,
+		IsBot:        &isBot,
+		ExtraProfile: ep,
 		ExtraUpdates: func(ctx context.Context, ghost *bridgev2.Ghost) bool {
 			meta := ghost.Metadata.(*slackid.GhostMetadata)
 			meta.LastSync = jsontime.UnixNow()
