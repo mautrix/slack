@@ -31,8 +31,10 @@ import (
 	"github.com/slack-go/slack"
 	"go.mau.fi/util/jsontime"
 	"go.mau.fi/util/ptr"
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
+	"maunium.net/go/mautrix/bridgev2/matrix"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/event"
 
@@ -326,16 +328,43 @@ func makeAvatar(avatarURL, slackAvatarHash string) *bridgev2.Avatar {
 	}
 }
 
+func supportsArbitraryProfileFields(specVersions *mautrix.RespVersions) bool {
+	if specVersions == nil {
+		return false
+	}
+	return specVersions.Supports(mautrix.FeatureArbitraryProfileFields) ||
+		specVersions.Supports(mautrix.FeatureUnstableProfileFields) ||
+		specVersions.Supports(mautrix.BeeperFeatureArbitraryProfileMeta)
+}
+
+func updateGhostTimezone(ctx context.Context, ghost *bridgev2.Ghost, timezone, lastTimezone string) (bool, error) {
+	asIntent, ok := ghost.Intent.(*matrix.ASIntent)
+	if !ok || asIntent.Connector == nil || !supportsArbitraryProfileFields(asIntent.Connector.SpecVersions) {
+		return false, nil
+	}
+	if timezone != "" {
+		err := asIntent.Matrix.SetProfileField(ctx, "m.tz", timezone)
+		return err == nil, err
+	}
+	if lastTimezone != "" {
+		err := asIntent.Matrix.DeleteProfileField(ctx, "m.tz")
+		return err == nil, err
+	}
+	return false, nil
+}
+
 func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *slack.Bot, ghost *bridgev2.Ghost) *bridgev2.UserInfo {
 	var name *string
 	var avatar *bridgev2.Avatar
 	var extraUpdateAvatarID networkid.AvatarID
+	var timezone string
 	isBot := userID == "USLACKBOT"
 	if info != nil {
 		name = ptr.Ptr(s.Main.Config.FormatDisplayname(&DisplaynameParams{
 			User: info,
 			Team: &s.BootResp.Team.TeamInfo,
 		}))
+		timezone = info.TZ
 		avatarURL := info.Profile.ImageOriginal
 		if avatarURL == "" && info.Profile.Image512 != "" {
 			avatarURL = info.Profile.Image512
@@ -372,6 +401,14 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 				meta.SlackUpdatedTS = int64(info.Updated)
 			} else if botInfo != nil {
 				meta.SlackUpdatedTS = int64(botInfo.Updated)
+			}
+			if info != nil && userID != s.UserID && meta.LastTimezone != timezone {
+				timezoneUpdated, err := updateGhostTimezone(ctx, ghost, timezone, meta.LastTimezone)
+				if err != nil {
+					zerolog.Ctx(ctx).Err(err).Str("slack_user_id", userID).Msg("Failed to update timezone profile field")
+				} else if timezoneUpdated {
+					meta.LastTimezone = timezone
+				}
 			}
 			if extraUpdateAvatarID != "" {
 				ghost.AvatarID = extraUpdateAvatarID
