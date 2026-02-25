@@ -85,6 +85,8 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 			StateEvent: status.StateBadCredentials,
 			Error:      "slack-invalid-auth",
 		})
+	case *slack.FatalConnectionErrorEvent:
+		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateUnknownError, Error: "slack-rtm-fatal-error"})
 	case *slack.RTMError:
 		log.Err(evt).Msg("Got RTM error")
 		s.UserLogin.BridgeState.Send(status.BridgeState{
