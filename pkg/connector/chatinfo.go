@@ -146,6 +146,8 @@ func (s *SlackClient) generateGroupDMName(ctx context.Context, members []string)
 			return "", err
 		}
 		ghost.UpdateInfoIfNecessary(ctx, s.UserLogin, bridgev2.RemoteEventUnknown)
+		// Use the ghost's name (output of displayname_template) so group DM names
+		// are consistent with individual DM names and puppet display names.
 		if ghost.Name != "" {
 			ghostNames = append(ghostNames, ghost.Name)
 		}
@@ -208,6 +210,9 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 			return nil, err
 		}
 		ghost.UpdateInfoIfNecessary(ctx, s.UserLogin, bridgev2.RemoteEventUnknown)
+		// Use the ghost's name (i.e. the output of displayname_template) as the
+		// channel name input so that channel_name_template receives the same
+		// formatted name that is displayed on the puppet.
 		info.Name = ghost.Name
 	case info.Name != "":
 		members = s.generateMemberList(ctx, info, !s.Main.Config.ParticipantSyncOnlyOnCreate || isNew)
