@@ -175,6 +175,18 @@ func (s *SlackClient) generateMemberList(ctx context.Context, info *slack.Channe
 	return
 }
 
+func (s *SlackClient) makeChannelNameHashExtraUpdates() func(ctx context.Context, portal *bridgev2.Portal) bool {
+	currentChannelHash := s.Main.Config.GetChannelNameTemplateHash()
+	return func(ctx context.Context, portal *bridgev2.Portal) bool {
+		meta := portal.Metadata.(*slackid.PortalMetadata)
+		if meta.ChannelNameTemplateHash != currentChannelHash {
+			meta.ChannelNameTemplateHash = currentChannelHash
+			return true
+		}
+		return false
+	}
+}
+
 func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isNew bool) (*bridgev2.ChatInfo, error) {
 	var members bridgev2.ChatMemberList
 	var avatar *bridgev2.Avatar
@@ -195,6 +207,7 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 		if err != nil {
 			return nil, err
 		}
+		extraUpdates = s.makeChannelNameHashExtraUpdates()
 	case info.IsIM:
 		roomType = database.RoomTypeDM
 		members.IsFull = true
@@ -214,6 +227,7 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 		// channel name input so that channel_name_template receives the same
 		// formatted name that is displayed on the puppet.
 		info.Name = ghost.Name
+		extraUpdates = s.makeChannelNameHashExtraUpdates()
 	case info.Name != "":
 		members = s.generateMemberList(ctx, info, !s.Main.Config.ParticipantSyncOnlyOnCreate || isNew)
 		if isNew && s.Main.Config.MuteChannelsByDefault {
@@ -309,9 +323,19 @@ func (s *SlackClient) GetChatInfo(ctx context.Context, portal *bridgev2.Portal) 
 		return nil, fmt.Errorf("invalid portal ID %q", portal.ID)
 	} else if channelID == "" {
 		return s.getTeamInfo(), nil
-	} else {
-		return s.fetchChatInfo(ctx, channelID, portal.MXID == "")
 	}
+	// For DM and group DM portals, invalidate the chat info cache when the
+	// combined channel name template hash has changed so the portal name gets
+	// recomputed with the updated templates.
+	if portal.RoomType == database.RoomTypeDM || portal.RoomType == database.RoomTypeGroupDM {
+		meta := portal.Metadata.(*slackid.PortalMetadata)
+		if meta.ChannelNameTemplateHash != s.Main.Config.GetChannelNameTemplateHash() {
+			s.chatInfoCacheLock.Lock()
+			delete(s.chatInfoCache, channelID)
+			s.chatInfoCacheLock.Unlock()
+		}
+	}
+	return s.fetchChatInfo(ctx, channelID, portal.MXID == "")
 }
 
 func makeAvatar(avatarURL, slackAvatarHash string) *bridgev2.Avatar {

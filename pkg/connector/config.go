@@ -47,7 +47,8 @@ type Config struct {
 	displaynameTemplate     *template.Template `yaml:"-"`
 	channelNameTemplate     *template.Template `yaml:"-"`
 	teamNameTemplate        *template.Template `yaml:"-"`
-	displaynameTemplateHash string             `yaml:"-"`
+	displaynameTemplateHash  string             `yaml:"-"`
+	channelNameTemplateHash  string             `yaml:"-"`
 }
 
 type BackfillConfig struct {
@@ -73,6 +74,10 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 	if err != nil {
 		return err
 	}
+	// The channel name for DMs depends on both displayname_template (which determines ghost.Name,
+	// used as .Name input) and channel_name_template (the outer format). Hash both together.
+	ch := sha256.Sum256([]byte(c.ChannelNameTemplate + "\x00" + c.DisplaynameTemplate))
+	c.channelNameTemplateHash = fmt.Sprintf("%x", ch[:8])
 	c.teamNameTemplate, err = template.New("team_name").Parse(c.TeamNameTemplate)
 	if err != nil {
 		return err
@@ -97,6 +102,10 @@ func (c *Config) FormatDisplayname(user *DisplaynameParams) string {
 
 func (c *Config) GetDisplaynameTemplateHash() string {
 	return c.displaynameTemplateHash
+}
+
+func (c *Config) GetChannelNameTemplateHash() string {
+	return c.channelNameTemplateHash
 }
 
 func (c *Config) FormatBotDisplayname(bot *slack.Bot, team *slack.TeamInfo) string {
