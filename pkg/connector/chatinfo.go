@@ -228,10 +228,7 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 		}
 	}
 	members.TotalMemberCount = info.NumMembers
-	var name *string
-	if roomType != database.RoomTypeDM || len(members.MemberMap) == 1 {
-		name = ptr.Ptr(s.formatChannelName(info))
-	}
+	name := ptr.Ptr(s.formatChannelName(info))
 	return &bridgev2.ChatInfo{
 		Name:         name,
 		Topic:        ptr.Ptr(info.Topic.Value),
