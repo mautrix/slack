@@ -28,8 +28,9 @@ type PortalMetadata struct {
 }
 
 type GhostMetadata struct {
-	SlackUpdatedTS int64         `json:"slack_updated_ts"`
-	LastSync       jsontime.Unix `json:"last_sync"`
+	SlackUpdatedTS   int64         `json:"slack_updated_ts"`
+	LastSync         jsontime.Unix `json:"last_sync"`
+	NameTemplateHash string        `json:"name_template_hash,omitempty"`
 }
 
 type UserLoginMetadata struct {

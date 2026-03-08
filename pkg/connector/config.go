@@ -18,6 +18,8 @@ package connector
 
 import (
 	_ "embed"
+	"crypto/sha256"
+	"fmt"
 	"strings"
 	"text/template"
 
@@ -42,9 +44,10 @@ type Config struct {
 
 	Backfill BackfillConfig `yaml:"backfill"`
 
-	displaynameTemplate *template.Template `yaml:"-"`
-	channelNameTemplate *template.Template `yaml:"-"`
-	teamNameTemplate    *template.Template `yaml:"-"`
+	displaynameTemplate     *template.Template `yaml:"-"`
+	channelNameTemplate     *template.Template `yaml:"-"`
+	teamNameTemplate        *template.Template `yaml:"-"`
+	displaynameTemplateHash string             `yaml:"-"`
 }
 
 type BackfillConfig struct {
@@ -64,6 +67,8 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 	if err != nil {
 		return err
 	}
+	h := sha256.Sum256([]byte(c.DisplaynameTemplate))
+	c.displaynameTemplateHash = fmt.Sprintf("%x", h[:8])
 	c.channelNameTemplate, err = template.New("channel_name").Parse(c.ChannelNameTemplate)
 	if err != nil {
 		return err
@@ -88,6 +93,10 @@ type DisplaynameParams struct {
 
 func (c *Config) FormatDisplayname(user *DisplaynameParams) string {
 	return executeTemplate(c.displaynameTemplate, user)
+}
+
+func (c *Config) GetDisplaynameTemplateHash() string {
+	return c.displaynameTemplateHash
 }
 
 func (c *Config) FormatBotDisplayname(bot *slack.Bot, team *slack.TeamInfo) string {

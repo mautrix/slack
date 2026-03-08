@@ -368,6 +368,7 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 		ExtraUpdates: func(ctx context.Context, ghost *bridgev2.Ghost) bool {
 			meta := ghost.Metadata.(*slackid.GhostMetadata)
 			meta.LastSync = jsontime.UnixNow()
+			meta.NameTemplateHash = s.Main.Config.GetDisplaynameTemplateHash()
 			if info != nil {
 				meta.SlackUpdatedTS = int64(info.Updated)
 			} else if botInfo != nil {
@@ -387,10 +388,15 @@ func (s *SlackClient) syncManyUsers(ctx context.Context, ghosts map[string]*brid
 		IncludeProfileOnlyUsers: true,
 		UpdatedIDs:              make(map[string]int64, len(ghosts)),
 	}
+	currentTemplateHash := s.Main.Config.GetDisplaynameTemplateHash()
 	for _, ghost := range ghosts {
 		meta := ghost.Metadata.(*slackid.GhostMetadata)
 		_, userID := slackid.ParseUserID(ghost.ID)
-		params.UpdatedIDs[userID] = meta.SlackUpdatedTS
+		lastUpdated := meta.SlackUpdatedTS
+		if meta.NameTemplateHash != currentTemplateHash {
+			lastUpdated = 0
+		}
+		params.UpdatedIDs[userID] = lastUpdated
 	}
 	zerolog.Ctx(ctx).Debug().Any("request_map", params.UpdatedIDs).Msg("Requesting user info")
 	infos, err := s.Client.GetUsersCacheContext(ctx, s.TeamID, params)
@@ -460,7 +466,8 @@ func (s *SlackClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*
 		return nil, nil
 	}
 	meta := ghost.Metadata.(*slackid.GhostMetadata)
-	if time.Since(meta.LastSync.Time) < MinGhostSyncInterval {
+	templateChanged := meta.NameTemplateHash != s.Main.Config.GetDisplaynameTemplateHash()
+	if !templateChanged && time.Since(meta.LastSync.Time) < MinGhostSyncInterval {
 		return nil, nil
 	}
 	if s.IsRealUser && (ghost.Name != "" || time.Since(s.initialConnect) < 1*time.Minute) {
