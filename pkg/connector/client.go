@@ -20,6 +20,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -46,10 +47,23 @@ func init() {
 	})
 }
 
+type wrapFuncAsRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f wrapFuncAsRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
 func makeSlackClient(log *zerolog.Logger, token, cookieToken, appToken string) *slack.Client {
+	httpClient := &http.Client{}
+	httpClient.Transport = wrapFuncAsRoundTripper(func(req *http.Request) (*http.Response, error) {
+		r := req.Clone(req.Context())
+		r.Header.Set("User-Agent", "SlackWeb/0 mautrix-slack/0 Go-http-client/2.0")
+		return http.DefaultTransport.RoundTrip(r)
+	})
 	options := []slack.Option{
 		slack.OptionLog(slackgoZerolog{Logger: log.With().Str("component", "slackgo").Logger()}),
 		slack.OptionDebug(log.GetLevel() == zerolog.TraceLevel),
+		slack.OptionHTTPClient(httpClient),
 	}
 	if cookieToken != "" {
 		options = append(options, slack.OptionCookie("d", cookieToken))
