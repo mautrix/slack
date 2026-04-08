@@ -184,13 +184,19 @@ func closingTags(out io.StringWriter, style *slack.RichTextSectionTextStyle) {
 	}
 }
 
-func (mc *MessageConverter) renderRichTextSectionElements(ctx context.Context, elements []slack.RichTextSectionElement, mentions *event.Mentions) string {
+func (mc *MessageConverter) renderRichTextSectionElements(
+	ctx context.Context, elements []slack.RichTextSectionElement, mentions *event.Mentions, plainNewlines bool,
+) string {
+	textToHTML := event.TextToHTML
+	if plainNewlines {
+		textToHTML = html.EscapeString
+	}
 	var htmlText strings.Builder
 	for _, element := range elements {
 		switch e := element.(type) {
 		case *slack.RichTextSectionTextElement:
 			openingTags(&htmlText, e.Style)
-			htmlText.WriteString(event.TextToHTML(e.Text))
+			htmlText.WriteString(textToHTML(e.Text))
 			closingTags(&htmlText, e.Style)
 		case *slack.RichTextSectionUserElement:
 			mxid, name := mc.GetMentionedUserInfo(ctx, e.UserID)
@@ -211,7 +217,7 @@ func (mc *MessageConverter) renderRichTextSectionElements(ctx context.Context, e
 				linkText = e.URL
 			}
 			openingTags(&htmlText, e.Style)
-			_, _ = fmt.Fprintf(&htmlText, `<a href="%s">%s</a>`, html.EscapeString(e.URL), event.TextToHTML(linkText))
+			_, _ = fmt.Fprintf(&htmlText, `<a href="%s">%s</a>`, html.EscapeString(e.URL), textToHTML(linkText))
 			closingTags(&htmlText, e.Style)
 		case *slack.RichTextSectionBroadcastElement:
 			mentions.Room = true
@@ -413,16 +419,16 @@ func (mc *MessageConverter) renderSlackRichTextElements(
 func (mc *MessageConverter) renderSlackRichTextElement(ctx context.Context, numElements int, element slack.RichTextElement, mentions *event.Mentions) string {
 	switch e := element.(type) {
 	case *slack.RichTextSection:
-		children := mc.renderRichTextSectionElements(ctx, e.Elements, mentions)
+		children := mc.renderRichTextSectionElements(ctx, e.Elements, mentions, false)
 		if numElements == 1 {
 			return children
 		}
 		return fmt.Sprintf("<p>%s</p>", children)
 	case *slack.RichTextPreformatted:
-		children := mc.renderRichTextSectionElements(ctx, e.Elements, mentions)
+		children := mc.renderRichTextSectionElements(ctx, e.Elements, mentions, true)
 		return fmt.Sprintf("<pre><code>%s</code></pre>", children)
 	case *slack.RichTextQuote:
-		return mc.renderRichTextSectionElements(ctx, e.Elements, mentions)
+		return mc.renderRichTextSectionElements(ctx, e.Elements, mentions, false)
 	case *slack.RichTextList:
 		panic("renderSlackRichTextElement should not be called with RichTextList")
 	default:
