@@ -146,6 +146,8 @@ func (s *SlackClient) generateGroupDMName(ctx context.Context, members []string)
 			return "", err
 		}
 		ghost.UpdateInfoIfNecessary(ctx, s.UserLogin, bridgev2.RemoteEventUnknown)
+		// Use the ghost's name (output of displayname_template) so group DM names
+		// are consistent with individual DM names and puppet display names.
 		if ghost.Name != "" {
 			ghostNames = append(ghostNames, ghost.Name)
 		}
@@ -173,6 +175,18 @@ func (s *SlackClient) generateMemberList(ctx context.Context, info *slack.Channe
 	return
 }
 
+func (s *SlackClient) makeChannelNameHashExtraUpdates() func(ctx context.Context, portal *bridgev2.Portal) bool {
+	currentChannelHash := s.Main.Config.GetChannelNameTemplateHash()
+	return func(ctx context.Context, portal *bridgev2.Portal) bool {
+		meta := portal.Metadata.(*slackid.PortalMetadata)
+		if meta.ChannelNameTemplateHash != currentChannelHash {
+			meta.ChannelNameTemplateHash = currentChannelHash
+			return true
+		}
+		return false
+	}
+}
+
 func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isNew bool) (*bridgev2.ChatInfo, error) {
 	var members bridgev2.ChatMemberList
 	var avatar *bridgev2.Avatar
@@ -193,6 +207,7 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 		if err != nil {
 			return nil, err
 		}
+		extraUpdates = s.makeChannelNameHashExtraUpdates()
 	case info.IsIM:
 		roomType = database.RoomTypeDM
 		members.IsFull = true
@@ -208,7 +223,11 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 			return nil, err
 		}
 		ghost.UpdateInfoIfNecessary(ctx, s.UserLogin, bridgev2.RemoteEventUnknown)
+		// Use the ghost's name (i.e. the output of displayname_template) as the
+		// channel name input so that channel_name_template receives the same
+		// formatted name that is displayed on the puppet.
 		info.Name = ghost.Name
+		extraUpdates = s.makeChannelNameHashExtraUpdates()
 	case info.Name != "":
 		members = s.generateMemberList(ctx, info, !s.Main.Config.ParticipantSyncOnlyOnCreate || isNew)
 		if isNew && s.Main.Config.MuteChannelsByDefault {
@@ -228,10 +247,7 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 		}
 	}
 	members.TotalMemberCount = info.NumMembers
-	var name *string
-	if roomType != database.RoomTypeDM || len(members.MemberMap) == 1 {
-		name = ptr.Ptr(s.formatChannelName(info))
-	}
+	name := ptr.Ptr(s.formatChannelName(info))
 	return &bridgev2.ChatInfo{
 		Name:         name,
 		Topic:        ptr.Ptr(info.Topic.Value),
@@ -307,9 +323,19 @@ func (s *SlackClient) GetChatInfo(ctx context.Context, portal *bridgev2.Portal) 
 		return nil, fmt.Errorf("invalid portal ID %q", portal.ID)
 	} else if channelID == "" {
 		return s.getTeamInfo(), nil
-	} else {
-		return s.fetchChatInfo(ctx, channelID, portal.MXID == "")
 	}
+	// For DM and group DM portals, invalidate the chat info cache when the
+	// combined channel name template hash has changed so the portal name gets
+	// recomputed with the updated templates.
+	if portal.RoomType == database.RoomTypeDM || portal.RoomType == database.RoomTypeGroupDM {
+		meta := portal.Metadata.(*slackid.PortalMetadata)
+		if meta.ChannelNameTemplateHash != s.Main.Config.GetChannelNameTemplateHash() {
+			s.chatInfoCacheLock.Lock()
+			delete(s.chatInfoCache, channelID)
+			s.chatInfoCacheLock.Unlock()
+		}
+	}
+	return s.fetchChatInfo(ctx, channelID, portal.MXID == "")
 }
 
 func makeAvatar(avatarURL, slackAvatarHash string) *bridgev2.Avatar {
@@ -373,6 +399,7 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 		ExtraUpdates: func(ctx context.Context, ghost *bridgev2.Ghost) bool {
 			meta := ghost.Metadata.(*slackid.GhostMetadata)
 			meta.LastSync = jsontime.UnixNow()
+			meta.NameTemplateHash = s.Main.Config.GetDisplaynameTemplateHash()
 			if info != nil {
 				meta.SlackUpdatedTS = int64(info.Updated)
 			} else if botInfo != nil {
@@ -392,10 +419,15 @@ func (s *SlackClient) syncManyUsers(ctx context.Context, ghosts map[string]*brid
 		IncludeProfileOnlyUsers: true,
 		UpdatedIDs:              make(map[string]int64, len(ghosts)),
 	}
+	currentTemplateHash := s.Main.Config.GetDisplaynameTemplateHash()
 	for _, ghost := range ghosts {
 		meta := ghost.Metadata.(*slackid.GhostMetadata)
 		_, userID := slackid.ParseUserID(ghost.ID)
-		params.UpdatedIDs[userID] = meta.SlackUpdatedTS
+		lastUpdated := meta.SlackUpdatedTS
+		if meta.NameTemplateHash != currentTemplateHash {
+			lastUpdated = 0
+		}
+		params.UpdatedIDs[userID] = lastUpdated
 	}
 	zerolog.Ctx(ctx).Debug().Any("request_map", params.UpdatedIDs).Msg("Requesting user info")
 	infos, err := s.Client.GetUsersCacheContext(ctx, s.TeamID, params)
@@ -465,7 +497,8 @@ func (s *SlackClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*
 		return nil, nil
 	}
 	meta := ghost.Metadata.(*slackid.GhostMetadata)
-	if time.Since(meta.LastSync.Time) < MinGhostSyncInterval {
+	templateChanged := meta.NameTemplateHash != s.Main.Config.GetDisplaynameTemplateHash()
+	if !templateChanged && time.Since(meta.LastSync.Time) < MinGhostSyncInterval {
 		return nil, nil
 	}
 	if s.IsRealUser && (ghost.Name != "" || time.Since(s.initialConnect) < 1*time.Minute) {
