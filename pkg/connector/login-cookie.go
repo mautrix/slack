@@ -65,12 +65,65 @@ type SlackTokenLogin struct {
 
 var _ bridgev2.LoginProcessCookies = (*SlackTokenLogin)(nil)
 
+// Picks the xoxc token from localStorage.localConfig_v2. Upstream used
+// `Object.values(teams)[0].token`, which silently picks the wrong team when
+// the webview has more than one workspace cached (e.g. after sign-in/-out
+// cycles). That stale token then fails `client.boot` with invalid_auth.
+//
+// We only resolve when we have a definitive signal identifying the team the
+// user just signed into:
+//   1. A team id appeared in localConfig_v2 that wasn't there when the
+//      webview first rendered this script (the "added since baseline" diff).
+//   2. The webview has navigated to app.slack.com/client/TXXXXX — the team
+//      id is in the URL.
+//   3. The webview is on a concrete <team>.slack.com subdomain and one of
+//      the cached teams' urls matches the current host.
+//
+// There is no timeout fallback. If none of those fire, the user hasn't
+// actually finished signing in yet — waiting is correct.
 const ExtractSlackTokenJS = `
 new Promise(resolve => {
-	let mautrixSlackTokenCheckInterval
 	let useSlackInBrowserClicked = false
+	let mautrixSlackTokenBaseline = null // Set<teamId> present when script first saw localStorage
+
+	function mautrixReadTeams() {
+		try {
+			const raw = localStorage.localConfig_v2
+			if (!raw) return []
+			const cfg = JSON.parse(raw)
+			return cfg && cfg.teams ? Object.values(cfg.teams) : []
+		} catch (e) {
+			return []
+		}
+	}
+
+	function mautrixPickTeam(teams) {
+		if (!teams || teams.length === 0) return null
+		const host = window.location.host || ""
+		const clientMatch = window.location.pathname.match(/\/client\/(T[A-Z0-9]+)/)
+		const teamIdFromUrl = clientMatch ? clientMatch[1] : null
+
+		// Strongest signal: URL names a specific team id.
+		if (teamIdFromUrl) {
+			const byId = teams.find(t => t && t.id === teamIdFromUrl)
+			if (byId) return byId
+		}
+		// Strong signal: workspace subdomain.
+		if (host && host !== "slack.com" && host !== "app.slack.com") {
+			const byHost = teams.find(t => t && t.url && String(t.url).indexOf(host) !== -1)
+			if (byHost) return byHost
+		}
+		// Diff signal: a team id appeared that wasn't in baseline — that's
+		// the workspace the user just signed into in this webview session.
+		if (mautrixSlackTokenBaseline) {
+			const added = teams.find(t => t && t.id && !mautrixSlackTokenBaseline.has(t.id))
+			if (added) return added
+		}
+		return null
+	}
+
 	function mautrixFindSlackToken() {
-		// Automatically click the "Use Slack in Browser" button
+		// Auto-click the "Use Slack in Browser" button when Slack shows it.
 		if (/\.slack\.com$/.test(window.location.host)) {
 			const link = document?.querySelector?.(".p-ssb_redirect__body")?.querySelector?.(".c-link")
 			if (link && !useSlackInBrowserClicked) {
@@ -78,14 +131,29 @@ new Promise(resolve => {
 				useSlackInBrowserClicked = true
 			}
 		}
+
+		// Snapshot baseline on first tick, regardless of whether any team is
+		// cached yet. Any team id seen later is then definitionally "new".
+		if (mautrixSlackTokenBaseline === null) {
+			const baselineTeams = mautrixReadTeams()
+			mautrixSlackTokenBaseline = new Set(
+				baselineTeams.map(t => t && t.id).filter(Boolean),
+			)
+		}
+
 		if (!localStorage.localConfig_v2?.includes("xoxc-")) {
 			return
 		}
-		const auth_token = Object.values(JSON.parse(localStorage.localConfig_v2).teams)[0].token
+		const teams = mautrixReadTeams()
+		const picked = mautrixPickTeam(teams)
+		if (!picked || !picked.token) return
+
 		window.clearInterval(mautrixSlackTokenCheckInterval)
-		resolve({ auth_token })
+		resolve({ auth_token: picked.token })
 	}
-	mautrixSlackTokenCheckInterval = window.setInterval(mautrixFindSlackToken, 1000)
+	const mautrixSlackTokenCheckInterval = window.setInterval(mautrixFindSlackToken, 1000)
+	// Run once immediately so we snapshot baseline before any login activity.
+	mautrixFindSlackToken()
 })
 `
 
