@@ -584,8 +584,22 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 	content := format.HTMLToContent(htmlText.String())
 	content.Mentions = mentions
 	content.BeeperLinkPreviews = urlPreviews
+	var extra map[string]any
+	// Preserve the raw Block Kit payload as a top-level content field so
+	// Matrix clients that understand it can render natively. The HTML
+	// fallback in `formatted_body` is unchanged — this is purely additive.
+	if mc.PreserveSlackBlocks && (len(blocks.BlockSet) > 0 || len(attachments) > 0) {
+		extra = make(map[string]any, 2)
+		if len(blocks.BlockSet) > 0 {
+			extra["fi.mau.slack.blocks"] = blocks.BlockSet
+		}
+		if len(attachments) > 0 {
+			extra["fi.mau.slack.attachments"] = attachments
+		}
+	}
 	return &bridgev2.ConvertedMessagePart{
 		Type:    event.EventMessage,
 		Content: &content,
+		Extra:   extra,
 	}, nil
 }

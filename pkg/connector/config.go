@@ -39,6 +39,7 @@ type Config struct {
 	ParticipantSyncCount        int  `yaml:"participant_sync_count"`
 	ParticipantSyncOnlyOnCreate bool `yaml:"participant_sync_only_on_create"`
 	MuteChannelsByDefault       bool `yaml:"mute_channels_by_default"`
+	PreserveSlackBlocks         bool `yaml:"preserve_slack_blocks"`
 
 	Backfill BackfillConfig `yaml:"backfill"`
 
@@ -133,5 +134,6 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Int, "participant_sync_count")
 	helper.Copy(up.Bool, "participant_sync_only_on_create")
 	helper.Copy(up.Bool, "mute_channels_by_default")
+	helper.Copy(up.Bool, "preserve_slack_blocks")
 	helper.Copy(up.Int, "backfill", "conversation_count")
 }

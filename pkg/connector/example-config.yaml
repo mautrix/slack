@@ -52,6 +52,15 @@ participant_sync_only_on_create: true
 # Should channel portals be muted by default?
 mute_channels_by_default: false
 
+# Should the raw Slack Block Kit JSON be preserved on the Matrix event?
+# When true, the Slack `blocks` array is attached to the m.room.message
+# event content under the custom key `fi.mau.slack.blocks`. This lets
+# Matrix clients that know about the field render messages natively
+# (section / divider / header / context / image, etc.). Clients that
+# don't know about it ignore it and fall back to `formatted_body`, so
+# turning this on is additive and safe.
+preserve_slack_blocks: true
+
 # Options for backfilling messages from Slack.
 backfill:
     # Number of conversations to fetch from Slack when syncing workspace.

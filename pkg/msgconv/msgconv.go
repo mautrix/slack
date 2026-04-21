@@ -43,6 +43,11 @@ type MessageConverter struct {
 
 	ServerName  string
 	MaxFileSize int
+
+	// When true, attach raw Slack Block Kit payloads to outgoing m.room.message
+	// events under `fi.mau.slack.blocks` so Matrix clients that know the field
+	// can render messages natively. Set from connector.Config.PreserveSlackBlocks.
+	PreserveSlackBlocks bool
 }
 
 type contextKey int
