@@ -319,7 +319,7 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 			_ = destFile.Close()
 			sourceMime := file.Mimetype
 			// Slack claims audio messages are webm/opus, but actually stores mp4/aac?
-			if strings.HasSuffix(url, ".mp4") {
+			if strings.HasSuffix(url, ".mp4") || strings.HasSuffix(url, ".m4a") {
 				sourceMime = "audio/mp4"
 			}
 			tempFileWithExt := destFile.Name() + exmime.ExtensionFromMimetype(sourceMime)
