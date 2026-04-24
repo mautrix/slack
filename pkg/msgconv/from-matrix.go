@@ -154,7 +154,7 @@ func (mc *MessageConverter) ToSlack(
 			filename += ".m4a"
 			content.Info.MimeType = "audio/webm; codecs=opus"
 			subtype = "slack_audio"
-		} else if content.MSC3245Voice != nil && content.Info.MimeType == "audio/webm; codecs=opus" {
+		} else if content.MSC3245Voice != nil && (content.Info.MimeType == "audio/webm; codecs=opus" || content.Info.MimeType == "audio/mp4") {
 			subtype = "slack_audio"
 			if !strings.HasSuffix(filename, ".m4a") {
 				filename += ".m4a"
