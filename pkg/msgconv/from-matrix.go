@@ -149,11 +149,16 @@ func (mc *MessageConverter) ToSlack(
 				log.Err(err).Msg("Failed to convert voice message")
 				return nil, ErrMediaConvertFailed
 			}
-			filename += ".webm"
+			// Slack web will upload a webm/opus audio file with a .m4a extension.
+			// Slack servers appear to then convert it to m4a with aac.
+			filename += ".m4a"
 			content.Info.MimeType = "audio/webm; codecs=opus"
 			subtype = "slack_audio"
 		} else if content.MSC3245Voice != nil && content.Info.MimeType == "audio/webm; codecs=opus" {
 			subtype = "slack_audio"
+			if !strings.HasSuffix(filename, ".m4a") {
+				filename += ".m4a"
+			}
 		}
 		_, channelID := slackid.ParsePortalID(portal.ID)
 		if !isRealUser {
