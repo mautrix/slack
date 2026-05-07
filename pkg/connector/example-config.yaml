@@ -19,7 +19,9 @@
 #  .Profile.Phone - The formatted phone number of the user
 displayname_template: '{{or .Profile.DisplayName .Profile.RealName .Name}}{{if .IsBot}} (bot){{end}}'
 # Channel name template for Slack channels (all types). Available variables:
-#  .Name - The name of the channel
+#  .Name - The name of the channel; for DMs (.IsIM) the other user's name as formatted by
+#          displayname_template; for group DMs (.IsMpIM) a comma-separated list of members'
+#          names, each also formatted by displayname_template
 #  .Team.Name - The name of the team the channel is in
 #  .Team.Domain - The Slack subdomain of the team the channel is in
 #  .ID - The internal ID of the channel
