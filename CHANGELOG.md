@@ -1,3 +1,7 @@
+# v26.04
+
+* Changed code block bridging to use `\n` instead of `<br>` for newlines.
+
 # v26.03
 
 * Added support for bridging profile time zone from Slack

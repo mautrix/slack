@@ -160,6 +160,7 @@ var roomCaps = &event.RoomFeatures{
 			MimeTypes: map[string]event.CapabilitySupportLevel{
 				"audio/ogg":               supportedIfFFmpeg(),
 				"audio/webm; codecs=opus": event.CapLevelFullySupported,
+				"audio/mp4":               event.CapLevelFullySupported,
 			},
 			Caption:          event.CapLevelFullySupported,
 			MaxCaptionLength: MaxTextLength,
