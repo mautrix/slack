@@ -26,11 +26,62 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
 	"go.mau.fi/mautrix-slack/pkg/connector/slackdb"
 	"go.mau.fi/mautrix-slack/pkg/emoji"
 )
+
+var _ bridgev2.StickerImportingNetworkAPI = (*SlackClient)(nil)
+
+const StickerSourceID = "slack"
+
+func (s *SlackClient) DownloadImagePack(ctx context.Context, url string) (*bridgev2.ImportedImagePack, error) {
+	if !strings.Contains(url, s.BootResp.Team.Domain) {
+		return nil, fmt.Errorf("image pack url must contain team domain (%s)", s.BootResp.Team.Domain)
+	}
+	emojiIDs, err := s.syncEmojis(ctx, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sync emojis: %w", err)
+	}
+	images := make(map[string]*event.ImagePackImage, len(emojiIDs))
+	for _, shortcode := range emojiIDs {
+		val, isImage, found := s.tryGetEmoji(ctx, shortcode, true, true)
+		if !found {
+			zerolog.Ctx(ctx).Warn().Str("shortcode", shortcode).Msg("Emoji not found during image pack download, skipping")
+		} else if isImage && val != "" {
+			images[shortcode] = &event.ImagePackImage{
+				URL: id.ContentURIString(val),
+			}
+		}
+	}
+
+	return &bridgev2.ImportedImagePack{
+		Content: &event.ImagePackEventContent{
+			Images:   images,
+			Metadata: *s.workspaceImagePackMeta(),
+		},
+		Shortcode: s.BootResp.Team.Domain,
+	}, nil
+}
+
+func (s *SlackClient) workspaceImagePackMeta() *event.ImagePackMetadata {
+	return &event.ImagePackMetadata{
+		DisplayName: s.TeamPortal.Name + " emojis",
+		AvatarURL:   s.TeamPortal.AvatarMXC,
+		Usage:       []event.ImagePackUsage{event.ImagePackUsageEmoji},
+		Attribution: "Imported from Slack workspace " + s.BootResp.Team.URL,
+		BridgedPack: &event.BridgedStickerPack{
+			Network: StickerSourceID,
+			URL:     s.BootResp.Team.URL,
+		},
+	}
+}
+
+func (s *SlackClient) ListImagePacks(ctx context.Context) ([]*event.ImagePackMetadata, error) {
+	return []*event.ImagePackMetadata{s.workspaceImagePackMeta()}, nil
+}
 
 func (s *SlackClient) handleEmojiChange(ctx context.Context, evt *slack.EmojiChangedEvent) {
 	defer s.Main.DB.Emoji.WithLock(s.TeamID)()
@@ -63,7 +114,7 @@ func (s *SlackClient) handleEmojiChange(ctx context.Context, evt *slack.EmojiCha
 		}
 	default:
 		log.Warn().Msg("Unknown emoji change subtype, resyncing emojis")
-		err := s.syncEmojis(ctx, false)
+		_, err := s.syncEmojis(ctx, false)
 		if err != nil {
 			log.Err(err).Msg("Failed to resync emojis")
 		}
@@ -155,7 +206,7 @@ func (s *SlackClient) ResyncEmojisDueToNotFound(ctx context.Context) bool {
 		return false
 	}
 	defer lock.Unlock()
-	err := s.syncEmojis(ctx, false)
+	_, err := s.syncEmojis(ctx, false)
 	if err != nil {
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to sync emojis after emoji wasn't found")
 		return false
@@ -165,27 +216,27 @@ func (s *SlackClient) ResyncEmojisDueToNotFound(ctx context.Context) bool {
 
 func (s *SlackClient) SyncEmojis(ctx context.Context) {
 	defer s.Main.DB.Emoji.WithLock(s.TeamID)()
-	err := s.syncEmojis(ctx, true)
+	_, err := s.syncEmojis(ctx, true)
 	if err != nil {
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to sync emojis")
 	}
 }
 
-func (s *SlackClient) syncEmojis(ctx context.Context, onlyIfCountMismatch bool) error {
+func (s *SlackClient) syncEmojis(ctx context.Context, onlyIfCountMismatch bool) ([]string, error) {
 	log := zerolog.Ctx(ctx).With().Str("action", "sync emojis").Logger()
 	resp, err := s.Client.GetEmojiContext(ctx)
 	if err != nil {
 		log.Err(err).Msg("Failed to fetch emoji list")
-		return err
+		return nil, err
 	}
 	if onlyIfCountMismatch {
 		emojiCount, err := s.Main.DB.Emoji.GetEmojiCount(ctx, s.TeamID)
 		if err != nil {
 			log.Err(err).Msg("Failed to get emoji count from database")
-			return nil
+			return nil, nil
 		} else if emojiCount == len(resp) {
 			log.Debug().Int("emoji_count", len(resp)).Msg("Not syncing emojis: count is already correct")
-			return nil
+			return nil, nil
 		}
 		log.Debug().
 			Int("emoji_count", len(resp)).
@@ -241,7 +292,7 @@ func (s *SlackClient) syncEmojis(ctx context.Context, onlyIfCountMismatch bool) 
 		}
 	}
 
-	return nil
+	return existingIDs, nil
 }
 
 func (s *SlackClient) tryGetEmoji(ctx context.Context, shortcode string, ensureUploaded, allowRecurse bool) (val string, isImage, found bool) {

@@ -37,6 +37,7 @@ func (s *SlackConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities 
 		// so we're fine to tell the bridge to fetch user info all the time.
 		AggressiveUpdateInfo: true,
 		Provisioning: bridgev2.ProvisioningCapabilities{
+			ImagePackImport: true,
 			ResolveIdentifier: bridgev2.ResolveIdentifierCapabilities{
 				CreateDM:    true,
 				LookupEmail: true,

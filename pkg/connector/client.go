@@ -32,6 +32,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/bridgev2/status"
+	"maunium.net/go/mautrix/id"
 
 	"go.mau.fi/mautrix-slack/pkg/msgconv"
 	"go.mau.fi/mautrix-slack/pkg/slackid"
@@ -237,6 +238,10 @@ func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientUserBoo
 	go s.SyncEmojis(ctx)
 	go s.SyncChannels(ctx)
 	return nil
+}
+
+func (s *SlackClient) GetSpaceRoom() id.RoomID {
+	return s.TeamPortal.MXID
 }
 
 func (s *SlackClient) consumeRTMEvents() {
