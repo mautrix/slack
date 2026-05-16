@@ -1,3 +1,9 @@
+# v26.05
+
+* Added support for importing all Slack workspace emojis as a Matrix image pack.
+* Fixed voice messages from Matrix showing up as blank videos on Slack.
+* Fixed bot info not being synced correctly in some cases.
+
 # v26.04
 
 * Changed code block bridging to use `\n` instead of `<br>` for newlines.
