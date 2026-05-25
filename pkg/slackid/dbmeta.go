@@ -25,11 +25,15 @@ type PortalMetadata struct {
 	TeamDomain  string `json:"team_domain,omitempty"`
 	EditMaxAge  *int   `json:"edit_max_age,omitempty"`
 	AllowDelete *bool  `json:"allow_delete,omitempty"`
+	// Hash of channel_name_template + displayname_template; used to detect when
+	// DM/group DM portal names need to be refreshed after a config change.
+	ChannelNameTemplateHash string `json:"channel_name_template_hash,omitempty"`
 }
 
 type GhostMetadata struct {
-	SlackUpdatedTS int64         `json:"slack_updated_ts"`
-	LastSync       jsontime.Unix `json:"last_sync"`
+	SlackUpdatedTS   int64         `json:"slack_updated_ts"`
+	LastSync         jsontime.Unix `json:"last_sync"`
+	NameTemplateHash string        `json:"name_template_hash,omitempty"`
 }
 
 type UserLoginMetadata struct {
