@@ -15,7 +15,7 @@ All setup and usage instructions are located on [docs.mau.fi]. Some quick links:
 * Basic usage: [Authentication](https://docs.mau.fi/bridges/go/slack/authentication.html)
 
 ### Features & Roadmap
-[ROADMAP.md](https://github.com/mautrix/slack/blob/master/ROADMAP.md)
+[ROADMAP.md](https://github.com/mautrix/slack/blob/main/ROADMAP.md)
 contains a general overview of what is supported by the bridge.
 
 ## Discussion
