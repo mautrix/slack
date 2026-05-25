@@ -48,7 +48,7 @@ func isMediaMsgtype(msgType event.MessageType) bool {
 
 type ConvertedSlackMessage struct {
 	SendReq    slack.MsgOption
-	FileUpload *slack.UploadFileV2Parameters
+	FileUpload *slack.UploadFileParameters
 	FileShare  *slack.ShareFileParams
 }
 
@@ -162,7 +162,7 @@ func (mc *MessageConverter) ToSlack(
 		}
 		_, channelID := slackid.ParsePortalID(portal.ID)
 		if !isRealUser {
-			fileUpload := &slack.UploadFileV2Parameters{
+			fileUpload := &slack.UploadFileParameters{
 				Filename:        filename,
 				Reader:          bytes.NewReader(data),
 				FileSize:        len(data),

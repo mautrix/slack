@@ -85,7 +85,7 @@ func (s *SlackClient) sendToSlack(
 		return timestamp, err
 	} else if conv.FileUpload != nil {
 		log.Debug().Msg("Uploading attachment to Slack")
-		file, err := s.Client.UploadFileV2Context(ctx, *conv.FileUpload)
+		file, err := s.Client.UploadFileContext(ctx, *conv.FileUpload)
 		if err != nil {
 			log.Err(err).Msg("Failed to upload attachment to Slack")
 			return "", err

@@ -426,7 +426,11 @@ func (mc *MessageConverter) renderSlackRichTextElement(ctx context.Context, numE
 		return fmt.Sprintf("<p>%s</p>", children)
 	case *slack.RichTextPreformatted:
 		children := mc.renderRichTextSectionElements(ctx, e.Elements, mentions, true)
-		return fmt.Sprintf("<pre><code>%s</code></pre>", children)
+		class := ""
+		if e.Language != "" {
+			class = fmt.Sprintf(` class="language-%s"`, html.EscapeString(e.Language))
+		}
+		return fmt.Sprintf("<pre><code%s>%s</code></pre>", class, children)
 	case *slack.RichTextQuote:
 		return mc.renderRichTextSectionElements(ctx, e.Elements, mentions, false)
 	case *slack.RichTextList:

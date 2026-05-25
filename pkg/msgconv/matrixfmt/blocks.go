@@ -298,12 +298,12 @@ func (parser *HTMLParser) tagToElement(node *html.Node, ctx Context) ([]slack.Ri
 	case "ol", "ul":
 		return nil, parser.listToElement(node, ctx)
 	case "pre":
-		//var language string
+		var language string
 		if node.FirstChild != nil && node.FirstChild.Type == html.ElementNode && node.FirstChild.Data == "code" {
-			//class := parser.getAttribute(node.FirstChild, "class")
-			//if strings.HasPrefix(class, "language-") {
-			//	language = class[len("language-"):]
-			//}
+			class := parser.getAttribute(node.FirstChild, "class")
+			if strings.HasPrefix(class, "language-") {
+				language = class[len("language-"):]
+			}
 			node = node.FirstChild
 		}
 		sectionElems, elems := parser.nodeAndSiblingsToElement(node.FirstChild, ctx.WithWhitespace())
@@ -311,7 +311,7 @@ func (parser *HTMLParser) tagToElement(node *html.Node, ctx Context) ([]slack.Ri
 		if ctx.TagStack.Has("blockquote") {
 			border = 1
 		}
-		elems = append([]slack.RichTextElement{slack.NewRichTextPreformatted(border, sectionElems...)}, elems...)
+		elems = append([]slack.RichTextElement{slack.NewRichTextPreformatted(border, language, sectionElems...)}, elems...)
 		return nil, elems
 	default:
 		return parser.nodeAndSiblingsToElement(node.FirstChild, ctx)

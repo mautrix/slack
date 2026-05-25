@@ -19,6 +19,8 @@ package connector
 import (
 	"context"
 
+	"github.com/slack-go/slack"
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
 
 	"go.mau.fi/mautrix-slack/pkg/connector/slackdb"
@@ -38,6 +40,7 @@ var (
 )
 
 func (s *SlackConnector) Init(bridge *bridgev2.Bridge) {
+	slack.DefaultUserAgent = mautrix.DefaultUserAgent
 	s.br = bridge
 	s.DB = slackdb.New(bridge.DB.Database, bridge.Log.With().Str("db_section", "slack").Logger())
 	s.MsgConv = msgconv.New(bridge, s.DB)
