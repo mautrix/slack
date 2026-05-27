@@ -233,10 +233,18 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 			event.StateTopic: 0,
 		},
 	}
-	if roomType == database.RoomTypeDefault && !info.IsGeneral && s.canChangeChannelName(info) {
-		powerLevels.Events[event.StateRoomName] = 0
+	if roomType == database.RoomTypeDefault && info.IsGeneral {
+		// Slack doesn't allow #general to be renamed by anyone.
+		powerLevels.Events[event.StateRoomName] = 100
 	}
 	members.PowerLevels = powerLevels
+	if selfPL := s.selfPowerLevel(info); selfPL > 0 {
+		selfUserID := slackid.MakeUserID(s.TeamID, s.UserID)
+		if selfMember, ok := members.MemberMap[selfUserID]; ok {
+			selfMember.PowerLevel = &selfPL
+			members.MemberMap[selfUserID] = selfMember
+		}
+	}
 	var name *string
 	if roomType != database.RoomTypeDM || len(members.MemberMap) == 1 {
 		name = ptr.Ptr(s.formatChannelName(info))
@@ -254,18 +262,20 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 	}, nil
 }
 
-func (s *SlackClient) canChangeChannelName(info *slack.Channel) bool {
+func (s *SlackClient) selfPowerLevel(info *slack.Channel) int {
 	if s.BootResp == nil {
-		return false
+		return 0
 	}
 	self := s.BootResp.Self
-	if self.IsRestricted || self.IsUltraRestricted {
-		return false
+	switch {
+	case self.IsPrimaryOwner, self.IsOwner:
+		return 70
+	case self.IsAdmin:
+		return 60
+	case info != nil && info.Creator == self.ID:
+		return 50
 	}
-	if self.IsAdmin || self.IsOwner || self.IsPrimaryOwner {
-		return true
-	}
-	return info.Creator == self.ID
+	return 0
 }
 
 func (s *SlackClient) formatChannelName(info *slack.Channel) string {
