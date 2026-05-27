@@ -228,6 +228,39 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 		}
 	}
 	members.TotalMemberCount = info.NumMembers
+	topicLevel := 0
+	if info.Properties != nil {
+		// Slack maps the "Posting permissions" UI to PostingRestrictedTo.Type:
+		//   empty       → Everyone
+		//   ["ra"]      → Everyone except guests
+		//   ["admin"]   → Admins only (optionally plus specific users)
+		// Topic editing follows posting permissions, so mirror that here.
+		for _, t := range info.Properties.PostingRestrictedTo.Type {
+			if t == "admin" {
+				topicLevel = 50
+				break
+			}
+		}
+	}
+	members.PowerLevels = &bridgev2.PowerLevelOverrides{
+		Events: map[event.Type]int{
+			event.StateTopic: topicLevel,
+		},
+	}
+	bumpMemberPL := func(slackUserID string, pl int) {
+		userID := slackid.MakeUserID(s.TeamID, slackUserID)
+		member, ok := members.MemberMap[userID]
+		if !ok {
+			member = bridgev2.ChatMember{EventSender: s.makeEventSender(slackUserID)}
+		}
+		if member.PowerLevel == nil || *member.PowerLevel < pl {
+			member.PowerLevel = &pl
+			members.MemberMap[userID] = member
+		}
+	}
+	if selfPL := s.selfPowerLevel(info); selfPL > 0 {
+		bumpMemberPL(s.UserID, selfPL)
+	}
 	var name *string
 	if roomType != database.RoomTypeDM || len(members.MemberMap) == 1 {
 		name = ptr.Ptr(s.formatChannelName(info))
@@ -243,6 +276,22 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 		UserLocal:    userLocal,
 		CanBackfill:  true,
 	}, nil
+}
+
+func (s *SlackClient) selfPowerLevel(info *slack.Channel) int {
+	if s.BootResp == nil {
+		return 0
+	}
+	self := s.BootResp.Self
+	switch {
+	case self.IsPrimaryOwner, self.IsOwner:
+		return 70
+	case self.IsAdmin:
+		return 60
+	case info != nil && info.Creator == self.ID:
+		return 50
+	}
+	return 0
 }
 
 func (s *SlackClient) formatChannelName(info *slack.Channel) string {
