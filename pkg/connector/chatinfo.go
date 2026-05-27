@@ -262,13 +262,6 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 	if selfPL := s.selfPowerLevel(info); selfPL > 0 {
 		bumpMemberPL(s.UserID, selfPL)
 	}
-	if topicLevel > 0 && info.Properties != nil {
-		// Users in the posting allowlist (Slack's "Admins, plus specific people")
-		// need PL ≥ topicLevel so they can edit topic in Matrix.
-		for _, uid := range info.Properties.PostingRestrictedTo.User {
-			bumpMemberPL(uid, topicLevel)
-		}
-	}
 	var name *string
 	if roomType != database.RoomTypeDM || len(members.MemberMap) == 1 {
 		name = ptr.Ptr(s.formatChannelName(info))
