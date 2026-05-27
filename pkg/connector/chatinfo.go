@@ -228,6 +228,15 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 		}
 	}
 	members.TotalMemberCount = info.NumMembers
+	powerLevels := &bridgev2.PowerLevelOverrides{
+		Events: map[event.Type]int{
+			event.StateTopic: 0,
+		},
+	}
+	if roomType == database.RoomTypeDefault && !info.IsGeneral && s.canChangeChannelName(info) {
+		powerLevels.Events[event.StateRoomName] = 0
+	}
+	members.PowerLevels = powerLevels
 	var name *string
 	if roomType != database.RoomTypeDM || len(members.MemberMap) == 1 {
 		name = ptr.Ptr(s.formatChannelName(info))
@@ -243,6 +252,20 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 		UserLocal:    userLocal,
 		CanBackfill:  true,
 	}, nil
+}
+
+func (s *SlackClient) canChangeChannelName(info *slack.Channel) bool {
+	if s.BootResp == nil {
+		return false
+	}
+	self := s.BootResp.Self
+	if self.IsRestricted || self.IsUltraRestricted {
+		return false
+	}
+	if self.IsAdmin || self.IsOwner || self.IsPrimaryOwner {
+		return true
+	}
+	return info.Creator == self.ID
 }
 
 func (s *SlackClient) formatChannelName(info *slack.Channel) string {

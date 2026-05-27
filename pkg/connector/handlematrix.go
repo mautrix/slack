@@ -248,7 +248,7 @@ func (s *SlackClient) HandleMatrixRoomName(ctx context.Context, msg *bridgev2.Ma
 	if channelID == "" {
 		return false, errors.New("invalid channel ID")
 	}
-	resp, err := s.Client.RenameConversationContext(ctx, channelID, msg.Content.Name)
+	resp, err := s.Client.RenameConversationContext(ctx, channelID, strings.TrimPrefix(msg.Content.Name, "#"))
 	zerolog.Ctx(ctx).Trace().Any("resp_data", resp).Msg("Renamed conversation")
 	return err == nil, err
 }
