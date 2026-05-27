@@ -228,16 +228,45 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 		}
 	}
 	members.TotalMemberCount = info.NumMembers
+	topicLevel := 0
+	if info.Properties != nil {
+		// Slack maps the "Posting permissions" UI to PostingRestrictedTo.Type:
+		//   empty       → Everyone
+		//   ["ra"]      → Everyone except guests
+		//   ["admin"]   → Admins only (optionally plus specific users)
+		// Topic editing follows posting permissions, so mirror that here.
+		for _, t := range info.Properties.PostingRestrictedTo.Type {
+			if t == "admin" {
+				topicLevel = 50
+				break
+			}
+		}
+	}
 	members.PowerLevels = &bridgev2.PowerLevelOverrides{
 		Events: map[event.Type]int{
-			event.StateTopic: 0,
+			event.StateTopic: topicLevel,
 		},
 	}
+	bumpMemberPL := func(slackUserID string, pl int) {
+		userID := slackid.MakeUserID(s.TeamID, slackUserID)
+		member, ok := members.MemberMap[userID]
+		if !ok {
+			member = bridgev2.ChatMember{EventSender: s.makeEventSender(slackUserID)}
+		}
+		if member.PowerLevel == nil || *member.PowerLevel < pl {
+			plCopy := pl
+			member.PowerLevel = &plCopy
+			members.MemberMap[userID] = member
+		}
+	}
 	if selfPL := s.selfPowerLevel(info); selfPL > 0 {
-		selfUserID := slackid.MakeUserID(s.TeamID, s.UserID)
-		if selfMember, ok := members.MemberMap[selfUserID]; ok {
-			selfMember.PowerLevel = &selfPL
-			members.MemberMap[selfUserID] = selfMember
+		bumpMemberPL(s.UserID, selfPL)
+	}
+	if topicLevel > 0 && info.Properties != nil {
+		// Users in the posting allowlist (Slack's "Admins, plus specific people")
+		// need PL ≥ topicLevel so they can edit topic in Matrix.
+		for _, uid := range info.Properties.PostingRestrictedTo.User {
+			bumpMemberPL(uid, topicLevel)
 		}
 	}
 	var name *string
