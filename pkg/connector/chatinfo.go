@@ -254,8 +254,7 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 			member = bridgev2.ChatMember{EventSender: s.makeEventSender(slackUserID)}
 		}
 		if member.PowerLevel == nil || *member.PowerLevel < pl {
-			plCopy := pl
-			member.PowerLevel = &plCopy
+			member.PowerLevel = &pl
 			members.MemberMap[userID] = member
 		}
 	}
