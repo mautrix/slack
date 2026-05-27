@@ -228,16 +228,11 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 		}
 	}
 	members.TotalMemberCount = info.NumMembers
-	powerLevels := &bridgev2.PowerLevelOverrides{
+	members.PowerLevels = &bridgev2.PowerLevelOverrides{
 		Events: map[event.Type]int{
 			event.StateTopic: 0,
 		},
 	}
-	if roomType == database.RoomTypeDefault && info.IsGeneral {
-		// Slack doesn't allow #general to be renamed by anyone.
-		powerLevels.Events[event.StateRoomName] = 100
-	}
-	members.PowerLevels = powerLevels
 	if selfPL := s.selfPowerLevel(info); selfPL > 0 {
 		selfUserID := slackid.MakeUserID(s.TeamID, s.UserID)
 		if selfMember, ok := members.MemberMap[selfUserID]; ok {
