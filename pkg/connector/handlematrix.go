@@ -42,6 +42,7 @@ var (
 	_ bridgev2.TypingHandlingNetworkAPI      = (*SlackClient)(nil)
 	_ bridgev2.RoomNameHandlingNetworkAPI    = (*SlackClient)(nil)
 	_ bridgev2.RoomTopicHandlingNetworkAPI   = (*SlackClient)(nil)
+	_ bridgev2.MembershipHandlingNetworkAPI  = (*SlackClient)(nil)
 )
 
 func (s *SlackClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.MatrixMessage) (*bridgev2.MatrixMessageResponse, error) {
@@ -251,6 +252,61 @@ func (s *SlackClient) HandleMatrixRoomName(ctx context.Context, msg *bridgev2.Ma
 	resp, err := s.Client.RenameConversationContext(ctx, channelID, strings.TrimPrefix(msg.Content.Name, "#"))
 	zerolog.Ctx(ctx).Trace().Any("resp_data", resp).Msg("Renamed conversation")
 	return err == nil, err
+}
+
+func (s *SlackClient) HandleMatrixMembership(ctx context.Context, msg *bridgev2.MatrixMembershipChange) (*bridgev2.MatrixMembershipResult, error) {
+	if msg.Type.IsSelf && msg.OrigSender != nil {
+		return nil, nil
+	}
+
+	if s.Client == nil {
+		return nil, bridgev2.ErrNotLoggedIn
+	}
+	_, channelID := slackid.ParsePortalID(msg.Portal.ID)
+	if channelID == "" {
+		return nil, errors.New("invalid channel ID")
+	}
+	if msg.Portal.RoomType == database.RoomTypeDM || msg.Portal.RoomType == database.RoomTypeGroupDM {
+		return nil, nil
+	}
+
+	var targetUserID string
+	switch target := msg.Target.(type) {
+	case *bridgev2.Ghost:
+		_, targetUserID = slackid.ParseUserID(target.ID)
+	case *bridgev2.UserLogin:
+		_, targetUserID = slackid.ParseUserLoginID(target.ID)
+	default:
+		return nil, fmt.Errorf("unknown membership target type: %T", target)
+	}
+	if targetUserID == "" {
+		return nil, errors.New("invalid target user ID")
+	}
+
+	log := zerolog.Ctx(ctx)
+	switch msg.Type {
+	case bridgev2.Invite:
+		_, err := s.Client.InviteUsersToConversationContext(ctx, channelID, targetUserID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to invite user to channel: %w", err)
+		}
+		log.Debug().Str("target_user_id", targetUserID).Msg("Invited user to Slack channel")
+	case bridgev2.Leave:
+		_, err := s.Client.LeaveConversationContext(ctx, channelID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to leave channel: %w", err)
+		}
+		log.Debug().Msg("Left Slack channel")
+	case bridgev2.Kick:
+		err := s.Client.KickUserFromConversationContext(ctx, channelID, targetUserID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to kick user from channel: %w", err)
+		}
+		log.Debug().Str("target_user_id", targetUserID).Msg("Kicked user from Slack channel")
+	default:
+		return nil, nil
+	}
+	return nil, nil
 }
 
 func (s *SlackClient) HandleMatrixRoomTopic(ctx context.Context, msg *bridgev2.MatrixRoomTopic) (bool, error) {

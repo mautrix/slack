@@ -66,7 +66,7 @@ func (s *SlackConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities 
 }
 
 func (s *SlackConnector) GetBridgeInfoVersion() (info, caps int) {
-	return 3, 3
+	return 3, 4
 }
 
 func supportedIfFFmpeg() event.CapabilitySupportLevel {
@@ -77,7 +77,7 @@ func supportedIfFFmpeg() event.CapabilitySupportLevel {
 }
 
 func capID() string {
-	base := "fi.mau.slack.capabilities.2026_05_16"
+	base := "fi.mau.slack.capabilities.2026_05_28"
 	if ffmpeg.Supported() {
 		return base + "+ffmpeg"
 	}
@@ -173,6 +173,11 @@ var roomCaps = &event.RoomFeatures{
 		event.StateRoomName.Type: {Level: event.CapLevelFullySupported},
 		event.StateTopic.Type:    {Level: event.CapLevelFullySupported},
 	},
+	MemberActions: event.MemberFeatureMap{
+		event.MemberActionInvite: event.CapLevelFullySupported,
+		event.MemberActionLeave:  event.CapLevelFullySupported,
+		event.MemberActionKick:   event.CapLevelFullySupported,
+	},
 	LocationMessage: event.CapLevelRejected,
 	MaxTextLength:   MaxTextLength,
 	Thread:          event.CapLevelFullySupported,
@@ -191,6 +196,7 @@ func init() {
 		// Weirdly enough, DMs and group DMs allow topics on Slack
 		event.StateTopic.Type: {Level: event.CapLevelFullySupported},
 	}
+	dmCaps.MemberActions = nil
 }
 
 func (s *SlackClient) GetCapabilities(ctx context.Context, portal *bridgev2.Portal) *event.RoomFeatures {
