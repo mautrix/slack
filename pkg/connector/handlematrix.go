@@ -255,6 +255,10 @@ func (s *SlackClient) HandleMatrixRoomName(ctx context.Context, msg *bridgev2.Ma
 }
 
 func (s *SlackClient) HandleMatrixMembership(ctx context.Context, msg *bridgev2.MatrixMembershipChange) (*bridgev2.MatrixMembershipResult, error) {
+	if msg.Type.IsSelf && msg.OrigSender != nil {
+		return nil, nil
+	}
+
 	if s.Client == nil {
 		return nil, bridgev2.ErrNotLoggedIn
 	}
