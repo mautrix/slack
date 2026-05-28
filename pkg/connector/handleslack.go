@@ -113,6 +113,8 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 		// ignored intentionally, these are duplicates or do not contain useful information
 	case *slack.UserChangeEvent:
 		go s.handleUserChange(ctx, &evt.User)
+	case *slack.UserProfileChangedEvent:
+		go s.handleUserChange(ctx, &evt.User)
 	case *slack.UserInvalidatedEvent:
 		go s.handleUserInvalidated(ctx, evt.User.ID)
 	default:
