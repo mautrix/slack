@@ -56,7 +56,11 @@ func (mc *MessageConverter) ToMatrix(
 	ctx = context.WithValue(ctx, contextKeyPortal, portal)
 	ctx = context.WithValue(ctx, contextKeySource, source)
 	client := source.Client.(SlackClientProvider).GetClient()
-	output := &bridgev2.ConvertedMessage{}
+	output := &bridgev2.ConvertedMessage{
+		// Mirror the room's retention timer onto each message so the bridge
+		// redacts it once Slack's retention window elapses.
+		Disappear: portal.Disappear,
+	}
 	if msg.ThreadTimestamp != "" && msg.ThreadTimestamp != msg.Timestamp {
 		teamID, channelID := slackid.ParsePortalID(portal.ID)
 		output.ThreadRoot = ptr.Ptr(slackid.MakeMessageID(teamID, channelID, msg.ThreadTimestamp))

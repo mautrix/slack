@@ -36,6 +36,9 @@ func (s *SlackConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities 
 		// GetUserInfo has an internal rate limit of 1 fetch per 24 hours,
 		// so we're fine to tell the bridge to fetch user info all the time.
 		AggressiveUpdateInfo: true,
+		// Slack's message retention is mirrored as a disappear-after-send
+		// timer (read-only, see disappearSettingForChannel).
+		DisappearingMessages: true,
 		Provisioning: bridgev2.ProvisioningCapabilities{
 			ImagePackImport: true,
 			ResolveIdentifier: bridgev2.ResolveIdentifierCapabilities{

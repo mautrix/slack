@@ -125,6 +125,10 @@ type SlackClient struct {
 	userResyncQueue chan *bridgev2.Ghost
 	initialConnect  time.Time
 
+	// Set once conversations.getRetention returns not_paid, so we stop calling
+	// the per-channel API and fall back to workspace-default retention prefs.
+	customRetentionUnsupported atomic.Bool
+
 	chatInfoCache          map[string]chatInfoCacheEntry
 	chatInfoFetchAttempted map[string]bool
 	chatInfoCacheLock      sync.Mutex
