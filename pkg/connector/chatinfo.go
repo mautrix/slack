@@ -41,6 +41,12 @@ import (
 
 const ChatInfoCacheExpiry = 1 * time.Hour
 
+func (s *SlackClient) invalidateChatInfoCache(channelID string) {
+	s.chatInfoCacheLock.Lock()
+	defer s.chatInfoCacheLock.Unlock()
+	delete(s.chatInfoCache, channelID)
+}
+
 func (s *SlackClient) fetchChatInfoWithCache(ctx context.Context, channelID string, onlyIfNotAttempted bool) (*slack.Channel, error) {
 	s.chatInfoCacheLock.Lock()
 	defer s.chatInfoCacheLock.Unlock()

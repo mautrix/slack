@@ -98,7 +98,7 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 		*slack.UserTypingEvent, *slack.ChannelMarkedEvent, *slack.IMMarkedEvent, *slack.GroupMarkedEvent,
 		*slack.ChannelJoinedEvent, *slack.ChannelLeftEvent, *slack.GroupJoinedEvent, *slack.GroupLeftEvent,
 		*slack.MemberJoinedChannelEvent, *slack.MemberLeftChannelEvent,
-		*slack.ChannelUpdateEvent:
+		*slack.ChannelUpdateEvent, *slack.ChannelRenameEvent:
 		wrapped, err := s.wrapEvent(ctx, evt)
 		if err != nil {
 			log.Err(err).Msg("Failed to wrap Slack event")
@@ -176,6 +176,16 @@ func (s *SlackClient) handleUserInvalidated(ctx context.Context, userID string) 
 	}
 }
 
+func isChannelInfoChangeSubtype(subType string) bool {
+	switch subType {
+	case slack.MsgSubTypeChannelTopic, slack.MsgSubTypeChannelPurpose, slack.MsgSubTypeChannelName,
+		slack.MsgSubTypeGroupTopic, slack.MsgSubTypeGroupPurpose, slack.MsgSubTypeGroupName:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.RemoteEvent, error) {
 	var meta SlackEventMeta
 	var metaErr error
@@ -184,6 +194,18 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 	case *slack.MessageEvent:
 		if evt.SubType == slack.MsgSubTypeMessageChanged && evt.SubMessage.SubType == "huddle_thread" {
 			return nil, nil
+		}
+		if isChannelInfoChangeSubtype(evt.SubType) {
+			// Drop the cache so the resync's GetChatInfo fetches the new values.
+			s.invalidateChatInfoCache(evt.Channel)
+			meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, "", evt.Timestamp)
+			meta.Type = bridgev2.RemoteEventChatResync
+			wrapped = &SlackChatResync{
+				SlackEventMeta: &meta,
+				Client:         s,
+				ShouldSyncInfo: true,
+			}
+			break
 		}
 		sender := evt.User
 		if sender == "" {
@@ -261,10 +283,23 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		wrapped = wrapMemberChange(&meta, meta.Sender, event.MembershipLeave, event.MembershipJoin)
 
 	case *slack.ChannelUpdateEvent:
+		s.invalidateChatInfoCache(evt.Channel)
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, "", evt.Timestamp)
 		meta.Type = bridgev2.RemoteEventChatResync
-		//meta.CreatePortal = true
-		wrapped = &meta
+		wrapped = &SlackChatResync{
+			SlackEventMeta: &meta,
+			Client:         s,
+			ShouldSyncInfo: true,
+		}
+	case *slack.ChannelRenameEvent:
+		s.invalidateChatInfoCache(evt.Channel.ID)
+		meta, metaErr = s.makeEventMeta(ctx, evt.Channel.ID, nil, "", evt.Timestamp)
+		meta.Type = bridgev2.RemoteEventChatResync
+		wrapped = &SlackChatResync{
+			SlackEventMeta: &meta,
+			Client:         s,
+			ShouldSyncInfo: true,
+		}
 	}
 	return wrapped, metaErr
 }
@@ -545,15 +580,16 @@ var (
 )
 
 func (s *SlackMessage) GetType() bridgev2.RemoteEventType {
+	if isChannelInfoChangeSubtype(s.Data.SubType) {
+		// wrapEvent turns these into a SlackChatResync; mapped here too so
+		// they're never bridged as plain messages.
+		return bridgev2.RemoteEventChatResync
+	}
 	switch s.Data.SubType {
 	case slack.MsgSubTypeMessageChanged:
 		return bridgev2.RemoteEventEdit
 	case slack.MsgSubTypeMessageDeleted:
 		return bridgev2.RemoteEventMessageRemove
-	case slack.MsgSubTypeChannelTopic, slack.MsgSubTypeChannelPurpose, slack.MsgSubTypeChannelName,
-		slack.MsgSubTypeGroupTopic, slack.MsgSubTypeGroupPurpose, slack.MsgSubTypeGroupName:
-		// TODO implement deltas instead of full resync
-		return bridgev2.RemoteEventChatResync
 	case slack.MsgSubTypeMessageReplied, slack.MsgSubTypeGroupJoin, slack.MsgSubTypeGroupLeave,
 		slack.MsgSubTypeChannelJoin, slack.MsgSubTypeChannelLeave:
 		return bridgev2.RemoteEventUnknown
