@@ -98,7 +98,7 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 		*slack.UserTypingEvent, *slack.ChannelMarkedEvent, *slack.IMMarkedEvent, *slack.GroupMarkedEvent,
 		*slack.ChannelJoinedEvent, *slack.ChannelLeftEvent, *slack.GroupJoinedEvent, *slack.GroupLeftEvent,
 		*slack.MemberJoinedChannelEvent, *slack.MemberLeftChannelEvent,
-		*slack.ChannelUpdateEvent, *slack.ChannelRenameEvent:
+		*slack.ChannelUpdateEvent:
 		wrapped, err := s.wrapEvent(ctx, evt)
 		if err != nil {
 			log.Err(err).Msg("Failed to wrap Slack event")
@@ -195,17 +195,22 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		if evt.SubType == slack.MsgSubTypeMessageChanged && evt.SubMessage.SubType == "huddle_thread" {
 			return nil, nil
 		}
-		if isChannelInfoChangeSubtype(evt.SubType) {
-			// Drop the cache so the resync's GetChatInfo fetches the new values.
+		switch evt.SubType {
+		case slack.MsgSubTypeChannelName, slack.MsgSubTypeGroupName:
+			// The room name is formatted from the channel type/privacy, which
+			// the rename message doesn't include, so resync the full info.
+			// Drop the cache first so GetChatInfo fetches the new name.
 			s.invalidateChatInfoCache(evt.Channel)
 			meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, "", evt.Timestamp)
 			meta.Type = bridgev2.RemoteEventChatResync
-			wrapped = &SlackChatResync{
+			return &SlackChatResync{
 				SlackEventMeta: &meta,
 				Client:         s,
 				ShouldSyncInfo: true,
-			}
-			break
+			}, metaErr
+		case slack.MsgSubTypeChannelTopic, slack.MsgSubTypeGroupTopic:
+			meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, "", evt.Timestamp)
+			return wrapTopicChange(&meta, evt.Topic), metaErr
 		}
 		sender := evt.User
 		if sender == "" {
@@ -291,15 +296,6 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 			Client:         s,
 			ShouldSyncInfo: true,
 		}
-	case *slack.ChannelRenameEvent:
-		s.invalidateChatInfoCache(evt.Channel.ID)
-		meta, metaErr = s.makeEventMeta(ctx, evt.Channel.ID, nil, "", evt.Timestamp)
-		meta.Type = bridgev2.RemoteEventChatResync
-		wrapped = &SlackChatResync{
-			SlackEventMeta: &meta,
-			Client:         s,
-			ShouldSyncInfo: true,
-		}
 	}
 	return wrapped, metaErr
 }
@@ -348,6 +344,18 @@ func wrapTyping(meta *SlackEventMeta) *SlackTyping {
 func wrapReadReceipt(meta *SlackEventMeta) *SlackReadReceipt {
 	meta.Type = bridgev2.RemoteEventReadReceipt
 	return &SlackReadReceipt{SlackEventMeta: meta}
+}
+
+func wrapTopicChange(meta *SlackEventMeta, topic string) *SlackChatInfoChange {
+	meta.Type = bridgev2.RemoteEventChatInfoChange
+	return &SlackChatInfoChange{
+		SlackEventMeta: meta,
+		Change: &bridgev2.ChatInfoChange{
+			ChatInfo: &bridgev2.ChatInfo{
+				Topic: &topic,
+			},
+		},
+	}
 }
 
 func wrapMemberChange(meta *SlackEventMeta, sender bridgev2.EventSender, newMembership, prevMembership event.Membership) *SlackChatInfoChange {
