@@ -581,9 +581,8 @@ var (
 
 func (s *SlackMessage) GetType() bridgev2.RemoteEventType {
 	if isChannelInfoChangeSubtype(s.Data.SubType) {
-		// wrapEvent turns these into a SlackChatResync; mapped here too so
-		// they're never bridged as plain messages.
-		return bridgev2.RemoteEventChatResync
+		// These shouldn't end up as SlackMessage events
+		return bridgev2.RemoteEventUnknown
 	}
 	switch s.Data.SubType {
 	case slack.MsgSubTypeMessageChanged:
