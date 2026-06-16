@@ -1,3 +1,9 @@
+# v26.06
+
+* Added support for adding/removing channel members from Matrix.
+* Added real-time bridging of channel and user name changes from Slack.
+* Changed power levels to allow changing channel names and topics.
+
 # v26.05
 
 * Added support for importing all Slack workspace emojis as a Matrix image pack.
