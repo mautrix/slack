@@ -18,6 +18,7 @@ package connector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"slices"
@@ -277,11 +278,82 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 		Avatar:       avatar,
 		Members:      &members,
 		Type:         &roomType,
+		Disappear:    s.disappearSettingForChannel(ctx, info, roomType),
 		ParentID:     ptr.Ptr(slackid.MakeTeamPortalID(s.TeamID)),
 		ExtraUpdates: extraUpdates,
 		UserLocal:    userLocal,
 		CanBackfill:  true,
 	}, nil
+}
+
+// Slack retention_type values (verified against the workspace data-retention UI):
+//
+//	0 = inherit/unset (use the workspace default)
+//	1 = never delete messages
+//	2 = delete after retention_duration days ("keep for N days" presets)
+//	3 = delete after retention_duration days (paid "custom timeline")
+//
+// Only types 2 and 3 delete messages, so only those map to a disappearing timer.
+const (
+	slackRetentionInherit = 0
+	slackRetentionKeepAll = 1
+)
+
+// disappearSettingForChannel maps Slack's message retention to a disappearing
+// timer, preferring the per-channel conversations.getRetention (which works with
+// the user token, unlike the admin API) and falling back to the workspace-default
+// prefs when the channel inherits, the feature is unavailable, or it errors.
+func (s *SlackClient) disappearSettingForChannel(ctx context.Context, info *slack.Channel, roomType database.RoomType) *database.DisappearingSetting {
+	if s.BootResp == nil {
+		return nil
+	}
+	if retentionType, retentionDuration, ok := s.fetchChannelRetention(ctx, info.ID); ok && retentionType != slackRetentionInherit {
+		return mapSlackRetention(retentionType, retentionDuration)
+	}
+	prefs := s.BootResp.Team.Prefs
+	switch {
+	case roomType == database.RoomTypeDM || roomType == database.RoomTypeGroupDM:
+		return mapSlackRetention(prefs.DMRetentionType, prefs.DMRetentionDuration)
+	case info.IsPrivate:
+		return mapSlackRetention(prefs.GroupRetentionType, prefs.GroupRetentionDuration)
+	default:
+		return mapSlackRetention(prefs.RetentionType, prefs.RetentionDuration)
+	}
+}
+
+// fetchChannelRetention reads a channel's own retention policy. The second
+// return value is false when the value should be ignored (feature unavailable or
+// error), in which case the caller falls back to workspace defaults.
+func (s *SlackClient) fetchChannelRetention(ctx context.Context, channelID string) (retentionType, retentionDuration int, ok bool) {
+	if s.customRetentionUnsupported.Load() {
+		return 0, 0, false
+	}
+	retention, err := s.Client.GetConversationRetentionContext(ctx, channelID)
+	if err != nil {
+		var slackErr slack.SlackErrorResponse
+		if errors.As(err, &slackErr) && slackErr.Err == "not_paid" {
+			// Per-channel retention is a paid feature; stop trying for this team.
+			s.customRetentionUnsupported.Store(true)
+		} else {
+			zerolog.Ctx(ctx).Debug().Err(err).Str("channel_id", channelID).
+				Msg("Failed to get channel retention policy")
+		}
+		return 0, 0, false
+	}
+	return retention.Type, retention.Duration, true
+}
+
+// mapSlackRetention converts a Slack retention type/duration pair into a
+// disappearing-message setting. Non-deleting policies return an empty setting so
+// any previously bridged timer gets cleared.
+func mapSlackRetention(retentionType, retentionDuration int) *database.DisappearingSetting {
+	if retentionType == slackRetentionInherit || retentionType == slackRetentionKeepAll || retentionDuration <= 0 {
+		return &database.DisappearingSetting{}
+	}
+	return &database.DisappearingSetting{
+		Type:  event.DisappearingTypeAfterSend,
+		Timer: time.Duration(retentionDuration) * 24 * time.Hour,
+	}
 }
 
 func (s *SlackClient) selfPowerLevel(info *slack.Channel) int {
