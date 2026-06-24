@@ -446,13 +446,14 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 		var latestMessageID string
 		var hasCounts bool
 		if !s.IsRealUser {
+			channelID := ch.ID
 			ch, err = s.Client.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
-				ChannelID:         ch.ID,
+				ChannelID:         channelID,
 				IncludeLocale:     true,
 				IncludeNumMembers: true,
 			})
 			if err != nil {
-				log.Err(err).Str("channel_id", ch.ID).Msg("Failed to fetch channel info")
+				log.Err(err).Str("channel_id", channelID).Msg("Failed to fetch channel info")
 				continue
 			}
 			hasCounts = ch.Latest != nil
