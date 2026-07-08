@@ -70,6 +70,7 @@ func (s *SlackClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 			SenderID:  slackid.MakeUserID(s.TeamID, s.UserID),
 			Timestamp: slackid.ParseSlackTimestamp(timestamp),
 		},
+		StreamOrder: slackid.ParseSlackTimestamp(timestamp).UnixMicro(),
 	}, nil
 }
 
