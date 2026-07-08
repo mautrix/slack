@@ -486,6 +486,62 @@ func isImageAttachment(att *slack.Attachment) bool {
 		att.Blocks.BlockSet[0].BlockType() == slack.MBTImage
 }
 
+func (mc *MessageConverter) renderAttachmentFallback(ctx context.Context, attachment slack.Attachment, mentions *event.Mentions) string {
+	var attachParts []string
+	if attachment.AuthorName != "" {
+		if attachment.AuthorLink != "" {
+			attachParts = append(attachParts, fmt.Sprintf("<b><a href=\"%s\">%s</a></b>",
+				html.EscapeString(attachment.AuthorLink), html.EscapeString(attachment.AuthorName)))
+		} else {
+			attachParts = append(attachParts, fmt.Sprintf("<b>%s</b>", html.EscapeString(attachment.AuthorName)))
+		}
+	}
+	if attachment.Title != "" {
+		title := mc.mrkdwnToMatrixHtml(ctx, attachment.Title, mentions)
+		if attachment.TitleLink != "" {
+			attachParts = append(attachParts, fmt.Sprintf("<b><a href=\"%s\">%s</a></b>",
+				html.EscapeString(attachment.TitleLink), title))
+		} else {
+			attachParts = append(attachParts, fmt.Sprintf("<b>%s</b>", title))
+		}
+	}
+	if attachment.Text != "" {
+		attachParts = append(attachParts, mc.mrkdwnToMatrixHtml(ctx, attachment.Text, mentions))
+	} else if attachment.Fallback != "" {
+		attachParts = append(attachParts, mc.mrkdwnToMatrixHtml(ctx, attachment.Fallback, mentions))
+	}
+	return strings.Join(attachParts, "<br>")
+}
+
+func (mc *MessageConverter) renderMessageUnfurlFallback(ctx context.Context, attachment slack.Attachment, mentions *event.Mentions) string {
+	var htmlText strings.Builder
+	var authorMXID id.UserID
+	authorName := attachment.AuthorName
+	if attachment.AuthorID != "" && ctx.Value(contextKeySource) != nil {
+		if mxid, ghostName := mc.GetMentionedUserInfo(ctx, attachment.AuthorID); ghostName != "" {
+			authorMXID = mxid
+			authorName = ghostName
+		}
+	}
+	if authorName == "" {
+		authorName = attachment.Title
+	}
+	if authorName != "" {
+		authorName = html.EscapeString(authorName)
+		if authorMXID != "" {
+			_, _ = fmt.Fprintf(&htmlText, `<b><a href="%s">%s</a></b><br>`, authorMXID.URI().MatrixToURL(), authorName)
+		} else {
+			_, _ = fmt.Fprintf(&htmlText, `<b>%s</b><br>`, authorName)
+		}
+	}
+	if attachment.Text != "" {
+		htmlText.WriteString(mc.mrkdwnToMatrixHtml(ctx, attachment.Text, mentions))
+	} else if attachment.Fallback != "" {
+		htmlText.WriteString(mc.mrkdwnToMatrixHtml(ctx, attachment.Fallback, mentions))
+	}
+	return htmlText.String()
+}
+
 func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, blocks slack.Blocks, attachments []slack.Attachment) (*bridgev2.ConvertedMessagePart, error) {
 	// Special case for bots like the Giphy bot which send images in a specific format
 	if len(blocks.BlockSet) == 2 &&
@@ -514,10 +570,16 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 			continue
 		}
 		if attachment.IsMsgUnfurl {
+			startLen := htmlText.Len()
 			for _, message_block := range attachment.MessageBlocks {
 				renderedAttachment := mc.blocksToHTML(ctx, message_block.Message.Blocks, true, mentions)
 				htmlText.WriteString(fmt.Sprintf("<blockquote><b>%s</b><br>%s<a href=\"%s\"><i>%s</i></a><br></blockquote>",
 					attachment.AuthorName, renderedAttachment, attachment.FromURL, attachment.Footer))
+			}
+			if htmlText.Len() == startLen {
+				if fallback := mc.renderMessageUnfurlFallback(ctx, attachment, mentions); fallback != "" {
+					htmlText.WriteString(fmt.Sprintf("<blockquote>%s</blockquote>", fallback))
+				}
 			}
 		} else if len(attachment.Blocks.BlockSet) > 0 {
 			for _, message_block := range attachment.Blocks.BlockSet {
@@ -528,29 +590,7 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 			if len(attachment.Pretext) > 0 {
 				htmlText.WriteString(fmt.Sprintf("<p>%s</p>", mc.mrkdwnToMatrixHtml(ctx, attachment.Pretext, mentions)))
 			}
-			var attachParts []string
-			if len(attachment.AuthorName) > 0 {
-				if len(attachment.AuthorLink) > 0 {
-					attachParts = append(attachParts, fmt.Sprintf("<b><a href=\"%s\">%s</a></b>",
-						attachment.AuthorLink, attachment.AuthorName))
-				} else {
-					attachParts = append(attachParts, fmt.Sprintf("<b>%s</b>", attachment.AuthorName))
-				}
-			}
-			if len(attachment.Title) > 0 {
-				if len(attachment.TitleLink) > 0 {
-					attachParts = append(attachParts, fmt.Sprintf("<b><a href=\"%s\">%s</a></b>",
-						attachment.TitleLink, mc.mrkdwnToMatrixHtml(ctx, attachment.Title, mentions)))
-				} else {
-					attachParts = append(attachParts, fmt.Sprintf("<b>%s</b>", mc.mrkdwnToMatrixHtml(ctx, attachment.Title, mentions)))
-				}
-			}
-			if len(attachment.Text) > 0 {
-				attachParts = append(attachParts, mc.mrkdwnToMatrixHtml(ctx, attachment.Text, mentions))
-			} else if len(attachment.Fallback) > 0 {
-				attachParts = append(attachParts, mc.mrkdwnToMatrixHtml(ctx, attachment.Fallback, mentions))
-			}
-			htmlText.WriteString(fmt.Sprintf("<blockquote>%s", strings.Join(attachParts, "<br>")))
+			htmlText.WriteString(fmt.Sprintf("<blockquote>%s", mc.renderAttachmentFallback(ctx, attachment, mentions)))
 			if len(attachment.Fields) > 0 {
 				var fieldBody string
 				var short = false
