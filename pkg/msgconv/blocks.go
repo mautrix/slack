@@ -204,7 +204,7 @@ func (mc *MessageConverter) getTeamDomain(ctx context.Context) string {
 	if mc.Bridge.Config.SplitPortals {
 		teamPortalKey.Receiver = source.ID
 	}
-	teamPortal, err := mc.Bridge.GetPortalByKey(ctx, teamPortalKey)
+	teamPortal, err := mc.Bridge.GetExistingPortalByKey(ctx, teamPortalKey)
 	if err != nil {
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to get team portal for Slack message mention")
 		return ""
