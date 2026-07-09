@@ -35,3 +35,81 @@ func TestSlackBlocksToMatrixMessageUnfurlFallback(t *testing.T) {
 		t.Fatalf("unexpected body: %q", part.Content.Body)
 	}
 }
+
+func TestSlackBlocksToMatrixMessageUnfurlWithPreviewFields(t *testing.T) {
+	mc := testMessageConverter()
+	attachment := slack.Attachment{
+		IsMsgUnfurl: true,
+		AuthorName:  "testbot",
+		FromURL:     "https://example.slack.com/archives/C123/p123",
+		OriginalURL: "https://example.slack.com/archives/C123/p123",
+		Title:       "testbot in #general",
+		Footer:      "Posted in #general | Yesterday at 10:38 AM | View message",
+	}
+	attachment.MessageBlocks = append(attachment.MessageBlocks, slack.MessageBlocks{})
+	attachment.MessageBlocks[0].Message.Blocks = slack.Blocks{
+		BlockSet: []slack.Block{
+			slack.NewRichTextBlock("", slack.NewRichTextSection(
+				slack.NewRichTextSectionTextElement("hi", nil),
+			)),
+		},
+	}
+	part, err := mc.slackBlocksToMatrix(context.Background(), nil, nil, slack.Blocks{}, []slack.Attachment{attachment})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(part.Content.BeeperLinkPreviews) != 0 {
+		t.Fatalf("expected no generic link previews, got %d", len(part.Content.BeeperLinkPreviews))
+	}
+	expectedBody := "> **testbot**\n> \n> hi\n> [_Posted in #general | Yesterday at 10:38 AM | View message_](https://example.slack.com/archives/C123/p123)"
+	if part.Content.Body != expectedBody {
+		t.Fatalf("unexpected body: %q", part.Content.Body)
+	}
+}
+
+func TestSlackBlocksToMatrixMessageMention(t *testing.T) {
+	mc := testMessageConverter()
+	part, err := mc.slackBlocksToMatrix(context.Background(), nil, nil, slack.Blocks{
+		BlockSet: []slack.Block{
+			slack.NewRichTextBlock("", slack.NewRichTextSection(
+				slack.NewRichTextSectionTextElement("take a look at ", nil),
+				&slack.RichTextSectionUnknownElement{
+					Type: "message_mention",
+					Raw:  `{"type":"message_mention","channel_id":"C123","ts":"1234567890.123456"}`,
+				},
+				slack.NewRichTextSectionTextElement(" at", nil),
+			)),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if part.Content.Body != "take a look at message in #C123 at" {
+		t.Fatalf("unexpected body: %q", part.Content.Body)
+	}
+}
+
+func TestSlackBlocksToMatrixMessageMentionPermalink(t *testing.T) {
+	mc := testMessageConverter()
+	part, err := mc.slackBlocksToMatrix(context.Background(), nil, nil, slack.Blocks{
+		BlockSet: []slack.Block{
+			slack.NewRichTextBlock("", slack.NewRichTextSection(
+				slack.NewRichTextSectionTextElement("take a look at ", nil),
+				&slack.RichTextSectionUnknownElement{
+					Type: "message_mention",
+					Raw:  `{"type":"message_mention","text":"testbot in #general","url":"https://example.slack.com/archives/C123/p1234567890123456"}`,
+				},
+			)),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if part.Content.Body != "take a look at [testbot in #general](https://example.slack.com/archives/C123/p1234567890123456)" {
+		t.Fatalf("unexpected body: %q", part.Content.Body)
+	}
+	expectedHTML := `take a look at <a href="https://example.slack.com/archives/C123/p1234567890123456">testbot in #general</a>`
+	if part.Content.FormattedBody != expectedHTML {
+		t.Fatalf("unexpected formatted body: %q", part.Content.FormattedBody)
+	}
+}

@@ -19,6 +19,7 @@ package msgconv
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
@@ -32,11 +33,13 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/format"
 	"maunium.net/go/mautrix/id"
 
 	"go.mau.fi/mautrix-slack/pkg/msgconv/mrkdwn"
+	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
 
 func (mc *MessageConverter) downloadExternalImage(ctx context.Context, addr string) ([]byte, error) {
@@ -184,6 +187,152 @@ func closingTags(out io.StringWriter, style *slack.RichTextSectionTextStyle) {
 	}
 }
 
+type slackRichTextMessageMention struct {
+	Type      slack.RichTextSectionElementType `json:"type"`
+	ChannelID string                           `json:"channel_id"`
+	Channel   string                           `json:"channel"`
+	TeamID    string                           `json:"team_id"`
+	Team      string                           `json:"team"`
+	UserID    string                           `json:"user_id"`
+	User      string                           `json:"user"`
+	TS        string                           `json:"ts"`
+	Timestamp string                           `json:"timestamp"`
+	MessageTS string                           `json:"message_ts"`
+	URL       string                           `json:"url"`
+	Permalink string                           `json:"permalink"`
+	Text      string                           `json:"text"`
+}
+
+func (mention slackRichTextMessageMention) channelID() string {
+	if mention.ChannelID != "" {
+		return mention.ChannelID
+	}
+	return mention.Channel
+}
+
+func (mention slackRichTextMessageMention) teamID() string {
+	if mention.TeamID != "" {
+		return mention.TeamID
+	}
+	return mention.Team
+}
+
+func (mention slackRichTextMessageMention) userID() string {
+	if mention.UserID != "" {
+		return mention.UserID
+	}
+	return mention.User
+}
+
+func (mention slackRichTextMessageMention) timestamp() string {
+	if mention.TS != "" {
+		return mention.TS
+	} else if mention.Timestamp != "" {
+		return mention.Timestamp
+	}
+	return mention.MessageTS
+}
+
+func (mc *MessageConverter) getTeamDomain(ctx context.Context, teamID string) string {
+	if mc.Bridge == nil {
+		return ""
+	}
+	if teamID == "" {
+		source, _ := ctx.Value(contextKeySource).(*bridgev2.UserLogin)
+		if source != nil {
+			teamID, _ = slackid.ParseUserLoginID(source.ID)
+		}
+	}
+	if teamID == "" {
+		return ""
+	}
+	teamPortalKey := networkid.PortalKey{
+		ID: slackid.MakeTeamPortalID(teamID),
+	}
+	source, _ := ctx.Value(contextKeySource).(*bridgev2.UserLogin)
+	if mc.Bridge.Config.SplitPortals && source != nil {
+		teamPortalKey.Receiver = source.ID
+	}
+	teamPortal, err := mc.Bridge.GetPortalByKey(ctx, teamPortalKey)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to get team portal for Slack message mention")
+		return ""
+	} else if teamPortal == nil || teamPortal.Metadata == nil {
+		return ""
+	}
+	return teamPortal.Metadata.(*slackid.PortalMetadata).TeamDomain
+}
+
+func (mc *MessageConverter) renderMessageMention(ctx context.Context, raw string, style *slack.RichTextSectionTextStyle) string {
+	var mention slackRichTextMessageMention
+	if err := json.Unmarshal([]byte(raw), &mention); err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to parse Slack message mention")
+		return ""
+	}
+	channelID := mention.channelID()
+	userID := mention.userID()
+
+	var channelName string
+	if channelID != "" && ctx.Value(contextKeySource) != nil && mc.Bridge != nil {
+		_, _, channelName = mc.GetMentionedRoomInfo(ctx, channelID)
+	}
+	if channelName == "" && channelID != "" {
+		channelName = channelID
+	}
+	if channelName != "" && !strings.HasPrefix(channelName, "#") {
+		channelName = "#" + channelName
+	}
+
+	var authorName string
+	if userID != "" && ctx.Value(contextKeySource) != nil && mc.Bridge != nil {
+		_, authorName = mc.GetMentionedUserInfo(ctx, userID)
+	}
+
+	linkText := "Slack message"
+	if mention.Text != "" {
+		linkText = mention.Text
+	} else if authorName != "" && channelName != "" {
+		linkText = fmt.Sprintf("%s in %s", authorName, channelName)
+	} else if channelName != "" {
+		linkText = fmt.Sprintf("message in %s", channelName)
+	} else if authorName != "" {
+		linkText = fmt.Sprintf("%s's message", authorName)
+	}
+
+	var htmlText strings.Builder
+	openingTags(&htmlText, style)
+	if mention.URL != "" || mention.Permalink != "" {
+		linkURL := mention.URL
+		if linkURL == "" {
+			linkURL = mention.Permalink
+		}
+		_, _ = fmt.Fprintf(
+			&htmlText,
+			`<a href="%s">%s</a>`,
+			html.EscapeString(linkURL),
+			html.EscapeString(linkText),
+		)
+	} else if timestamp := mention.timestamp(); channelID != "" && timestamp != "" {
+		if teamDomain := mc.getTeamDomain(ctx, mention.teamID()); teamDomain != "" {
+			timestampWithoutDot := strings.ReplaceAll(timestamp, ".", "")
+			_, _ = fmt.Fprintf(
+				&htmlText,
+				`<a href="https://%s.slack.com/archives/%s/p%s">%s</a>`,
+				html.EscapeString(teamDomain),
+				html.EscapeString(channelID),
+				html.EscapeString(timestampWithoutDot),
+				html.EscapeString(linkText),
+			)
+		} else {
+			htmlText.WriteString(html.EscapeString(linkText))
+		}
+	} else {
+		htmlText.WriteString(html.EscapeString(linkText))
+	}
+	closingTags(&htmlText, style)
+	return htmlText.String()
+}
+
 func (mc *MessageConverter) renderRichTextSectionElements(
 	ctx context.Context, elements []slack.RichTextSectionElement, mentions *event.Mentions, plainNewlines bool,
 ) string {
@@ -244,6 +393,15 @@ func (mc *MessageConverter) renderRichTextSectionElements(
 			htmlText.WriteString(e.Value)
 		case *slack.RichTextSectionDateElement:
 			htmlText.WriteString(e.Timestamp.String())
+		case *slack.RichTextSectionUnknownElement:
+			if e.Type == "message_mention" {
+				htmlText.WriteString(mc.renderMessageMention(ctx, e.Raw, nil))
+			} else {
+				zerolog.Ctx(ctx).Debug().
+					Type("section_type", e).
+					Str("section_type_name", string(e.RichTextSectionElementType())).
+					Msg("Unsupported Slack rich text section")
+			}
 		default:
 			zerolog.Ctx(ctx).Debug().
 				Type("section_type", e).
@@ -565,10 +723,6 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 		if isImageAttachment(&attachment) {
 			continue
 		}
-		if attachment.FromURL != "" && attachment.OriginalURL != "" && attachment.Title != "" && len(attachment.Fields) == 0 && len(attachment.Actions) == 0 {
-			urlPreviews = append(urlPreviews, mc.attachmentToURLPreview(ctx, portal, intent, attachment))
-			continue
-		}
 		if attachment.IsMsgUnfurl {
 			startLen := htmlText.Len()
 			for _, message_block := range attachment.MessageBlocks {
@@ -581,6 +735,9 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 					htmlText.WriteString(fmt.Sprintf("<blockquote>%s</blockquote>", fallback))
 				}
 			}
+		} else if attachment.FromURL != "" && attachment.OriginalURL != "" && attachment.Title != "" && len(attachment.Fields) == 0 && len(attachment.Actions) == 0 {
+			urlPreviews = append(urlPreviews, mc.attachmentToURLPreview(ctx, portal, intent, attachment))
+			continue
 		} else if len(attachment.Blocks.BlockSet) > 0 {
 			for _, message_block := range attachment.Blocks.BlockSet {
 				renderedAttachment, _ := mc.renderSlackBlock(ctx, message_block, mentions)
