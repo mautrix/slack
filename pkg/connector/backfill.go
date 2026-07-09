@@ -139,6 +139,7 @@ func (s *SlackClient) wrapBackfillMessage(ctx context.Context, portal *bridgev2.
 		Sender:           sender,
 		ID:               slackid.MakeMessageID(s.TeamID, channelID, msg.Timestamp),
 		Timestamp:        slackid.ParseSlackTimestamp(msg.Timestamp),
+		StreamOrder:      slackid.ParseSlackTimestamp(msg.Timestamp).UnixMicro(),
 		Reactions:        make([]*bridgev2.BackfillReaction, 0, len(msg.Reactions)),
 	}
 	if msg.ReplyCount > 0 && !inThread {

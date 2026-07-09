@@ -454,6 +454,13 @@ func (s *SlackEventMeta) GetTimestamp() time.Time {
 	return s.Timestamp
 }
 
+func (s *SlackEventMeta) GetStreamOrder() int64 {
+	if s.Timestamp.IsZero() {
+		return 0
+	}
+	return s.Timestamp.UnixMicro()
+}
+
 func (s *SlackEventMeta) GetID() networkid.MessageID {
 	return s.ID
 }
@@ -461,6 +468,7 @@ func (s *SlackEventMeta) GetID() networkid.MessageID {
 var (
 	_ bridgev2.RemoteEvent                    = (*SlackEventMeta)(nil)
 	_ bridgev2.RemoteEventWithTimestamp       = (*SlackEventMeta)(nil)
+	_ bridgev2.RemoteEventWithStreamOrder     = (*SlackEventMeta)(nil)
 	_ bridgev2.RemoteEventThatMayCreatePortal = (*SlackEventMeta)(nil)
 )
 
@@ -481,6 +489,8 @@ type SlackReadReceipt struct {
 
 var _ bridgev2.RemoteReadReceipt = (*SlackReadReceipt)(nil)
 
+var _ bridgev2.RemoteReadReceiptWithStreamOrder = (*SlackReadReceipt)(nil)
+
 func (s *SlackReadReceipt) GetLastReceiptTarget() networkid.MessageID {
 	return s.ID
 }
@@ -491,6 +501,10 @@ func (s *SlackReadReceipt) GetReceiptTargets() []networkid.MessageID {
 
 func (s *SlackReadReceipt) GetReadUpTo() time.Time {
 	return s.Timestamp
+}
+
+func (s *SlackReadReceipt) GetReadUpToStreamOrder() int64 {
+	return s.GetStreamOrder()
 }
 
 type SlackTyping struct {
@@ -635,6 +649,10 @@ func (s *SlackMessage) GetTimestamp() time.Time {
 	default:
 		return slackid.ParseSlackTimestamp(s.Data.Timestamp)
 	}
+}
+
+func (s *SlackMessage) GetStreamOrder() int64 {
+	return s.GetTimestamp().UnixMicro()
 }
 
 func (s *SlackMessage) GetID() networkid.MessageID {
