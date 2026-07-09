@@ -32,11 +32,13 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/format"
 	"maunium.net/go/mautrix/id"
 
 	"go.mau.fi/mautrix-slack/pkg/msgconv/mrkdwn"
+	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
 
 func (mc *MessageConverter) downloadExternalImage(ctx context.Context, addr string) ([]byte, error) {
@@ -184,6 +186,94 @@ func closingTags(out io.StringWriter, style *slack.RichTextSectionTextStyle) {
 	}
 }
 
+func (mc *MessageConverter) getTeamDomain(ctx context.Context) string {
+	if mc.Bridge == nil {
+		return ""
+	}
+	source, _ := ctx.Value(contextKeySource).(*bridgev2.UserLogin)
+	if source == nil {
+		return ""
+	}
+	teamID, _ := slackid.ParseUserLoginID(source.ID)
+	if teamID == "" {
+		return ""
+	}
+	teamPortalKey := networkid.PortalKey{
+		ID: slackid.MakeTeamPortalID(teamID),
+	}
+	if mc.Bridge.Config.SplitPortals {
+		teamPortalKey.Receiver = source.ID
+	}
+	teamPortal, err := mc.Bridge.GetExistingPortalByKey(ctx, teamPortalKey)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to get team portal for Slack message mention")
+		return ""
+	} else if teamPortal == nil || teamPortal.Metadata == nil {
+		return ""
+	}
+	return teamPortal.Metadata.(*slackid.PortalMetadata).TeamDomain
+}
+
+func (mc *MessageConverter) renderMessageMention(ctx context.Context, mention *slack.RichTextSectionMessageMentionElement) string {
+	var channelName string
+	if mention.ChannelID != "" && ctx.Value(contextKeySource) != nil && mc.Bridge != nil {
+		_, _, channelName = mc.GetMentionedRoomInfo(ctx, mention.ChannelID)
+	}
+	if channelName == "" {
+		channelName = mention.ChannelID
+	}
+	if channelName != "" && !strings.HasPrefix(channelName, "#") {
+		channelName = "#" + channelName
+	}
+
+	var authorName string
+	if mention.AuthorID != "" && ctx.Value(contextKeySource) != nil && mc.Bridge != nil {
+		_, authorName = mc.GetMentionedUserInfo(ctx, mention.AuthorID)
+	}
+
+	linkText := "Slack message"
+	switch {
+	case mention.Text != "":
+		linkText = mention.Text
+	case authorName != "" && channelName != "":
+		linkText = fmt.Sprintf("%s in %s", authorName, channelName)
+	case channelName != "":
+		linkText = fmt.Sprintf("message in %s", channelName)
+	case authorName != "":
+		linkText = fmt.Sprintf("%s's message", authorName)
+	}
+
+	var htmlText strings.Builder
+	openingTags(&htmlText, mention.Style)
+	switch {
+	case mention.URL != "":
+		_, _ = fmt.Fprintf(
+			&htmlText,
+			`<a href="%s">%s</a>`,
+			html.EscapeString(mention.URL),
+			html.EscapeString(linkText),
+		)
+	case mention.ChannelID != "" && mention.MessageTS != "":
+		if teamDomain := mc.getTeamDomain(ctx); teamDomain != "" {
+			timestampWithoutDot := strings.ReplaceAll(mention.MessageTS, ".", "")
+			_, _ = fmt.Fprintf(
+				&htmlText,
+				`<a href="https://%s.slack.com/archives/%s/p%s">%s</a>`,
+				html.EscapeString(teamDomain),
+				html.EscapeString(mention.ChannelID),
+				html.EscapeString(timestampWithoutDot),
+				html.EscapeString(linkText),
+			)
+		} else {
+			htmlText.WriteString(html.EscapeString(linkText))
+		}
+	default:
+		htmlText.WriteString(html.EscapeString(linkText))
+	}
+	closingTags(&htmlText, mention.Style)
+	return htmlText.String()
+}
+
 func (mc *MessageConverter) renderRichTextSectionElements(
 	ctx context.Context, elements []slack.RichTextSectionElement, mentions *event.Mentions, plainNewlines bool,
 ) string {
@@ -244,6 +334,8 @@ func (mc *MessageConverter) renderRichTextSectionElements(
 			htmlText.WriteString(e.Value)
 		case *slack.RichTextSectionDateElement:
 			htmlText.WriteString(e.Timestamp.String())
+		case *slack.RichTextSectionMessageMentionElement:
+			htmlText.WriteString(mc.renderMessageMention(ctx, e))
 		default:
 			zerolog.Ctx(ctx).Debug().
 				Type("section_type", e).
@@ -565,10 +657,6 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 		if isImageAttachment(&attachment) {
 			continue
 		}
-		if attachment.FromURL != "" && attachment.OriginalURL != "" && attachment.Title != "" && len(attachment.Fields) == 0 && len(attachment.Actions) == 0 {
-			urlPreviews = append(urlPreviews, mc.attachmentToURLPreview(ctx, portal, intent, attachment))
-			continue
-		}
 		if attachment.IsMsgUnfurl {
 			startLen := htmlText.Len()
 			for _, message_block := range attachment.MessageBlocks {
@@ -581,6 +669,9 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 					htmlText.WriteString(fmt.Sprintf("<blockquote>%s</blockquote>", fallback))
 				}
 			}
+		} else if attachment.FromURL != "" && attachment.OriginalURL != "" && attachment.Title != "" && len(attachment.Fields) == 0 && len(attachment.Actions) == 0 {
+			urlPreviews = append(urlPreviews, mc.attachmentToURLPreview(ctx, portal, intent, attachment))
+			continue
 		} else if len(attachment.Blocks.BlockSet) > 0 {
 			for _, message_block := range attachment.Blocks.BlockSet {
 				renderedAttachment, _ := mc.renderSlackBlock(ctx, message_block, mentions)
