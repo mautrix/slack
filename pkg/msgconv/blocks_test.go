@@ -73,10 +73,7 @@ func TestSlackBlocksToMatrixMessageMention(t *testing.T) {
 		BlockSet: []slack.Block{
 			slack.NewRichTextBlock("", slack.NewRichTextSection(
 				slack.NewRichTextSectionTextElement("take a look at ", nil),
-				&slack.RichTextSectionUnknownElement{
-					Type: "message_mention",
-					Raw:  `{"type":"message_mention","channel_id":"C123","ts":"1234567890.123456"}`,
-				},
+				slack.NewRichTextSectionMessageMentionElement("C123", "1234567890.123456", "", "", "", nil),
 				slack.NewRichTextSectionTextElement(" at", nil),
 			)),
 		},
@@ -95,10 +92,7 @@ func TestSlackBlocksToMatrixMessageMentionPermalink(t *testing.T) {
 		BlockSet: []slack.Block{
 			slack.NewRichTextBlock("", slack.NewRichTextSection(
 				slack.NewRichTextSectionTextElement("take a look at ", nil),
-				&slack.RichTextSectionUnknownElement{
-					Type: "message_mention",
-					Raw:  `{"type":"message_mention","text":"testbot in #general","url":"https://example.slack.com/archives/C123/p1234567890123456"}`,
-				},
+				slack.NewRichTextSectionMessageMentionElement("", "", "", "testbot in #general", "https://example.slack.com/archives/C123/p1234567890123456", nil),
 			)),
 		},
 	}, nil)

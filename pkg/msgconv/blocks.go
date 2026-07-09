@@ -19,7 +19,6 @@ package msgconv
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"html"
 	"io"
@@ -187,70 +186,22 @@ func closingTags(out io.StringWriter, style *slack.RichTextSectionTextStyle) {
 	}
 }
 
-type slackRichTextMessageMention struct {
-	Type      slack.RichTextSectionElementType `json:"type"`
-	ChannelID string                           `json:"channel_id"`
-	Channel   string                           `json:"channel"`
-	TeamID    string                           `json:"team_id"`
-	Team      string                           `json:"team"`
-	UserID    string                           `json:"user_id"`
-	User      string                           `json:"user"`
-	TS        string                           `json:"ts"`
-	Timestamp string                           `json:"timestamp"`
-	MessageTS string                           `json:"message_ts"`
-	URL       string                           `json:"url"`
-	Permalink string                           `json:"permalink"`
-	Text      string                           `json:"text"`
-}
-
-func (mention slackRichTextMessageMention) channelID() string {
-	if mention.ChannelID != "" {
-		return mention.ChannelID
-	}
-	return mention.Channel
-}
-
-func (mention slackRichTextMessageMention) teamID() string {
-	if mention.TeamID != "" {
-		return mention.TeamID
-	}
-	return mention.Team
-}
-
-func (mention slackRichTextMessageMention) userID() string {
-	if mention.UserID != "" {
-		return mention.UserID
-	}
-	return mention.User
-}
-
-func (mention slackRichTextMessageMention) timestamp() string {
-	if mention.TS != "" {
-		return mention.TS
-	} else if mention.Timestamp != "" {
-		return mention.Timestamp
-	}
-	return mention.MessageTS
-}
-
-func (mc *MessageConverter) getTeamDomain(ctx context.Context, teamID string) string {
+func (mc *MessageConverter) getTeamDomain(ctx context.Context) string {
 	if mc.Bridge == nil {
 		return ""
 	}
-	if teamID == "" {
-		source, _ := ctx.Value(contextKeySource).(*bridgev2.UserLogin)
-		if source != nil {
-			teamID, _ = slackid.ParseUserLoginID(source.ID)
-		}
+	source, _ := ctx.Value(contextKeySource).(*bridgev2.UserLogin)
+	if source == nil {
+		return ""
 	}
+	teamID, _ := slackid.ParseUserLoginID(source.ID)
 	if teamID == "" {
 		return ""
 	}
 	teamPortalKey := networkid.PortalKey{
 		ID: slackid.MakeTeamPortalID(teamID),
 	}
-	source, _ := ctx.Value(contextKeySource).(*bridgev2.UserLogin)
-	if mc.Bridge.Config.SplitPortals && source != nil {
+	if mc.Bridge.Config.SplitPortals {
 		teamPortalKey.Receiver = source.ID
 	}
 	teamPortal, err := mc.Bridge.GetPortalByKey(ctx, teamPortalKey)
@@ -263,73 +214,63 @@ func (mc *MessageConverter) getTeamDomain(ctx context.Context, teamID string) st
 	return teamPortal.Metadata.(*slackid.PortalMetadata).TeamDomain
 }
 
-func (mc *MessageConverter) renderMessageMention(ctx context.Context, raw string, style *slack.RichTextSectionTextStyle) string {
-	var mention slackRichTextMessageMention
-	if err := json.Unmarshal([]byte(raw), &mention); err != nil {
-		zerolog.Ctx(ctx).Err(err).Msg("Failed to parse Slack message mention")
-		return ""
-	}
-	channelID := mention.channelID()
-	userID := mention.userID()
-
+func (mc *MessageConverter) renderMessageMention(ctx context.Context, mention *slack.RichTextSectionMessageMentionElement) string {
 	var channelName string
-	if channelID != "" && ctx.Value(contextKeySource) != nil && mc.Bridge != nil {
-		_, _, channelName = mc.GetMentionedRoomInfo(ctx, channelID)
+	if mention.ChannelID != "" && ctx.Value(contextKeySource) != nil && mc.Bridge != nil {
+		_, _, channelName = mc.GetMentionedRoomInfo(ctx, mention.ChannelID)
 	}
-	if channelName == "" && channelID != "" {
-		channelName = channelID
+	if channelName == "" {
+		channelName = mention.ChannelID
 	}
 	if channelName != "" && !strings.HasPrefix(channelName, "#") {
 		channelName = "#" + channelName
 	}
 
 	var authorName string
-	if userID != "" && ctx.Value(contextKeySource) != nil && mc.Bridge != nil {
-		_, authorName = mc.GetMentionedUserInfo(ctx, userID)
+	if mention.AuthorID != "" && ctx.Value(contextKeySource) != nil && mc.Bridge != nil {
+		_, authorName = mc.GetMentionedUserInfo(ctx, mention.AuthorID)
 	}
 
 	linkText := "Slack message"
-	if mention.Text != "" {
+	switch {
+	case mention.Text != "":
 		linkText = mention.Text
-	} else if authorName != "" && channelName != "" {
+	case authorName != "" && channelName != "":
 		linkText = fmt.Sprintf("%s in %s", authorName, channelName)
-	} else if channelName != "" {
+	case channelName != "":
 		linkText = fmt.Sprintf("message in %s", channelName)
-	} else if authorName != "" {
+	case authorName != "":
 		linkText = fmt.Sprintf("%s's message", authorName)
 	}
 
 	var htmlText strings.Builder
-	openingTags(&htmlText, style)
-	if mention.URL != "" || mention.Permalink != "" {
-		linkURL := mention.URL
-		if linkURL == "" {
-			linkURL = mention.Permalink
-		}
+	openingTags(&htmlText, mention.Style)
+	switch {
+	case mention.URL != "":
 		_, _ = fmt.Fprintf(
 			&htmlText,
 			`<a href="%s">%s</a>`,
-			html.EscapeString(linkURL),
+			html.EscapeString(mention.URL),
 			html.EscapeString(linkText),
 		)
-	} else if timestamp := mention.timestamp(); channelID != "" && timestamp != "" {
-		if teamDomain := mc.getTeamDomain(ctx, mention.teamID()); teamDomain != "" {
-			timestampWithoutDot := strings.ReplaceAll(timestamp, ".", "")
+	case mention.ChannelID != "" && mention.MessageTS != "":
+		if teamDomain := mc.getTeamDomain(ctx); teamDomain != "" {
+			timestampWithoutDot := strings.ReplaceAll(mention.MessageTS, ".", "")
 			_, _ = fmt.Fprintf(
 				&htmlText,
 				`<a href="https://%s.slack.com/archives/%s/p%s">%s</a>`,
 				html.EscapeString(teamDomain),
-				html.EscapeString(channelID),
+				html.EscapeString(mention.ChannelID),
 				html.EscapeString(timestampWithoutDot),
 				html.EscapeString(linkText),
 			)
 		} else {
 			htmlText.WriteString(html.EscapeString(linkText))
 		}
-	} else {
+	default:
 		htmlText.WriteString(html.EscapeString(linkText))
 	}
-	closingTags(&htmlText, style)
+	closingTags(&htmlText, mention.Style)
 	return htmlText.String()
 }
 
@@ -393,15 +334,8 @@ func (mc *MessageConverter) renderRichTextSectionElements(
 			htmlText.WriteString(e.Value)
 		case *slack.RichTextSectionDateElement:
 			htmlText.WriteString(e.Timestamp.String())
-		case *slack.RichTextSectionUnknownElement:
-			if e.Type == "message_mention" {
-				htmlText.WriteString(mc.renderMessageMention(ctx, e.Raw, nil))
-			} else {
-				zerolog.Ctx(ctx).Debug().
-					Type("section_type", e).
-					Str("section_type_name", string(e.RichTextSectionElementType())).
-					Msg("Unsupported Slack rich text section")
-			}
+		case *slack.RichTextSectionMessageMentionElement:
+			htmlText.WriteString(mc.renderMessageMention(ctx, e))
 		default:
 			zerolog.Ctx(ctx).Debug().
 				Type("section_type", e).
