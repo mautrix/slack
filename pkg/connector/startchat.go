@@ -108,7 +108,7 @@ func (s *SlackClient) CreateChatWithGhost(ctx context.Context, ghost *bridgev2.G
 	if err != nil {
 		return nil, fmt.Errorf("failed to open conversation: %w", err)
 	}
-	chatInfo, err := s.wrapChatInfo(ctx, resp, true)
+	chatInfo, err := s.wrapChatInfo(ctx, nil, resp, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to wrap chat info: %w", err)
 	}
@@ -166,7 +166,7 @@ func (s *SlackClient) CreateGroup(ctx context.Context, params *bridgev2.GroupCre
 			return nil, fmt.Errorf("failed to set topic: %w", err)
 		}
 	}
-	chatInfo, err := s.wrapChatInfo(ctx, resp, true)
+	chatInfo, err := s.wrapChatInfo(ctx, nil, resp, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to wrap chat info: %w", err)
 	}

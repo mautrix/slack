@@ -179,7 +179,7 @@ func (s *SlackClient) generateMemberList(ctx context.Context, info *slack.Channe
 	return
 }
 
-func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isNew bool) (*bridgev2.ChatInfo, error) {
+func (s *SlackClient) wrapChatInfo(ctx context.Context, portal *bridgev2.Portal, info *slack.Channel, isNew bool) (*bridgev2.ChatInfo, error) {
 	var members bridgev2.ChatMemberList
 	var avatar *bridgev2.Avatar
 	var roomType database.RoomType
@@ -208,6 +208,9 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 		members.MemberMap = map[networkid.UserID]bridgev2.ChatMember{
 			selfMember.Sender:  selfMember,
 			otherMember.Sender: otherMember,
+		}
+		if portal != nil && portal.MXID != "" {
+			s.preserveBotGhosts(ctx, portal, members.MemberMap)
 		}
 		ghost, err := s.UserLogin.Bridge.GetGhostByID(ctx, slackid.MakeUserID(s.TeamID, info.User))
 		if err != nil {
@@ -308,14 +311,42 @@ func (s *SlackClient) formatChannelName(info *slack.Channel) string {
 	})
 }
 
-func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, isNew bool) (*bridgev2.ChatInfo, error) {
+func (s *SlackClient) fetchChatInfo(ctx context.Context, portal *bridgev2.Portal, channelID string, isNew bool) (*bridgev2.ChatInfo, error) {
 	info, err := s.fetchChatInfoWithCache(ctx, channelID, false)
 	if err != nil {
 		return nil, err
 	} else if isNew && info.IsChannel && !info.IsMember {
 		return nil, fmt.Errorf("request cancelled due to user not being in channel")
 	}
-	return s.wrapChatInfo(ctx, info, isNew)
+	return s.wrapChatInfo(ctx, portal, info, isNew)
+}
+
+// preserveBotGhosts keeps joined bot ghosts (Slack IDs starting with "B") in memberMap,
+// since conversations.info doesn't list them as DM participants and they'd otherwise get
+// kicked as "not in remote chat" on every resync.
+func (s *SlackClient) preserveBotGhosts(ctx context.Context, portal *bridgev2.Portal, memberMap map[networkid.UserID]bridgev2.ChatMember) {
+	currentMembers, err := s.UserLogin.Bridge.Matrix.GetMembers(ctx, portal.MXID)
+	if err != nil {
+		zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to get current room members to preserve bot ghosts")
+		return
+	}
+	for mxid, memberEvt := range currentMembers {
+		if memberEvt.Membership != event.MembershipJoin {
+			continue
+		}
+		ghost, err := s.UserLogin.Bridge.GetGhostByMXID(ctx, mxid)
+		if err != nil || ghost == nil {
+			continue
+		}
+		if _, ok := memberMap[ghost.ID]; ok {
+			continue
+		}
+		teamID, userID := slackid.ParseUserID(ghost.ID)
+		if teamID != s.TeamID || len(userID) == 0 || userID[0] != 'B' {
+			continue
+		}
+		memberMap[ghost.ID] = bridgev2.ChatMember{EventSender: s.makeEventSender(userID)}
+	}
 }
 
 func (s *SlackClient) getTeamInfo() *bridgev2.ChatInfo {
@@ -363,7 +394,7 @@ func (s *SlackClient) GetChatInfo(ctx context.Context, portal *bridgev2.Portal) 
 	} else if channelID == "" {
 		return s.getTeamInfo(), nil
 	} else {
-		return s.fetchChatInfo(ctx, channelID, portal.MXID == "")
+		return s.fetchChatInfo(ctx, portal, channelID, portal.MXID == "")
 	}
 }
 
