@@ -189,7 +189,6 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 	switch {
 	case info.IsMpIM:
 		roomType = database.RoomTypeGroupDM
-		members.IsFull = true
 		members.MemberMap = make(map[networkid.UserID]bridgev2.ChatMember, len(info.Members))
 		for _, member := range info.Members {
 			evtSender := s.makeEventSender(member)
@@ -201,7 +200,6 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 		}
 	case info.IsIM:
 		roomType = database.RoomTypeDM
-		members.IsFull = true
 		selfMember := bridgev2.ChatMember{EventSender: s.makeEventSender(s.UserID)}
 		otherMember := bridgev2.ChatMember{EventSender: s.makeEventSender(info.User)}
 		members.OtherUserID = otherMember.Sender
