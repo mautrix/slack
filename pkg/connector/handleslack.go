@@ -107,8 +107,22 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 		}
 	case *slack.EmojiChangedEvent:
 		go s.handleEmojiChange(ctx, evt)
+	case *slack.FileCreatedEvent:
+		if evt.UserID == s.UserID {
+			ch, _ := s.fileCreatedListeners.Swap(evt.FileID, nil)
+			if ch != nil {
+				log.Debug().Str("file_id", evt.FileID).Msg("Got file_created event from Slack, notifying listener")
+				close(ch)
+			} else {
+				log.Debug().Str("file_id", evt.FileID).Msg("Got file_created event from Slack without listener")
+				go func() {
+					time.Sleep(30 * time.Second)
+					s.fileCreatedListeners.Delete(evt.FileID)
+				}()
+			}
+		}
 	case *slack.FileSharedEvent, *slack.FilePublicEvent, *slack.FilePrivateEvent,
-		*slack.FileCreatedEvent, *slack.FileChangeEvent, *slack.FileDeletedEvent,
+		*slack.FileChangeEvent, *slack.FileDeletedEvent,
 		*slack.DesktopNotificationEvent, *slack.ReconnectUrlEvent, *slack.LatencyReport:
 		// ignored intentionally, these are duplicates or do not contain useful information
 	case *slack.UserChangeEvent:

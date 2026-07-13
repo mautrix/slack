@@ -29,6 +29,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
+	"go.mau.fi/util/exsync"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/bridgev2/status"
@@ -80,6 +81,7 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 			chatInfoFetchAttempted: make(map[string]bool),
 			lastReadCache:          make(map[string]string),
 			userResyncQueue:        make(chan *bridgev2.Ghost, 16),
+			fileCreatedListeners:   exsync.NewMap[string, chan struct{}](),
 		}
 		if sc.IsRealUser {
 			sc.RTM = client.NewRTM()
@@ -124,6 +126,8 @@ type SlackClient struct {
 	stopResyncQueue atomic.Pointer[context.CancelFunc]
 	userResyncQueue chan *bridgev2.Ghost
 	initialConnect  time.Time
+
+	fileCreatedListeners *exsync.Map[string, chan struct{}]
 
 	chatInfoCache          map[string]chatInfoCacheEntry
 	chatInfoFetchAttempted map[string]bool

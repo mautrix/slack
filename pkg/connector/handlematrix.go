@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
@@ -74,6 +75,25 @@ func (s *SlackClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 	}, nil
 }
 
+func newEmptyChan() chan struct{} {
+	return make(chan struct{})
+}
+
+func (s *SlackClient) waitForFileCreated(ctx context.Context, fileID string) {
+	waitChan := s.fileCreatedListeners.GetOrSetFactory(fileID, newEmptyChan)
+	defer s.fileCreatedListeners.Delete(fileID)
+	if waitChan != nil {
+		select {
+		case <-time.After(5 * time.Second):
+			zerolog.Ctx(ctx).Warn().Str("file_id", fileID).Msg("Timed out waiting for file_created event from Slack")
+		case <-waitChan:
+			zerolog.Ctx(ctx).Debug().Str("file_id", fileID).Msg("File create listener fired, sending file message")
+		}
+	} else {
+		zerolog.Ctx(ctx).Debug().Str("file_id", fileID).Msg("File create listener is nil, assuming file_created event was already received")
+	}
+}
+
 func (s *SlackClient) sendToSlack(
 	ctx context.Context,
 	channelID string,
@@ -92,6 +112,7 @@ func (s *SlackClient) sendToSlack(
 			log.Err(err).Msg("Failed to upload attachment to Slack")
 			return "", err
 		}
+		s.waitForFileCreated(ctx, file.ID)
 		var shareInfo slack.ShareFileInfo
 		// Slack puts the channel message info after uploading a file in either file.shares.private or file.shares.public
 		if info, found := file.Shares.Private[channelID]; found && len(info) > 0 {
@@ -107,7 +128,10 @@ func (s *SlackClient) sendToSlack(
 		}
 		return "", nil
 	} else if conv.FileShare != nil {
-		log.Debug().Msg("Sharing already uploaded attachment to Slack")
+		for _, fileID := range conv.FileShare.Files {
+			s.waitForFileCreated(ctx, fileID)
+		}
+		log.Debug().Strs("files", conv.FileShare.Files).Msg("Sharing already uploaded attachment to Slack")
 		resp, err := s.Client.ShareFile(ctx, *conv.FileShare)
 		if err != nil {
 			log.Err(err).Msg("Failed to share attachment to Slack")
