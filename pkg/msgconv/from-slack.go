@@ -280,7 +280,7 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 			MimeType:        content.Info.MimeType,
 		}
 		if url != "" {
-			err = client.GetFileContext(ctx, url, &doctypeCheckingWriteProxy{Writer: dest})
+			err = client.GetFileContext(ctx, url, &doctypeCheckingWriteProxy{Writer: dest, isStart: true})
 			if errors.Is(err, errHTMLFile) {
 				log.Warn().Msg("Received HTML file from Slack, retrying in 5 seconds")
 				select {
