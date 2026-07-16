@@ -1,3 +1,11 @@
+# v26.07
+
+* Updated Docker image to Alpine 3.24.
+* Added better bridging for forwarded messages and message links.
+* Fixed bots being unnecessarily removed from DMs on every resync.
+* Fixed waiting for unfinalized files when receiving messages from Slack.
+* Fixed files being sent to Slack before the upload was finalized.
+
 # v26.06
 
 * Added support for adding/removing channel members from Matrix.
