@@ -19,6 +19,7 @@ package connector
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -251,50 +252,8 @@ type slackCaptchaExtractionConfig struct {
 	SiteKey string `json:"siteKey"`
 }
 
-const slackCaptchaExtractionJSTemplate = `new Promise((res0, rej0) => {
-  if (window.__mautrixSlackCaptchaPromise) {
-    window.__mautrixSlackCaptchaPromise.then(res0, rej0)
-    return
-  }
-
-  const CFG = %__CONFIG_REPLACEME__%
-  window.__mautrixSlackCaptchaPromise = new Promise((resolve, reject) => {
-    window.__mautrixSlackRecaptchaLoaded = () => {
-      const overlay = document.createElement('div')
-      // Google's reCAPTCHA challenge popup uses z-index 2000000000.
-      overlay.style.cssText = 'position:fixed;inset:0;z-index:1999999999;' +
-        'background:#fff;display:flex;align-items:center;' +
-        'justify-content:center;padding:2rem'
-
-      const content = document.createElement('div')
-      content.style.cssText = 'display:flex;flex-direction:column;gap:1rem;' +
-        'align-items:center;text-align:center;font:16px sans-serif;color:#1d1c1d'
-
-      const heading = document.createElement('strong')
-      heading.textContent = 'Complete the Slack verification'
-      const challenge = document.createElement('div')
-      content.append(heading, challenge)
-      overlay.append(content)
-      document.body.append(overlay)
-
-      grecaptcha.render(challenge, {
-        sitekey: CFG.siteKey,
-        callback: (token) => resolve({ captcha_token: token }),
-        'error-callback': () => reject(new Error('Slack reCAPTCHA failed')),
-        'expired-callback': () => reject(new Error('Slack reCAPTCHA token expired')),
-      })
-    }
-
-    const script = document.createElement('script')
-    script.src = 'https://www.google.com/recaptcha/api.js?render=explicit&onload=__mautrixSlackRecaptchaLoaded'
-    script.async = true
-    script.defer = true
-    script.onerror = () => reject(new Error('failed to load Slack reCAPTCHA'))
-    document.head.append(script)
-  })
-
-  window.__mautrixSlackCaptchaPromise.then(res0, rej0)
-})`
+//go:embed login-email-captcha.js
+var slackCaptchaExtractionFunction string
 
 func slackCaptchaExtractionJS(captcha *slackLoginCaptcha) (string, error) {
 	if captcha == nil || strings.TrimSpace(captcha.SiteKey) == "" {
@@ -304,7 +263,7 @@ func slackCaptchaExtractionJS(captcha *slackLoginCaptcha) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal Slack CAPTCHA extraction config: %w", err)
 	}
-	return strings.Replace(slackCaptchaExtractionJSTemplate, "%__CONFIG_REPLACEME__%", string(configJSON), 1), nil
+	return "(" + slackCaptchaExtractionFunction + ")(" + string(configJSON) + ")", nil
 }
 
 func slackCaptchaStep(captcha *slackLoginCaptcha, instructions string) (*bridgev2.LoginStep, error) {

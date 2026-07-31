@@ -206,6 +206,8 @@ func TestSlackCaptchaExtractionJSEscapesSiteKey(t *testing.T) {
 	assert.NotContains(t, extractJS, "</script>")
 	assert.Contains(t, extractJS, `\u003c/script\u003e`)
 	assert.Contains(t, extractJS, "captcha_token")
+	assert.NotContains(t, extractJS, "%__CONFIG_REPLACEME__%")
+	assert.NotContains(t, extractJS, "new Promise((res0, rej0)")
 
 	_, err = slackCaptchaExtractionJS(&slackLoginCaptcha{})
 	assert.Error(t, err)
