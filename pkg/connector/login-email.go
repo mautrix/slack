@@ -110,7 +110,7 @@ func (s *SlackEmailLogin) submitEmail(ctx context.Context, input map[string]stri
 		return slackEmailStep("Enter a valid Slack account email address."), nil
 	}
 	if s.API == nil {
-		return nil, errors.New("Slack email login client is not initialized")
+		return nil, errors.New("slack email login client is not initialized")
 	}
 	captcha, err := s.API.RequestCode(ctx, email)
 	if err != nil {
@@ -130,14 +130,14 @@ func (s *SlackEmailLogin) submitEmail(ctx context.Context, input map[string]stri
 
 func (s *SlackEmailLogin) SubmitCookies(ctx context.Context, cookies map[string]string) (*bridgev2.LoginStep, error) {
 	if s.captcha == nil || s.email == "" {
-		return nil, errors.New("Slack email CAPTCHA is not pending")
+		return nil, errors.New("slack email CAPTCHA is not pending")
 	}
 	captchaResponse := strings.TrimSpace(cookies[loginFieldCaptchaToken])
 	if captchaResponse == "" {
 		return slackCaptchaStep(s.captcha, "The CAPTCHA did not return a solution. Complete a new embedded challenge to continue.")
 	}
 	if s.API == nil {
-		return nil, errors.New("Slack email login client is not initialized")
+		return nil, errors.New("slack email login client is not initialized")
 	}
 	if err := s.API.SubmitCaptcha(ctx, s.email, captchaResponse); err != nil {
 		var apiErr *slackLoginAPIError
@@ -298,7 +298,7 @@ const slackCaptchaExtractionJSTemplate = `new Promise((res0, rej0) => {
 
 func slackCaptchaExtractionJS(captcha *slackLoginCaptcha) (string, error) {
 	if captcha == nil || strings.TrimSpace(captcha.SiteKey) == "" {
-		return "", errors.New("Slack CAPTCHA response did not contain a site key")
+		return "", errors.New("slack CAPTCHA response did not contain a site key")
 	}
 	configJSON, err := json.Marshal(slackCaptchaExtractionConfig{SiteKey: captcha.SiteKey})
 	if err != nil {
@@ -475,7 +475,7 @@ func (s *slackLoginAPIClient) RequestCode(ctx context.Context, email string) (*s
 			return nil, err
 		}
 		if strings.TrimSpace(captchaResponse.SiteKey) == "" {
-			return nil, errors.New("Slack auth.captcha response did not contain a site key")
+			return nil, errors.New("slack auth.captcha response did not contain a site key")
 		}
 		return &captchaResponse.slackLoginCaptcha, nil
 	}
@@ -485,7 +485,7 @@ func (s *slackLoginAPIClient) RequestCode(ctx context.Context, email string) (*s
 
 func (s *slackLoginAPIClient) SubmitCaptcha(ctx context.Context, email, captchaResponse string) error {
 	if strings.TrimSpace(captchaResponse) == "" {
-		return errors.New("Slack CAPTCHA response is blank")
+		return errors.New("slack CAPTCHA response is blank")
 	}
 	return s.confirmEmail(ctx, email, captchaResponse)
 }
@@ -661,10 +661,10 @@ func (s *slackLoginAPIClient) LoginWorkspace(ctx context.Context, workspace slac
 		}
 	}
 	if token == "" {
-		return "", "", errors.New("Slack client boot response did not contain an auth token")
+		return "", "", errors.New("slack client boot response did not contain an auth token")
 	}
 	if cookieToken == "" {
-		return "", "", errors.New("Slack magic login did not set a cookie token")
+		return "", "", errors.New("slack magic login did not set a cookie token")
 	}
 	return token, cookieToken, nil
 }
@@ -703,7 +703,7 @@ func (s *slackLoginAPIClient) fetchAuthToken(
 	if team, ok := response.Teams[workspace.ID]; ok && team.Token != "" {
 		return team.Token, responseURL, nil
 	}
-	return "", responseURL, errors.New("Slack client credentials did not contain an auth token for the selected workspace")
+	return "", responseURL, errors.New("slack client credentials did not contain an auth token for the selected workspace")
 }
 
 func (s *slackLoginAPIClient) exchangeMagicLoginCode(
@@ -733,7 +733,7 @@ func (s *slackLoginAPIClient) exchangeMagicLoginCode(
 		}
 	}
 	if len(response.TokenResults) == 0 {
-		return nil, nil, responseURL, errors.New("Slack magic login returned no token results")
+		return nil, nil, responseURL, errors.New("slack magic login returned no token results")
 	}
 	return &response, responseBody, responseURL, nil
 }
@@ -753,13 +753,13 @@ func (s *slackLoginAPIClient) magicLoginClientURL(
 		}
 	}
 	if result == nil {
-		return "", errors.New("Slack magic login result was empty")
+		return "", errors.New("slack magic login result was empty")
 	}
 	if result.Error != "" {
 		return "", &slackLoginAPIError{Method: "auth.loginMagicBulk", Code: result.Error}
 	}
 	if result.AuthRedir != "" {
-		return "", errors.New("Slack workspace requires an additional browser authentication step")
+		return "", errors.New("slack workspace requires an additional browser authentication step")
 	}
 	if result.Team != nil {
 		if clientURL := s.workspaceClientURL(*result.Team); clientURL != "" {
@@ -796,7 +796,7 @@ func (s *slackLoginAPIClient) getSlackLoginURL(ctx context.Context, loginURL str
 	req.Header.Set("User-Agent", slack.DefaultUserAgent)
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("Slack login request failed: %w", err)
+		return nil, nil, fmt.Errorf("slack login request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
@@ -807,7 +807,7 @@ func (s *slackLoginAPIClient) getSlackLoginURL(ctx context.Context, loginURL str
 		return nil, resp.Request.URL, fmt.Errorf("failed to read Slack login response: %w", err)
 	}
 	if len(body) > slackLoginMaxResponseSize {
-		return nil, resp.Request.URL, errors.New("Slack login response was too large")
+		return nil, resp.Request.URL, errors.New("slack login response was too large")
 	}
 	return body, resp.Request.URL, nil
 }
@@ -869,7 +869,7 @@ func (s *slackLoginAPIClient) postAPI(ctx context.Context, method, reason string
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("Slack %s request failed: %w", method, err)
+		return fmt.Errorf("slack %s request failed: %w", method, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusTooManyRequests {
@@ -880,7 +880,7 @@ func (s *slackLoginAPIClient) postAPI(ctx context.Context, method, reason string
 		return fmt.Errorf("failed to read Slack %s response: %w", method, err)
 	}
 	if len(responseBody) > slackLoginMaxResponseSize {
-		return fmt.Errorf("Slack %s response was too large", method)
+		return fmt.Errorf("slack %s response was too large", method)
 	}
 	var response slackLoginAPIResponse
 	if err = json.Unmarshal(responseBody, &response); err != nil {
