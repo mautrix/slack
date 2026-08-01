@@ -45,20 +45,24 @@ const (
 	LoginStepIDEmailCaptcha      = "fi.mau.slack.login.email_captcha"
 	LoginStepIDEmailCode         = "fi.mau.slack.login.enter_email_code"
 	LoginStepIDWorkspace         = "fi.mau.slack.login.select_workspace"
+	LoginStepIDTwoFactor         = "fi.mau.slack.login.two_factor"
 	loginFieldEmail              = "email"
 	loginFieldCaptchaToken       = "captcha_token"
 	loginFieldEmailCode          = "code"
 	loginFieldWorkspace          = "workspace"
+	loginFieldTwoFactorCode      = "two_factor_code"
 	slackLoginAPIBaseURL         = "https://slack.com/"
 	slackLoginAppBaseURL         = "https://app.slack.com/"
 	slackLoginCaptchaPageURL     = "https://slack.com/signin"
 	slackLoginMaxResponseSize    = 16 * 1024 * 1024
 	slackLoginDefaultRequestTime = 30 * time.Second
+	slackLoginTwoFactorCodeRegex = `^\d{6}$`
 )
 
 var (
 	slackAuthTokenPattern = regexp.MustCompile(`xoxc-[a-zA-Z0-9-]+`)
 	slackEmailCodePattern = regexp.MustCompile(`^[a-zA-Z0-9]{3}-?[a-zA-Z0-9]{3}$`)
+	slackTwoFactorPattern = regexp.MustCompile(slackLoginTwoFactorCodeRegex)
 )
 
 type slackLoginCaptcha struct {
@@ -70,6 +74,8 @@ type slackEmailLoginAPI interface {
 	SubmitCaptcha(ctx context.Context, email, captchaResponse string) error
 	ConfirmCode(ctx context.Context, email, code string) ([]slackLoginWorkspace, error)
 	LoginWorkspace(ctx context.Context, workspace slackLoginWorkspace) (token, cookieToken string, err error)
+	StartTwoFactor(ctx context.Context, workspace slackLoginWorkspace) (*slackLoginTwoFactor, error)
+	SubmitTwoFactor(ctx context.Context, challenge *slackLoginTwoFactor, code string) (token, cookieToken string, err error)
 }
 
 type slackLoginCompleter func(ctx context.Context, user *bridgev2.User, token, cookieToken string) (*bridgev2.LoginStep, error)
@@ -80,6 +86,7 @@ type SlackEmailLogin struct {
 	complete   slackLoginCompleter
 	email      string
 	captcha    *slackLoginCaptcha
+	twoFactor  *slackLoginTwoFactor
 	workspaces map[string]slackLoginWorkspace
 }
 
@@ -94,6 +101,8 @@ func (s *SlackEmailLogin) Cancel() {}
 
 func (s *SlackEmailLogin) SubmitUserInput(ctx context.Context, input map[string]string) (*bridgev2.LoginStep, error) {
 	switch {
+	case s.twoFactor != nil:
+		return s.submitTwoFactor(ctx, input)
 	case s.workspaces != nil:
 		return s.submitWorkspace(ctx, input)
 	case s.captcha != nil:
@@ -130,6 +139,9 @@ func (s *SlackEmailLogin) submitEmail(ctx context.Context, input map[string]stri
 }
 
 func (s *SlackEmailLogin) SubmitCookies(ctx context.Context, cookies map[string]string) (*bridgev2.LoginStep, error) {
+	if s.twoFactor != nil {
+		return nil, errors.New("slack two-factor login does not accept browser cookies")
+	}
 	if s.captcha == nil || s.email == "" {
 		return nil, errors.New("slack email CAPTCHA is not pending")
 	}
@@ -213,10 +225,89 @@ func (s *SlackEmailLogin) submitWorkspace(ctx context.Context, input map[string]
 }
 
 func (s *SlackEmailLogin) finishWorkspace(ctx context.Context, workspace slackLoginWorkspace) (*bridgev2.LoginStep, error) {
+	if workspace.TwoFactorRequired {
+		return s.startTwoFactor(ctx, workspace, "Enter the authentication code required by this Slack workspace.")
+	}
 	token, cookieToken, err := s.API.LoginWorkspace(ctx, workspace)
 	if err != nil {
 		return slackWorkspaceStep(slackWorkspaceOptions(s.workspaces), fmt.Sprintf("Could not sign in to %s: %s", workspace.displayName(), safeSlackLoginError(err))), nil
 	}
+	return s.completeWorkspace(ctx, workspace, token, cookieToken)
+}
+
+func (s *SlackEmailLogin) startTwoFactor(
+	ctx context.Context,
+	workspace slackLoginWorkspace,
+	instructions string,
+) (*bridgev2.LoginStep, error) {
+	challenge, err := s.API.StartTwoFactor(ctx, workspace)
+	if err != nil {
+		logEvent := zerolog.Ctx(ctx).Warn().
+			Str("workspace_id", workspace.ID).
+			Bool("has_magic_login_url", workspace.MagicLoginURL != "").
+			Bool("has_magic_login_code", workspace.MagicLoginCode != "")
+		var apiErr *slackLoginAPIError
+		if errors.As(err, &apiErr) {
+			logEvent = logEvent.
+				Str("api_method", apiErr.Method).
+				Str("api_error", apiErr.Code).
+				Int("http_status", apiErr.HTTPStatus)
+		}
+		logEvent.Msg("Failed to start Slack two-factor authentication")
+		return slackWorkspaceStep(
+			slackWorkspaceOptions(s.workspaces),
+			fmt.Sprintf("Could not start two-factor authentication for %s: %s", workspace.displayName(), safeSlackLoginError(err)),
+		), nil
+	}
+	if challenge == nil {
+		return nil, errors.New("slack two-factor login did not return a challenge")
+	}
+	challenge.Workspace = workspace
+	s.twoFactor = challenge
+	return slackTwoFactorStep(instructions), nil
+}
+
+func (s *SlackEmailLogin) submitTwoFactor(
+	ctx context.Context,
+	input map[string]string,
+) (*bridgev2.LoginStep, error) {
+	code := strings.TrimSpace(input[loginFieldTwoFactorCode])
+	if !slackTwoFactorPattern.MatchString(code) {
+		return slackTwoFactorStep("Enter the six-digit code from your authenticator app or SMS."), nil
+	}
+	if s.API == nil {
+		return nil, errors.New("slack email login client is not initialized")
+	}
+	challenge := s.twoFactor
+	token, cookieToken, err := s.API.SubmitTwoFactor(ctx, challenge, code)
+	if err != nil {
+		var apiErr *slackLoginAPIError
+		if errors.As(err, &apiErr) {
+			switch apiErr.Code {
+			case "ratelimited", "rate_limited":
+				return slackTwoFactorStep("Slack is rate limiting authentication-code checks. Wait before trying again."), nil
+			case "two_factor_expired", "two_factor_state_expired":
+				s.twoFactor = nil
+				return s.startTwoFactor(
+					ctx,
+					challenge.Workspace,
+					"That two-factor session expired. Enter a new authentication code.",
+				)
+			case "invalid_2fa_code", "invalid_two_factor_code", "invalid_pin":
+				return slackTwoFactorStep("Slack rejected that authentication code. Check the code and try again."), nil
+			}
+		}
+		return slackTwoFactorStep("Slack did not complete two-factor authentication. Check the code and try again."), nil
+	}
+	s.twoFactor = nil
+	return s.completeWorkspace(ctx, challenge.Workspace, token, cookieToken)
+}
+
+func (s *SlackEmailLogin) completeWorkspace(
+	ctx context.Context,
+	workspace slackLoginWorkspace,
+	token, cookieToken string,
+) (*bridgev2.LoginStep, error) {
 	complete := s.complete
 	if complete == nil {
 		complete = completeSlackTokenLogin
@@ -226,6 +317,7 @@ func (s *SlackEmailLogin) finishWorkspace(ctx context.Context, workspace slackLo
 		zerolog.Ctx(ctx).Warn().Err(err).Str("workspace_id", workspace.ID).Msg("Failed to validate Slack email login session")
 		s.email = ""
 		s.captcha = nil
+		s.twoFactor = nil
 		s.workspaces = nil
 		return slackEmailStep("Slack created a session, but the bridge could not validate it. Enter your email to try again."), nil
 	}
@@ -553,7 +645,6 @@ func (s *slackFindWorkspacesResponse) flatten() []slackLoginWorkspace {
 	add := func(workspace slackLoginWorkspace) {
 		if workspace.ID == "" ||
 			workspace.SSORequired ||
-			workspace.TwoFactorRequired ||
 			(workspace.MagicLoginURL == "" && workspace.MagicLoginCode == "") {
 			return
 		}

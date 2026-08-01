@@ -24,6 +24,9 @@ type fakeSlackEmailLoginAPI struct {
 	token                  string
 	cookieToken            string
 	loginErr               error
+	twoFactor              *slackLoginTwoFactor
+	startTwoFactorErr      error
+	submitTwoFactorErr     error
 	requestedEmail         string
 	captchaEmail           string
 	submittedCaptcha       string
@@ -31,6 +34,10 @@ type fakeSlackEmailLoginAPI struct {
 	confirmedEmail         string
 	confirmedCode          string
 	loggedWorkspace        slackLoginWorkspace
+	twoFactorWorkspace     slackLoginWorkspace
+	startTwoFactorCalls    int
+	submittedTwoFactor     string
+	submitTwoFactorCalls   int
 }
 
 func (f *fakeSlackEmailLoginAPI) RequestCode(_ context.Context, email string) (*slackLoginCaptcha, error) {
@@ -54,6 +61,18 @@ func (f *fakeSlackEmailLoginAPI) ConfirmCode(_ context.Context, email, code stri
 func (f *fakeSlackEmailLoginAPI) LoginWorkspace(_ context.Context, workspace slackLoginWorkspace) (string, string, error) {
 	f.loggedWorkspace = workspace
 	return f.token, f.cookieToken, f.loginErr
+}
+
+func (f *fakeSlackEmailLoginAPI) StartTwoFactor(_ context.Context, workspace slackLoginWorkspace) (*slackLoginTwoFactor, error) {
+	f.twoFactorWorkspace = workspace
+	f.startTwoFactorCalls++
+	return f.twoFactor, f.startTwoFactorErr
+}
+
+func (f *fakeSlackEmailLoginAPI) SubmitTwoFactor(_ context.Context, _ *slackLoginTwoFactor, code string) (string, string, error) {
+	f.submittedTwoFactor = code
+	f.submitTwoFactorCalls++
+	return f.token, f.cookieToken, f.submitTwoFactorErr
 }
 
 func TestSlackLoginFlowsPreferNativeEmail(t *testing.T) {
@@ -535,9 +554,9 @@ func TestSlackFindWorkspacesFlattenDeduplicates(t *testing.T) {
 		CurrentOrgs: []slackWorkspaceOrg{{Org: &slackLoginWorkspace{ID: "E1", MagicLoginURL: "https://example.invalid"}}},
 	}
 	workspaces := response.flatten()
-	ids := []string{workspaces[0].ID, workspaces[1].ID}
+	ids := []string{workspaces[0].ID, workspaces[1].ID, workspaces[2].ID}
 	slices.Sort(ids)
-	assert.Equal(t, []string{"E1", "T1"}, ids)
+	assert.Equal(t, []string{"E1", "T1", "T4"}, ids)
 }
 
 func TestSlackLoginAPIRateLimitWithoutJSON(t *testing.T) {
