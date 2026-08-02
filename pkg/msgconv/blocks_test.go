@@ -86,6 +86,27 @@ func TestSlackBlocksToMatrixMessageMention(t *testing.T) {
 	}
 }
 
+func TestSlackBlocksToMatrixUserGroupMention(t *testing.T) {
+	mc := testMessageConverter()
+	part, err := mc.slackBlocksToMatrix(context.Background(), nil, nil, slack.Blocks{
+		BlockSet: []slack.Block{
+			slack.NewRichTextBlock("", slack.NewRichTextSection(
+				slack.NewRichTextSectionTextElement("Hi ", nil),
+				slack.NewRichTextSectionUserGroupElement("S123"),
+			)),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if part.Content.Body != "Hi <!subteam^S123>" {
+		t.Fatalf("unexpected body: %q", part.Content.Body)
+	}
+	if part.Content.FormattedBody != "Hi &lt;!subteam^S123&gt;" {
+		t.Fatalf("unexpected formatted body: %q", part.Content.FormattedBody)
+	}
+}
+
 func TestSlackBlocksToMatrixMessageMentionPermalink(t *testing.T) {
 	mc := testMessageConverter()
 	part, err := mc.slackBlocksToMatrix(context.Background(), nil, nil, slack.Blocks{

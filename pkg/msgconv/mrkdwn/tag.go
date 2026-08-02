@@ -166,7 +166,6 @@ func (s *slackTagParser) Parse(parent ast.Node, block text.Reader, pc parser.Con
 		switch content {
 		case "channel", "everyone", "here":
 			pc.Get(ContextKeyMentions).(*event.Mentions).Room = true
-		default:
 		}
 		return &astSlackSpecialMention{astSlackTag: tag, content: content}
 	case "":
@@ -205,6 +204,16 @@ func RoomMentionToHTML(out io.Writer, channelID string, mxid id.RoomID, alias id
 		_, _ = fmt.Fprintf(out, "%s", name)
 	} else {
 		_, _ = fmt.Fprintf(out, "&lt;#%s&gt;", channelID)
+	}
+}
+
+func UserGroupMentionToHTML(out io.Writer, userGroupID, name string) {
+	if name == "" {
+		_, _ = fmt.Fprintf(out, "&lt;!subteam^%s&gt;", html.EscapeString(userGroupID))
+	} else if strings.HasPrefix(name, "@") {
+		_, _ = io.WriteString(out, html.EscapeString(name))
+	} else {
+		_, _ = fmt.Fprintf(out, "@%s", html.EscapeString(name))
 	}
 }
 
@@ -256,7 +265,9 @@ func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source [
 			// do @room mentions?
 			return
 		case "subteam":
-			// do subteam handling? more spaces?
+			if len(parts) > 1 {
+				UserGroupMentionToHTML(w, parts[1], node.label)
+			}
 			return
 		default:
 			return
