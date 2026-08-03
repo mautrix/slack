@@ -39,7 +39,7 @@ func (s *SlackConnector) GetLoginFlows() []bridgev2.LoginFlow {
 		ID:          LoginFlowIDEmail,
 	}, {
 		Name:        "Auth token & cookie",
-		Description: "Advanced: sign in with an existing auth token and cookie token",
+		Description: "Log in with an auth token (and a cookie, if the token is from a browser)",
 		ID:          LoginFlowIDAuthToken,
 	}, {
 		Name:        "Slack app",
@@ -72,43 +72,72 @@ type SlackTokenLogin struct {
 	User *bridgev2.User
 }
 
-var _ bridgev2.LoginProcessUserInput = (*SlackTokenLogin)(nil)
+var _ bridgev2.LoginProcessCookies = (*SlackTokenLogin)(nil)
+
+const ExtractSlackTokenJS = `
+new Promise(resolve => {
+	let mautrixSlackTokenCheckInterval
+	let useSlackInBrowserClicked = false
+	function mautrixFindSlackToken() {
+		// Automatically click the "Use Slack in Browser" button
+		if (/\.slack\.com$/.test(window.location.host)) {
+			const link = document?.querySelector?.(".p-ssb_redirect__body")?.querySelector?.(".c-link")
+			if (link && !useSlackInBrowserClicked) {
+				location.href = link.getAttribute("href")
+				useSlackInBrowserClicked = true
+			}
+		}
+		if (!localStorage.localConfig_v2?.includes("xoxc-")) {
+			return
+		}
+		const auth_token = Object.values(JSON.parse(localStorage.localConfig_v2).teams)[0].token
+		window.clearInterval(mautrixSlackTokenCheckInterval)
+		resolve({ auth_token })
+	}
+	mautrixSlackTokenCheckInterval = window.setInterval(mautrixFindSlackToken, 1000)
+})
+`
 
 func (s *SlackTokenLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) {
 	return &bridgev2.LoginStep{
-		Type:         bridgev2.LoginStepTypeUserInput,
+		Type:         bridgev2.LoginStepTypeCookies,
 		StepID:       LoginStepIDAuthToken,
-		Instructions: "Enter an existing Slack auth token and cookie token. This advanced flow does not open a browser.",
-		UserInputParams: &bridgev2.LoginUserInputParams{
-			Fields: []bridgev2.LoginInputDataField{{
-				Type:        bridgev2.LoginInputFieldTypeToken,
-				ID:          "auth_token",
-				Name:        "Auth token",
-				Description: "Slack auth token (starts with xoxc-)",
-				Pattern:     `^xoxc-.+$`,
+		Instructions: "Enter a JSON object with your auth token and cookie token, or a cURL command copied from browser devtools.\n\nFor example: `{\"auth_token\":\"xoxc-...\",\"cookie_token\":\"xoxd-...\"}`",
+		CookiesParams: &bridgev2.LoginCookiesParams{
+			URL:       "https://slack.com/signin",
+			UserAgent: "",
+			Fields: []bridgev2.LoginCookieField{{
+				ID:       "auth_token",
+				Required: true,
+				Sources: []bridgev2.LoginCookieFieldSource{{
+					Type: bridgev2.LoginCookieTypeSpecial,
+					Name: "fi.mau.slack.auth_token",
+				}, {
+					Type:            bridgev2.LoginCookieTypeRequestBody,
+					Name:            "token",
+					RequestURLRegex: `^https://.+?\.slack\.com/api/(client|experiments|api|users|teams|conversations)\..+$`,
+				}},
+				Pattern: `^xoxc-.+$`,
 			}, {
-				Type:        bridgev2.LoginInputFieldTypeToken,
-				ID:          "cookie_token",
-				Name:        "Cookie token",
-				Description: "Slack cookie token (starts with xoxd-)",
-				Pattern:     `^xoxd-[a-zA-Z0-9/+=]+$`,
+				ID:       "cookie_token",
+				Required: true,
+				Sources: []bridgev2.LoginCookieFieldSource{{
+					Type:         bridgev2.LoginCookieTypeCookie,
+					Name:         "d",
+					CookieDomain: "slack.com",
+				}},
+				Pattern: `^xoxd-[a-zA-Z0-9/+=]+$`,
 			}},
+			ExtractJS: ExtractSlackTokenJS,
 		},
 	}, nil
 }
 
 func (s *SlackTokenLogin) Cancel() {}
 
-func (s *SlackTokenLogin) SubmitUserInput(ctx context.Context, input map[string]string) (*bridgev2.LoginStep, error) {
+func (s *SlackTokenLogin) SubmitCookies(ctx context.Context, input map[string]string) (*bridgev2.LoginStep, error) {
 	token, cookieToken := input["auth_token"], input["cookie_token"]
-	if token == "" || cookieToken == "" {
-		return s.Start(ctx)
-	}
-	return completeSlackTokenLogin(ctx, s.User, token, cookieToken)
-}
-
-func completeSlackTokenLogin(ctx context.Context, user *bridgev2.User, token, cookieToken string) (*bridgev2.LoginStep, error) {
-	client := makeSlackClient(&user.Log, token, cookieToken, "")
+	client := makeSlackClient(&s.User.Log, token, cookieToken, "")
 	err := client.FetchVersionData(ctx)
 	if err != nil {
 		zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to fetch version data")
@@ -118,7 +147,7 @@ func completeSlackTokenLogin(ctx context.Context, user *bridgev2.User, token, co
 	if err != nil {
 		return nil, fmt.Errorf("client.boot failed: %w", err)
 	}
-	ul, err := user.NewLogin(ctx, &database.UserLogin{
+	ul, err := s.User.NewLogin(ctx, &database.UserLogin{
 		ID:         slackid.MakeUserLoginID(info.Team.ID, info.Self.ID),
 		RemoteName: fmt.Sprintf("%s - %s", info.Team.Name, info.Self.Profile.Email),
 		Metadata: &slackid.UserLoginMetadata{

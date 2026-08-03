@@ -83,16 +83,23 @@ func TestSlackLoginFlowsPreferNativeEmail(t *testing.T) {
 	assert.Equal(t, LoginFlowIDApp, flows[2].ID)
 }
 
-func TestSlackLoginFlowsUseNativeUserInput(t *testing.T) {
+func TestSlackLoginFlowsKeepEmailNativeAndTokenWebview(t *testing.T) {
 	connector := &SlackConnector{}
-	for _, flowID := range []string{LoginFlowIDEmail, LoginFlowIDAuthToken} {
-		process, err := connector.CreateLogin(context.Background(), nil, flowID)
-		require.NoError(t, err)
-		step, err := process.Start(context.Background())
-		require.NoError(t, err)
-		assert.Equal(t, bridgev2.LoginStepTypeUserInput, step.Type)
-		assert.Nil(t, step.CookiesParams)
-	}
+
+	emailProcess, err := connector.CreateLogin(context.Background(), nil, LoginFlowIDEmail)
+	require.NoError(t, err)
+	emailStep, err := emailProcess.Start(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, bridgev2.LoginStepTypeUserInput, emailStep.Type)
+	assert.Nil(t, emailStep.CookiesParams)
+
+	tokenProcess, err := connector.CreateLogin(context.Background(), nil, LoginFlowIDAuthToken)
+	require.NoError(t, err)
+	tokenStep, err := tokenProcess.Start(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, bridgev2.LoginStepTypeCookies, tokenStep.Type)
+	require.NotNil(t, tokenStep.CookiesParams)
+	assert.Equal(t, ExtractSlackTokenJS, tokenStep.CookiesParams.ExtractJS)
 }
 
 func TestSlackEmailLoginStateMachine(t *testing.T) {
