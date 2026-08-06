@@ -104,7 +104,8 @@ func (n *astSlackURL) String() string {
 type astSlackSpecialMention struct {
 	astSlackTag
 
-	content string
+	content      string
+	resolvedName string
 }
 
 func (n *astSlackSpecialMention) String() string {
@@ -116,9 +117,17 @@ func (n *astSlackSpecialMention) String() string {
 }
 
 type Params struct {
-	ServerName     string
-	GetUserInfo    func(ctx context.Context, userID string) (mxid id.UserID, name string)
-	GetChannelInfo func(ctx context.Context, channelID string) (mxid id.RoomID, alias id.RoomAlias, name string)
+	ServerName       string
+	GetUserInfo      func(ctx context.Context, userID string) (mxid id.UserID, name string)
+	GetChannelInfo   func(ctx context.Context, channelID string) (mxid id.RoomID, alias id.RoomAlias, name string)
+	GetUserGroupInfo func(ctx context.Context, userGroupID string) string
+}
+
+func (p *Params) GetUserGroupName(ctx context.Context, userGroupID string) string {
+	if p.GetUserGroupInfo == nil {
+		return ""
+	}
+	return p.GetUserGroupInfo(ctx, userGroupID)
 }
 
 type slackTagParser struct {
@@ -163,11 +172,15 @@ func (s *slackTagParser) Parse(parent ast.Node, block text.Reader, pc parser.Con
 		mxid, alias, name := s.GetChannelInfo(ctx, content)
 		return &astSlackChannelMention{astSlackTag: tag, channelID: content, serverName: s.ServerName, mxid: mxid, alias: alias, name: name}
 	case "!":
+		resolvedName := ""
+		if userGroupID, ok := strings.CutPrefix(content, "subteam^"); ok && tag.label == "" {
+			resolvedName = s.GetUserGroupName(ctx, userGroupID)
+		}
 		switch content {
 		case "channel", "everyone", "here":
 			pc.Get(ContextKeyMentions).(*event.Mentions).Room = true
 		}
-		return &astSlackSpecialMention{astSlackTag: tag, content: content}
+		return &astSlackSpecialMention{astSlackTag: tag, content: content, resolvedName: resolvedName}
 	case "":
 		return &astSlackURL{astSlackTag: tag, url: content}
 	default:
@@ -266,7 +279,11 @@ func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source [
 			return
 		case "subteam":
 			if len(parts) > 1 {
-				UserGroupMentionToHTML(w, parts[1], node.label)
+				name := node.label
+				if name == "" {
+					name = node.resolvedName
+				}
+				UserGroupMentionToHTML(w, parts[1], name)
 			}
 			return
 		default:

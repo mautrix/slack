@@ -109,6 +109,12 @@ type chatInfoCacheEntry struct {
 	data *slack.Channel
 }
 
+type userGroupInfoCache struct {
+	updatedAt   time.Time
+	lastAttempt time.Time
+	data        map[string]string
+}
+
 type SlackClient struct {
 	Main       *SlackConnector
 	UserLogin  *bridgev2.UserLogin
@@ -132,6 +138,8 @@ type SlackClient struct {
 	chatInfoCache          map[string]chatInfoCacheEntry
 	chatInfoFetchAttempted map[string]bool
 	chatInfoCacheLock      sync.Mutex
+	userGroupInfoCache     userGroupInfoCache
+	userGroupInfoCacheLock sync.Mutex
 	lastReadCache          map[string]string
 	lastReadCacheLock      sync.Mutex
 }

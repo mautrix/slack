@@ -25,9 +25,11 @@ import (
 
 func TestUserGroupMention(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		expected string
+		name         string
+		input        string
+		resolvedName string
+		expectedID   string
+		expected     string
 	}{
 		{
 			name:     "embedded label",
@@ -35,20 +37,35 @@ func TestUserGroupMention(t *testing.T) {
 			expected: "Hi @platform-team",
 		},
 		{
-			name:     "raw fallback",
-			input:    "Hi <!subteam^S404>",
-			expected: "Hi &lt;!subteam^S404&gt;",
+			name:         "resolved handle",
+			input:        "Hi <!subteam^S123>",
+			resolvedName: "platform-team",
+			expectedID:   "S123",
+			expected:     "Hi @platform-team",
+		},
+		{
+			name:       "unresolved fallback",
+			input:      "Hi <!subteam^S404>",
+			expectedID: "S404",
+			expected:   "Hi &lt;!subteam^S404&gt;",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			parser := New(&Params{})
+			requestedID := ""
+			parser := New(&Params{GetUserGroupInfo: func(_ context.Context, userGroupID string) string {
+				requestedID = userGroupID
+				return test.resolvedName
+			}})
 			output, err := parser.Parse(context.Background(), test.input, &event.Mentions{})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if output != test.expected {
 				t.Fatalf("unexpected output: %q", output)
+			}
+			if requestedID != test.expectedID {
+				t.Fatalf("unexpected requested ID: got %q, want %q", requestedID, test.expectedID)
 			}
 		})
 	}

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/slack-go/slack"
+	"maunium.net/go/mautrix/bridgev2"
 
 	"go.mau.fi/mautrix-slack/pkg/msgconv/mrkdwn"
 )
@@ -13,6 +14,29 @@ func testMessageConverter() *MessageConverter {
 	return &MessageConverter{
 		SlackMrkdwnParser: mrkdwn.New(&mrkdwn.Params{}),
 	}
+}
+
+type testUserGroupClient struct {
+	bridgev2.NetworkAPI
+	handle      string
+	requestedID string
+}
+
+func (tugc *testUserGroupClient) GetClient() *slack.Client {
+	return nil
+}
+
+func (tugc *testUserGroupClient) GetEmoji(context.Context, string) (string, bool) {
+	return "", false
+}
+
+func (tugc *testUserGroupClient) GetChannelInfoForMention(context.Context, string) (string, *bridgev2.Portal, error) {
+	return "", nil, nil
+}
+
+func (tugc *testUserGroupClient) GetUserGroupInfoForMention(_ context.Context, userGroupID string) (string, error) {
+	tugc.requestedID = userGroupID
+	return tugc.handle, nil
 }
 
 func TestSlackBlocksToMatrixMessageUnfurlFallback(t *testing.T) {
@@ -88,7 +112,9 @@ func TestSlackBlocksToMatrixMessageMention(t *testing.T) {
 
 func TestSlackBlocksToMatrixUserGroupMention(t *testing.T) {
 	mc := testMessageConverter()
-	part, err := mc.slackBlocksToMatrix(context.Background(), nil, nil, slack.Blocks{
+	client := &testUserGroupClient{handle: "platform-team"}
+	ctx := context.WithValue(context.Background(), contextKeySource, &bridgev2.UserLogin{Client: client})
+	part, err := mc.slackBlocksToMatrix(ctx, nil, nil, slack.Blocks{
 		BlockSet: []slack.Block{
 			slack.NewRichTextBlock("", slack.NewRichTextSection(
 				slack.NewRichTextSectionTextElement("Hi ", nil),
@@ -99,10 +125,13 @@ func TestSlackBlocksToMatrixUserGroupMention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if part.Content.Body != "Hi <!subteam^S123>" {
+	if client.requestedID != "S123" {
+		t.Fatalf("unexpected requested ID: %q", client.requestedID)
+	}
+	if part.Content.Body != "Hi @platform-team" {
 		t.Fatalf("unexpected body: %q", part.Content.Body)
 	}
-	if part.Content.FormattedBody != "Hi &lt;!subteam^S123&gt;" {
+	if part.Content.FormattedBody != "" {
 		t.Fatalf("unexpected formatted body: %q", part.Content.FormattedBody)
 	}
 }
