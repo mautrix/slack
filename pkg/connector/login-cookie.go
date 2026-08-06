@@ -34,6 +34,10 @@ const LoginStepIDComplete = "fi.mau.slack.login.complete"
 
 func (s *SlackConnector) GetLoginFlows() []bridgev2.LoginFlow {
 	return []bridgev2.LoginFlow{{
+		Name:        "Email",
+		Description: "Sign in with your Slack email address",
+		ID:          LoginFlowIDEmail,
+	}, {
 		Name:        "Auth token & cookie",
 		Description: "Log in with an auth token (and a cookie, if the token is from a browser)",
 		ID:          LoginFlowIDAuthToken,
@@ -46,6 +50,11 @@ func (s *SlackConnector) GetLoginFlows() []bridgev2.LoginFlow {
 
 func (s *SlackConnector) CreateLogin(ctx context.Context, user *bridgev2.User, flowID string) (bridgev2.LoginProcess, error) {
 	switch flowID {
+	case LoginFlowIDEmail:
+		return &SlackEmailLogin{
+			User: user,
+			API:  newSlackLoginAPI(),
+		}, nil
 	case LoginFlowIDAuthToken:
 		return &SlackTokenLogin{
 			User: user,
