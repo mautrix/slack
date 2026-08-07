@@ -88,8 +88,10 @@ func (s *SlackClient) GetChannelInfoForMention(ctx context.Context, channelID st
 
 func (s *SlackClient) fetchChannelMembers(ctx context.Context, channelID string, limit int) (output map[networkid.UserID]bridgev2.ChatMember) {
 	var cursor string
+	pages := 0
 	output = make(map[networkid.UserID]bridgev2.ChatMember)
-	for limit > 0 {
+	for limit > 0 && pages < maxSlackPaginationPages {
+		pages++
 		chunkLimit := slackPageLimit(false, limit)
 		membersChunk, nextCursor, err := s.Client.GetUsersInConversation(&slack.GetUsersInConversationParameters{
 			ChannelID: channelID,
@@ -106,9 +108,13 @@ func (s *SlackClient) fetchChannelMembers(ctx context.Context, channelID string,
 		}
 		cursor = nextCursor
 		limit -= len(membersChunk)
-		if nextCursor == "" || len(membersChunk) < chunkLimit {
+		if nextCursor == "" {
 			break
 		}
+	}
+	if cursor != "" && limit > 0 && pages >= maxSlackPaginationPages {
+		zerolog.Ctx(ctx).Warn().Str("channel_id", channelID).Int("page_limit", maxSlackPaginationPages).
+			Msg("Stopped fetching channel members after reaching pagination page limit")
 	}
 	return
 }

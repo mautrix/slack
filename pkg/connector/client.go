@@ -152,6 +152,8 @@ var (
 
 var dmConversationTypes = []string{"mpim", "im"}
 
+const maxSlackPaginationPages = 1000
+
 func slackPageLimit(unlimited bool, remaining int) int {
 	const maxPage = 200
 	if unlimited || remaining > maxPage {
@@ -449,8 +451,10 @@ func (s *SlackClient) fetchConversationsForSync(ctx context.Context, conversatio
 	remaining := s.Main.Config.Backfill.ConversationCount
 	channels := make([]*slack.Channel, 0)
 	var cursor string
+	pages := 0
 	log.Debug().Bool("unlimited", unlimited).Int("remaining", remaining).Msg("Fetching conversation list for sync")
-	for unlimited || remaining > 0 {
+	for (unlimited || remaining > 0) && pages < maxSlackPaginationPages {
+		pages++
 		channelsChunk, nextCursor, err := s.Client.GetConversationsForUserContext(ctx, &slack.GetConversationsForUserParameters{
 			Types:  conversationTypes,
 			Limit:  slackPageLimit(unlimited, remaining),
@@ -465,11 +469,15 @@ func (s *SlackClient) fetchConversationsForSync(ctx context.Context, conversatio
 			s.addDMChannel(channel)
 			channels = append(channels, channel)
 		}
-		if nextCursor == "" || len(channelsChunk) == 0 {
+		if nextCursor == "" {
+			cursor = ""
 			break
 		}
 		remaining -= len(channelsChunk)
 		cursor = nextCursor
+	}
+	if cursor != "" && pages >= maxSlackPaginationPages && (unlimited || remaining > 0) {
+		return nil, fmt.Errorf("conversation pagination exceeded %d pages", maxSlackPaginationPages)
 	}
 	return channels, nil
 }
