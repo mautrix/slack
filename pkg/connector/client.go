@@ -66,7 +66,13 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 	meta := login.Metadata.(*slackid.UserLoginMetadata)
 	var sc *SlackClient
 	if meta.Token == "" {
-		sc = &SlackClient{Main: s, UserLogin: login, UserID: userID, TeamID: teamID}
+		sc = &SlackClient{
+			Main:         s,
+			UserLogin:    login,
+			UserID:       userID,
+			TeamID:       teamID,
+			dmChannelIDs: exsync.NewMap[string, bool](),
+		}
 	} else {
 		client := makeSlackClient(&login.Log, meta.Token, meta.CookieToken, meta.AppToken)
 		sc = &SlackClient{
@@ -79,7 +85,7 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 
 			chatInfoCache:          make(map[string]chatInfoCacheEntry),
 			chatInfoFetchAttempted: make(map[string]bool),
-			dmChannelIDs:           make(map[string]struct{}),
+			dmChannelIDs:           exsync.NewMap[string, bool](),
 			lastReadCache:          make(map[string]string),
 			userResyncQueue:        make(chan *bridgev2.Ghost, 16),
 			fileCreatedListeners:   exsync.NewMap[string, chan struct{}](),
@@ -133,8 +139,7 @@ type SlackClient struct {
 	chatInfoCache          map[string]chatInfoCacheEntry
 	chatInfoFetchAttempted map[string]bool
 	chatInfoCacheLock      sync.Mutex
-	dmChannelIDs           map[string]struct{}
-	dmChannelIDsLock       sync.RWMutex
+	dmChannelIDs           *exsync.Map[string, bool]
 	lastReadCache          map[string]string
 	lastReadCacheLock      sync.Mutex
 }
@@ -363,22 +368,14 @@ func (s *SlackClient) addDMChannel(channel *slack.Channel) {
 	if channel == nil || (!channel.IsIM && !channel.IsMpIM) {
 		return
 	}
-	s.dmChannelIDsLock.Lock()
-	if s.dmChannelIDs == nil {
-		s.dmChannelIDs = make(map[string]struct{})
-	}
-	s.dmChannelIDs[channel.ID] = struct{}{}
-	s.dmChannelIDsLock.Unlock()
+	s.dmChannelIDs.Set(channel.ID, true)
 }
 
 func (s *SlackClient) isDMChannel(channelID string) bool {
 	if !s.Main.Config.DMOnly || strings.HasPrefix(channelID, "D") {
 		return true
 	}
-	s.dmChannelIDsLock.RLock()
-	_, ok := s.dmChannelIDs[channelID]
-	s.dmChannelIDsLock.RUnlock()
-	return ok
+	return s.dmChannelIDs.GetDefault(channelID, false)
 }
 
 func (s *SlackClient) getLatestMessageIDs(ctx context.Context) map[string]string {
