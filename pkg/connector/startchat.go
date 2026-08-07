@@ -160,6 +160,7 @@ func (s *SlackClient) CreateGroup(ctx context.Context, params *bridgev2.GroupCre
 		if err != nil {
 			return nil, fmt.Errorf("failed to open conversation: %w", err)
 		}
+		s.addDMChannel(resp)
 	default:
 		return nil, fmt.Errorf("unrecognized group type %q", params.Type)
 	}
