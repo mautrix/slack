@@ -259,10 +259,11 @@ func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientUserBoo
 	var prefetchedChannels []*slack.Channel
 	prefetched := false
 	if s.Main.Config.DMOnly {
-		prefetchedChannels, err = s.fetchConversationsForSync(ctx, dmConversationTypes)
-		prefetched = err == nil
-		if err != nil {
-			zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to discover DM conversations before connecting")
+		var prefetchErr error
+		prefetchedChannels, prefetchErr = s.fetchConversationsForSync(ctx, dmConversationTypes)
+		prefetched = prefetchErr == nil
+		if prefetchErr != nil {
+			zerolog.Ctx(ctx).Warn().Err(prefetchErr).Msg("Failed to discover DM conversations before connecting")
 		}
 	}
 	if s.IsRealUser {
@@ -390,8 +391,9 @@ func (s *SlackClient) addDMChannel(channel *slack.Channel) {
 	s.addDMChannelIDUnchecked(channel.ID)
 }
 
-// addDMChannelIDUnchecked exists for IMCreatedEvent.Channel, which is a
-// ChannelCreatedInfo and does not carry IsIM or IsMpIM flags to validate.
+// addDMChannelIDUnchecked stores IDs from data that does not contain the IsIM
+// or IsMpIM fields. IMCreatedEvent calls this function, but isDMChannel accepts
+// all D-prefixed IDs without a lookup in dmChannelIDs.
 func (s *SlackClient) addDMChannelIDUnchecked(channelID string) {
 	if channelID != "" {
 		s.dmChannelIDs.Add(channelID)
@@ -399,8 +401,8 @@ func (s *SlackClient) addDMChannelIDUnchecked(channelID string) {
 }
 
 // dmChannelIDs is populated from boot-response IMs at connect, conversations.list
-// during IM and MPIM prefetch (the only source for pre-existing MPIMs), im_created
-// events for new 1:1 DMs, channel_joined and group_joined events for new group DMs,
+// during IM and MPIM prefetch (the only source for pre-existing MPIMs), channel_joined
+// and group_joined events for new group DMs,
 // and CreateGroup responses for group DMs opened by the bridge. A missing entry
 // causes wrapEvent to silently drop the event. The D-prefix fast path means only
 // MPIMs depend on the set for delivery.
@@ -480,10 +482,6 @@ func (s *SlackClient) fetchConversationsForSync(ctx context.Context, conversatio
 		return nil, fmt.Errorf("conversation pagination exceeded %d pages", maxSlackPaginationPages)
 	}
 	return channels, nil
-}
-
-func (s *SlackClient) SyncChannels(ctx context.Context) {
-	s.syncChannels(ctx, nil, false)
 }
 
 func (s *SlackClient) syncChannels(ctx context.Context, channels []*slack.Channel, prefetched bool) {
