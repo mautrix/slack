@@ -245,10 +245,12 @@ func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientUserBoo
 	}
 	s.Ghost = ghost
 	var prefetchedChannels []*slack.Channel
+	prefetched := false
 	if s.Main.Config.DMOnly {
 		prefetchedChannels, err = s.fetchConversationsForSync(ctx, []string{"mpim", "im"})
+		prefetched = err == nil
 		if err != nil {
-			zerolog.Ctx(ctx).Err(err).Msg("Failed to discover DM conversations before connecting")
+			zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to discover DM conversations before connecting")
 		}
 	}
 	if s.IsRealUser {
@@ -260,7 +262,7 @@ func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientUserBoo
 		go s.runSocketMode(ctx)
 	}
 	go s.SyncEmojis(ctx)
-	go s.syncChannels(ctx, prefetchedChannels)
+	go s.syncChannels(ctx, prefetchedChannels, prefetched)
 	return nil
 }
 
@@ -459,10 +461,10 @@ func (s *SlackClient) fetchConversationsForSync(ctx context.Context, conversatio
 }
 
 func (s *SlackClient) SyncChannels(ctx context.Context) {
-	s.syncChannels(ctx, nil)
+	s.syncChannels(ctx, nil, false)
 }
 
-func (s *SlackClient) syncChannels(ctx context.Context, channels []*slack.Channel) {
+func (s *SlackClient) syncChannels(ctx context.Context, channels []*slack.Channel, prefetched bool) {
 	log := zerolog.Ctx(ctx)
 	latestMessageIDs := s.getLatestMessageIDs(ctx)
 	userPortals, err := s.UserLogin.Bridge.DB.UserPortal.GetAllForLogin(ctx, s.UserLogin.UserLogin)
@@ -474,7 +476,7 @@ func (s *SlackClient) syncChannels(ctx context.Context, channels []*slack.Channe
 	for _, up := range userPortals {
 		existingPortals[up.Portal] = struct{}{}
 	}
-	if channels == nil {
+	if !prefetched {
 		token := s.UserLogin.Metadata.(*slackid.UserLoginMetadata).Token
 		if !s.Main.Config.DMOnly && s.IsRealUser && (strings.HasPrefix(token, "xoxs-") || s.Main.Config.Backfill.ConversationCount == -1) {
 			for _, ch := range s.BootResp.Channels {
