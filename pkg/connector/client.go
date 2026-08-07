@@ -400,12 +400,18 @@ func (s *SlackClient) addDMChannelIDUnchecked(channelID string) {
 	}
 }
 
-// dmChannelIDs is populated from boot-response IMs at connect, conversations.list
-// during IM and MPIM prefetch (the only source for pre-existing MPIMs), channel_joined
-// and group_joined events for new group DMs,
-// and CreateGroup responses for group DMs opened by the bridge. A missing entry
-// causes wrapEvent to silently drop the event. The D-prefix fast path means only
-// MPIMs depend on the set for delivery.
+// These sources add IDs to the DM channel set:
+//
+//	IMs in the boot response ---------------------.
+//	IMs and MPIMs from conversations.list --------+
+//	im_created data ------------------------------+--> dmChannelIDs --> isDMChannel --> wrapEvent
+//	channel_joined or group_joined data ----------+
+//	CreateGroup response -------------------------'
+//	ID that starts with D ---------------------------------------^ (does not use dmChannelIDs)
+//
+// conversations.list is the only source for MPIMs that existed before the
+// connection. If dmChannelIDs does not contain an MPIM, isDMChannel returns
+// false. As a result, wrapEvent discards events for the MPIM.
 func (s *SlackClient) isDMChannel(channelID string) bool {
 	if !s.Main.Config.DMOnly || strings.HasPrefix(channelID, "D") {
 		return true
