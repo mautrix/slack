@@ -202,7 +202,10 @@ func isChannelInfoChangeSubtype(subType string) bool {
 
 func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.RemoteEvent, error) {
 	if s.Main.Config.DMOnly {
-		if evt, ok := rawEvt.(*slack.GroupJoinedEvent); ok {
+		switch evt := rawEvt.(type) {
+		case *slack.ChannelJoinedEvent:
+			s.addDMChannel(&evt.Channel)
+		case *slack.GroupJoinedEvent:
 			s.addDMChannel(&evt.Channel)
 		}
 		if channelID := slackEventChannelID(rawEvt); channelID != "" && !s.isDMChannel(channelID) {
