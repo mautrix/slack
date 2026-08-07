@@ -71,7 +71,7 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 			UserLogin:    login,
 			UserID:       userID,
 			TeamID:       teamID,
-			dmChannelIDs: exsync.NewMap[string, bool](),
+			dmChannelIDs: exsync.NewSet[string](),
 		}
 	} else {
 		client := makeSlackClient(&login.Log, meta.Token, meta.CookieToken, meta.AppToken)
@@ -85,7 +85,7 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 
 			chatInfoCache:          make(map[string]chatInfoCacheEntry),
 			chatInfoFetchAttempted: make(map[string]bool),
-			dmChannelIDs:           exsync.NewMap[string, bool](),
+			dmChannelIDs:           exsync.NewSet[string](),
 			lastReadCache:          make(map[string]string),
 			userResyncQueue:        make(chan *bridgev2.Ghost, 16),
 			fileCreatedListeners:   exsync.NewMap[string, chan struct{}](),
@@ -139,7 +139,7 @@ type SlackClient struct {
 	chatInfoCache          map[string]chatInfoCacheEntry
 	chatInfoFetchAttempted map[string]bool
 	chatInfoCacheLock      sync.Mutex
-	dmChannelIDs           *exsync.Map[string, bool]
+	dmChannelIDs           *exsync.Set[string]
 	lastReadCache          map[string]string
 	lastReadCacheLock      sync.Mutex
 }
@@ -378,7 +378,7 @@ func (s *SlackClient) addDMChannel(channel *slack.Channel) {
 
 func (s *SlackClient) addDMChannelID(channelID string) {
 	if channelID != "" {
-		s.dmChannelIDs.Set(channelID, true)
+		s.dmChannelIDs.Add(channelID)
 	}
 }
 
@@ -386,7 +386,7 @@ func (s *SlackClient) isDMChannel(channelID string) bool {
 	if !s.Main.Config.DMOnly || strings.HasPrefix(channelID, "D") {
 		return true
 	}
-	return s.dmChannelIDs.GetDefault(channelID, false)
+	return s.dmChannelIDs.Has(channelID)
 }
 
 func (s *SlackClient) getLatestMessageIDs(ctx context.Context) map[string]string {
