@@ -52,12 +52,14 @@ func (s *SlackConnector) CreateLogin(ctx context.Context, user *bridgev2.User, f
 	switch flowID {
 	case LoginFlowIDEmail:
 		return &SlackEmailLogin{
-			User: user,
-			API:  newSlackLoginAPI(),
+			Connector: s,
+			User:      user,
+			API:       newSlackLoginAPI(),
 		}, nil
 	case LoginFlowIDAuthToken:
 		return &SlackTokenLogin{
-			User: user,
+			Connector: s,
+			User:      user,
 		}, nil
 	case LoginFlowIDApp:
 		return &SlackAppLogin{
@@ -69,7 +71,8 @@ func (s *SlackConnector) CreateLogin(ctx context.Context, user *bridgev2.User, f
 }
 
 type SlackTokenLogin struct {
-	User *bridgev2.User
+	Connector *SlackConnector
+	User      *bridgev2.User
 }
 
 var _ bridgev2.LoginProcessCookies = (*SlackTokenLogin)(nil)
@@ -144,7 +147,7 @@ func (s *SlackTokenLogin) SubmitCookies(ctx context.Context, input map[string]st
 		return nil, err
 	}
 	info, err := client.ClientUserBootWithOptionsContext(ctx, slack.ClientUserBootOptions{
-		OmitChannels: s.User.Bridge.Network.(*SlackConnector).Config.DMOnly,
+		OmitChannels: s.Connector.Config.DMOnly,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("client.boot failed: %w", err)
