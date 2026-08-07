@@ -366,7 +366,13 @@ func (s *SlackClient) addDMChannel(channel *slack.Channel) {
 	if channel == nil || (!channel.IsIM && !channel.IsMpIM) {
 		return
 	}
-	s.dmChannelIDs.Set(channel.ID, true)
+	s.addDMChannelID(channel.ID)
+}
+
+func (s *SlackClient) addDMChannelID(channelID string) {
+	if channelID != "" {
+		s.dmChannelIDs.Set(channelID, true)
+	}
 }
 
 func (s *SlackClient) isDMChannel(channelID string) bool {

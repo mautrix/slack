@@ -121,6 +121,10 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 				}()
 			}
 		}
+	case *slack.IMCreatedEvent:
+		if s.Main.Config.DMOnly {
+			s.addDMChannelID(evt.Channel.ID)
+		}
 	case *slack.FileSharedEvent, *slack.FilePublicEvent, *slack.FilePrivateEvent,
 		*slack.FileChangeEvent, *slack.FileDeletedEvent,
 		*slack.DesktopNotificationEvent, *slack.ReconnectUrlEvent, *slack.LatencyReport:
