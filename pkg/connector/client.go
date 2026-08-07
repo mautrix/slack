@@ -385,10 +385,12 @@ func (s *SlackClient) addDMChannel(channel *slack.Channel) {
 	if channel == nil || (!channel.IsIM && !channel.IsMpIM) {
 		return
 	}
-	s.addDMChannelID(channel.ID)
+	s.addDMChannelIDUnchecked(channel.ID)
 }
 
-func (s *SlackClient) addDMChannelID(channelID string) {
+// addDMChannelIDUnchecked exists for IMCreatedEvent.Channel, which is a
+// ChannelCreatedInfo and does not carry IsIM or IsMpIM flags to validate.
+func (s *SlackClient) addDMChannelIDUnchecked(channelID string) {
 	if channelID != "" {
 		s.dmChannelIDs.Add(channelID)
 	}
