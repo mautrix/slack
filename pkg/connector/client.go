@@ -244,6 +244,13 @@ func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientUserBoo
 		Avatar: ghost.AvatarMXC,
 	}
 	s.Ghost = ghost
+	var prefetchedChannels []*slack.Channel
+	if s.Main.Config.DMOnly {
+		prefetchedChannels, err = s.fetchConversationsForSync(ctx, []string{"mpim", "im"})
+		if err != nil {
+			zerolog.Ctx(ctx).Err(err).Msg("Failed to discover DM conversations before connecting")
+		}
+	}
 	if s.IsRealUser {
 		go s.consumeRTMEvents()
 		go s.RTM.ManageConnection()
@@ -253,7 +260,7 @@ func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientUserBoo
 		go s.runSocketMode(ctx)
 	}
 	go s.SyncEmojis(ctx)
-	go s.SyncChannels(ctx)
+	go s.syncChannels(ctx, prefetchedChannels)
 	return nil
 }
 
@@ -416,7 +423,48 @@ func (s *SlackClient) getLatestMessageIDs(ctx context.Context) map[string]string
 	return latestMessageIDs
 }
 
+func (s *SlackClient) fetchConversationsForSync(ctx context.Context, conversationTypes []string) ([]*slack.Channel, error) {
+	log := zerolog.Ctx(ctx)
+	totalLimit := s.Main.Config.Backfill.ConversationCount
+	if totalLimit < 0 {
+		totalLimit = 50
+	}
+	channels := make([]*slack.Channel, 0)
+	var cursor string
+	log.Debug().Int("total_limit", totalLimit).Msg("Fetching conversation list for sync")
+	for totalLimit > 0 {
+		reqLimit := totalLimit
+		if totalLimit > 200 {
+			reqLimit = 100
+		}
+		channelsChunk, nextCursor, err := s.Client.GetConversationsForUserContext(ctx, &slack.GetConversationsForUserParameters{
+			Types:  conversationTypes,
+			Limit:  reqLimit,
+			Cursor: cursor,
+		})
+		if err != nil {
+			return nil, err
+		}
+		log.Debug().Int("chunk_size", len(channelsChunk)).Msg("Fetched chunk of conversations")
+		for idx := range channelsChunk {
+			channel := &channelsChunk[idx]
+			s.addDMChannel(channel)
+			channels = append(channels, channel)
+		}
+		if nextCursor == "" || len(channelsChunk) == 0 {
+			break
+		}
+		totalLimit -= len(channelsChunk)
+		cursor = nextCursor
+	}
+	return channels, nil
+}
+
 func (s *SlackClient) SyncChannels(ctx context.Context) {
+	s.syncChannels(ctx, nil)
+}
+
+func (s *SlackClient) syncChannels(ctx context.Context, channels []*slack.Channel) {
 	log := zerolog.Ctx(ctx)
 	latestMessageIDs := s.getLatestMessageIDs(ctx)
 	userPortals, err := s.UserLogin.Bridge.DB.UserPortal.GetAllForLogin(ctx, s.UserLogin.UserLogin)
@@ -428,53 +476,28 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 	for _, up := range userPortals {
 		existingPortals[up.Portal] = struct{}{}
 	}
-	var channels []*slack.Channel
-	token := s.UserLogin.Metadata.(*slackid.UserLoginMetadata).Token
-	if !s.Main.Config.DMOnly && s.IsRealUser && (strings.HasPrefix(token, "xoxs-") || s.Main.Config.Backfill.ConversationCount == -1) {
-		for _, ch := range s.BootResp.Channels {
-			ch.IsMember = true
-			channels = append(channels, &ch.Channel)
-		}
-		for _, ch := range s.BootResp.IMs {
-			ch.IsMember = true
-			channels = append(channels, &ch.Channel)
-		}
-		log.Debug().Int("channel_count", len(channels)).Msg("Using channels from boot response for sync")
-	} else {
-		totalLimit := s.Main.Config.Backfill.ConversationCount
-		if totalLimit < 0 {
-			totalLimit = 50
-		}
-		var cursor string
-		log.Debug().Int("total_limit", totalLimit).Msg("Fetching conversation list for sync")
-		conversationTypes := []string{"public_channel", "private_channel", "mpim", "im"}
-		if s.Main.Config.DMOnly {
-			conversationTypes = []string{"mpim", "im"}
-		}
-		for totalLimit > 0 {
-			reqLimit := totalLimit
-			if totalLimit > 200 {
-				reqLimit = 100
+	if channels == nil {
+		token := s.UserLogin.Metadata.(*slackid.UserLoginMetadata).Token
+		if !s.Main.Config.DMOnly && s.IsRealUser && (strings.HasPrefix(token, "xoxs-") || s.Main.Config.Backfill.ConversationCount == -1) {
+			for _, ch := range s.BootResp.Channels {
+				ch.IsMember = true
+				channels = append(channels, &ch.Channel)
 			}
-			channelsChunk, nextCursor, err := s.Client.GetConversationsForUserContext(ctx, &slack.GetConversationsForUserParameters{
-				Types:  conversationTypes,
-				Limit:  reqLimit,
-				Cursor: cursor,
-			})
+			for _, ch := range s.BootResp.IMs {
+				ch.IsMember = true
+				channels = append(channels, &ch.Channel)
+			}
+			log.Debug().Int("channel_count", len(channels)).Msg("Using channels from boot response for sync")
+		} else {
+			conversationTypes := []string{"public_channel", "private_channel", "mpim", "im"}
+			if s.Main.Config.DMOnly {
+				conversationTypes = []string{"mpim", "im"}
+			}
+			channels, err = s.fetchConversationsForSync(ctx, conversationTypes)
 			if err != nil {
 				log.Err(err).Msg("Failed to fetch conversations for sync")
 				return
 			}
-			log.Debug().Int("chunk_size", len(channelsChunk)).Msg("Fetched chunk of conversations")
-			for _, channel := range channelsChunk {
-				s.addDMChannel(&channel)
-				channels = append(channels, &channel)
-			}
-			if nextCursor == "" || len(channelsChunk) == 0 {
-				break
-			}
-			totalLimit -= len(channelsChunk)
-			cursor = nextCursor
 		}
 	}
 	if latestMessageIDs != nil {
