@@ -59,5 +59,6 @@ dm_only: false
 backfill:
     # Number of conversations to fetch from Slack when syncing workspace.
     # This option applies even if message backfill is disabled below.
+    # This option has no effect when dm_only is true; all DMs are always discovered.
     # If set to -1, all chats in the client.boot response will be bridged, and nothing will be fetched separately.
     conversation_count: -1

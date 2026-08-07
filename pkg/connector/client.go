@@ -425,16 +425,14 @@ func (s *SlackClient) getLatestMessageIDs(ctx context.Context) map[string]string
 
 func (s *SlackClient) fetchConversationsForSync(ctx context.Context, conversationTypes []string) ([]*slack.Channel, error) {
 	log := zerolog.Ctx(ctx)
-	totalLimit := s.Main.Config.Backfill.ConversationCount
-	if totalLimit < 0 {
-		totalLimit = 50
-	}
+	unlimited := s.Main.Config.DMOnly || s.Main.Config.Backfill.ConversationCount < 0
+	remaining := s.Main.Config.Backfill.ConversationCount
 	channels := make([]*slack.Channel, 0)
 	var cursor string
-	log.Debug().Int("total_limit", totalLimit).Msg("Fetching conversation list for sync")
-	for totalLimit > 0 {
-		reqLimit := totalLimit
-		if totalLimit > 200 {
+	log.Debug().Bool("unlimited", unlimited).Int("remaining", remaining).Msg("Fetching conversation list for sync")
+	for unlimited || remaining > 0 {
+		reqLimit := remaining
+		if unlimited || remaining > 200 {
 			reqLimit = 100
 		}
 		channelsChunk, nextCursor, err := s.Client.GetConversationsForUserContext(ctx, &slack.GetConversationsForUserParameters{
@@ -454,7 +452,7 @@ func (s *SlackClient) fetchConversationsForSync(ctx context.Context, conversatio
 		if nextCursor == "" || len(channelsChunk) == 0 {
 			break
 		}
-		totalLimit -= len(channelsChunk)
+		remaining -= len(channelsChunk)
 		cursor = nextCursor
 	}
 	return channels, nil
