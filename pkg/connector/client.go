@@ -377,20 +377,8 @@ func (s *SlackClient) isDMChannel(channelID string) bool {
 }
 
 func (s *SlackClient) getLatestMessageIDs(ctx context.Context) map[string]string {
-	if !s.IsRealUser {
+	if !s.IsRealUser || s.Main.Config.DMOnly {
 		return nil
-	}
-	if s.Main.Config.DMOnly {
-		latestMessageIDs := make(map[string]string, len(s.BootResp.IMs))
-		lastReadCache := make(map[string]string, len(s.BootResp.IMs))
-		for _, ch := range s.BootResp.IMs {
-			latestMessageIDs[ch.ID] = ch.Latest
-			lastReadCache[ch.ID] = ch.LastRead
-		}
-		s.lastReadCacheLock.Lock()
-		s.lastReadCache = lastReadCache
-		s.lastReadCacheLock.Unlock()
-		return latestMessageIDs
 	}
 	log := zerolog.Ctx(ctx)
 	clientCounts, err := s.Client.ClientCountsContext(ctx, &slack.ClientCountsParams{
@@ -436,12 +424,10 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 	}
 	var channels []*slack.Channel
 	token := s.UserLogin.Metadata.(*slackid.UserLoginMetadata).Token
-	if s.Main.Config.DMOnly || (s.IsRealUser && (strings.HasPrefix(token, "xoxs-") || s.Main.Config.Backfill.ConversationCount == -1)) {
-		if !s.Main.Config.DMOnly {
-			for _, ch := range s.BootResp.Channels {
-				ch.IsMember = true
-				channels = append(channels, &ch.Channel)
-			}
+	if !s.Main.Config.DMOnly && s.IsRealUser && (strings.HasPrefix(token, "xoxs-") || s.Main.Config.Backfill.ConversationCount == -1) {
+		for _, ch := range s.BootResp.Channels {
+			ch.IsMember = true
+			channels = append(channels, &ch.Channel)
 		}
 		for _, ch := range s.BootResp.IMs {
 			ch.IsMember = true
@@ -475,6 +461,7 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 			}
 			log.Debug().Int("chunk_size", len(channelsChunk)).Msg("Fetched chunk of conversations")
 			for _, channel := range channelsChunk {
+				s.addDMChannel(&channel)
 				channels = append(channels, &channel)
 			}
 			if nextCursor == "" || len(channelsChunk) == 0 {
@@ -494,7 +481,7 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 		delete(existingPortals, portalKey)
 		var latestMessageID string
 		var hasCounts bool
-		if !s.IsRealUser {
+		if !s.IsRealUser || (latestMessageIDs == nil && ch.Latest == nil) {
 			channelID := ch.ID
 			ch, err = s.Client.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
 				ChannelID:         channelID,
@@ -509,8 +496,14 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 			if hasCounts {
 				latestMessageID = ch.Latest.Timestamp
 			}
-		} else {
+		} else if latestMessageIDs != nil {
 			latestMessageID, hasCounts = latestMessageIDs[ch.ID]
+		} else {
+			hasCounts = ch.Latest != nil
+			if hasCounts {
+				latestMessageID = ch.Latest.Timestamp
+			}
+			s.setLastReadCache(ch.ID, ch.LastRead)
 		}
 		// TODO fetch latest message from channel info when using bot account?
 		s.Main.br.QueueRemoteEvent(s.UserLogin, &SlackChatResync{
