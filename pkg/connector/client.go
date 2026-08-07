@@ -390,7 +390,7 @@ func (s *SlackClient) isDMChannel(channelID string) bool {
 }
 
 func (s *SlackClient) getLatestMessageIDs(ctx context.Context) map[string]string {
-	if !s.IsRealUser || s.Main.Config.DMOnly {
+	if !s.IsRealUser {
 		return nil
 	}
 	log := zerolog.Ctx(ctx)
