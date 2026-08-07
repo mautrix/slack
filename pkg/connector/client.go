@@ -505,18 +505,15 @@ func (s *SlackClient) syncChannels(ctx context.Context, channels []*slack.Channe
 			return cmp.Compare(latestMessageIDs[a.ID], latestMessageIDs[b.ID])
 		})
 	}
+	needsChannelInfoFetch := !s.IsRealUser || latestMessageIDs == nil
 	for _, ch := range channels {
 		portalKey := s.makePortalKey(ch)
 		delete(existingPortals, portalKey)
 		var latestMessageID string
 		var hasCounts bool
-		if !s.IsRealUser || (latestMessageIDs == nil && ch.Latest == nil) {
+		if needsChannelInfoFetch {
 			channelID := ch.ID
-			ch, err = s.Client.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
-				ChannelID:         channelID,
-				IncludeLocale:     true,
-				IncludeNumMembers: true,
-			})
+			ch, err = s.fetchChatInfoWithCache(ctx, channelID, false)
 			if err != nil {
 				log.Err(err).Str("channel_id", channelID).Msg("Failed to fetch channel info")
 				continue
@@ -525,14 +522,8 @@ func (s *SlackClient) syncChannels(ctx context.Context, channels []*slack.Channe
 			if hasCounts {
 				latestMessageID = ch.Latest.Timestamp
 			}
-		} else if latestMessageIDs != nil {
-			latestMessageID, hasCounts = latestMessageIDs[ch.ID]
 		} else {
-			hasCounts = ch.Latest != nil
-			if hasCounts {
-				latestMessageID = ch.Latest.Timestamp
-			}
-			s.setLastReadCache(ch.ID, ch.LastRead)
+			latestMessageID, hasCounts = latestMessageIDs[ch.ID]
 		}
 		// TODO fetch latest message from channel info when using bot account?
 		s.Main.br.QueueRemoteEvent(s.UserLogin, &SlackChatResync{
