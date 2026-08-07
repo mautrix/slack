@@ -79,6 +79,7 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 
 			chatInfoCache:          make(map[string]chatInfoCacheEntry),
 			chatInfoFetchAttempted: make(map[string]bool),
+			dmChannelIDs:           make(map[string]struct{}),
 			lastReadCache:          make(map[string]string),
 			userResyncQueue:        make(chan *bridgev2.Ghost, 16),
 			fileCreatedListeners:   exsync.NewMap[string, chan struct{}](),
@@ -132,6 +133,8 @@ type SlackClient struct {
 	chatInfoCache          map[string]chatInfoCacheEntry
 	chatInfoFetchAttempted map[string]bool
 	chatInfoCacheLock      sync.Mutex
+	dmChannelIDs           map[string]struct{}
+	dmChannelIDsLock       sync.RWMutex
 	lastReadCache          map[string]string
 	lastReadCacheLock      sync.Mutex
 }
@@ -176,7 +179,9 @@ func (s *SlackClient) Connect(ctx context.Context) {
 			zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to fetch version data")
 		}
 		// TODO do actual warm boots by saving last received ts somewhere
-		bootResp, err = s.Client.ClientUserBootContext(ctx, time.Time{})
+		bootResp, err = s.Client.ClientUserBootWithOptionsContext(ctx, slack.ClientUserBootOptions{
+			OmitChannels: s.Main.Config.DMOnly,
+		})
 		if err != nil {
 			s.handleBootError(ctx, err)
 			return
@@ -215,6 +220,11 @@ func (s *SlackClient) Connect(ctx context.Context) {
 func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientUserBootResponse) error {
 	s.initialConnect = time.Now()
 	s.BootResp = bootResp
+	if s.Main.Config.DMOnly {
+		for idx := range bootResp.IMs {
+			s.addDMChannel(&bootResp.IMs[idx].Channel)
+		}
+	}
 	err := s.syncTeamPortal(ctx)
 	if err != nil {
 		return err
@@ -349,9 +359,43 @@ func (s *SlackClient) getLastReadCache(channelID string) string {
 	return s.lastReadCache[channelID]
 }
 
+func (s *SlackClient) addDMChannel(channel *slack.Channel) {
+	if channel == nil || (!channel.IsIM && !channel.IsMpIM) {
+		return
+	}
+	s.dmChannelIDsLock.Lock()
+	if s.dmChannelIDs == nil {
+		s.dmChannelIDs = make(map[string]struct{})
+	}
+	s.dmChannelIDs[channel.ID] = struct{}{}
+	s.dmChannelIDsLock.Unlock()
+}
+
+func (s *SlackClient) isDMChannel(channelID string) bool {
+	if !s.Main.Config.DMOnly || strings.HasPrefix(channelID, "D") {
+		return true
+	}
+	s.dmChannelIDsLock.RLock()
+	_, ok := s.dmChannelIDs[channelID]
+	s.dmChannelIDsLock.RUnlock()
+	return ok
+}
+
 func (s *SlackClient) getLatestMessageIDs(ctx context.Context) map[string]string {
 	if !s.IsRealUser {
 		return nil
+	}
+	if s.Main.Config.DMOnly {
+		latestMessageIDs := make(map[string]string, len(s.BootResp.IMs))
+		lastReadCache := make(map[string]string, len(s.BootResp.IMs))
+		for _, ch := range s.BootResp.IMs {
+			latestMessageIDs[ch.ID] = ch.Latest
+			lastReadCache[ch.ID] = ch.LastRead
+		}
+		s.lastReadCacheLock.Lock()
+		s.lastReadCache = lastReadCache
+		s.lastReadCacheLock.Unlock()
+		return latestMessageIDs
 	}
 	log := zerolog.Ctx(ctx)
 	clientCounts, err := s.Client.ClientCountsContext(ctx, &slack.ClientCountsParams{
@@ -397,10 +441,12 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 	}
 	var channels []*slack.Channel
 	token := s.UserLogin.Metadata.(*slackid.UserLoginMetadata).Token
-	if s.IsRealUser && (strings.HasPrefix(token, "xoxs-") || s.Main.Config.Backfill.ConversationCount == -1) {
-		for _, ch := range s.BootResp.Channels {
-			ch.IsMember = true
-			channels = append(channels, &ch.Channel)
+	if s.Main.Config.DMOnly || (s.IsRealUser && (strings.HasPrefix(token, "xoxs-") || s.Main.Config.Backfill.ConversationCount == -1)) {
+		if !s.Main.Config.DMOnly {
+			for _, ch := range s.BootResp.Channels {
+				ch.IsMember = true
+				channels = append(channels, &ch.Channel)
+			}
 		}
 		for _, ch := range s.BootResp.IMs {
 			ch.IsMember = true
@@ -414,13 +460,17 @@ func (s *SlackClient) SyncChannels(ctx context.Context) {
 		}
 		var cursor string
 		log.Debug().Int("total_limit", totalLimit).Msg("Fetching conversation list for sync")
+		conversationTypes := []string{"public_channel", "private_channel", "mpim", "im"}
+		if s.Main.Config.DMOnly {
+			conversationTypes = []string{"mpim", "im"}
+		}
 		for totalLimit > 0 {
 			reqLimit := totalLimit
 			if totalLimit > 200 {
 				reqLimit = 100
 			}
 			channelsChunk, nextCursor, err := s.Client.GetConversationsForUserContext(ctx, &slack.GetConversationsForUserParameters{
-				Types:  []string{"public_channel", "private_channel", "mpim", "im"},
+				Types:  conversationTypes,
 				Limit:  reqLimit,
 				Cursor: cursor,
 			})

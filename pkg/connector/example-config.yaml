@@ -51,6 +51,9 @@ participant_sync_count: 5
 participant_sync_only_on_create: true
 # Should channel portals be muted by default?
 mute_channels_by_default: false
+# Only discover and bridge direct messages and group direct messages. When enabled,
+# channel data is omitted from initial API requests and channel events are ignored.
+dm_only: false
 
 # Options for backfilling messages from Slack.
 backfill:
