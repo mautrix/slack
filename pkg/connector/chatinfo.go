@@ -90,13 +90,10 @@ func (s *SlackClient) fetchChannelMembers(ctx context.Context, channelID string,
 	var cursor string
 	output = make(map[networkid.UserID]bridgev2.ChatMember)
 	for limit > 0 {
-		chunkLimit := limit
-		if chunkLimit > 200 {
-			chunkLimit = 100
-		}
+		chunkLimit := slackPageLimit(false, limit)
 		membersChunk, nextCursor, err := s.Client.GetUsersInConversation(&slack.GetUsersInConversationParameters{
 			ChannelID: channelID,
-			Limit:     limit,
+			Limit:     chunkLimit,
 			Cursor:    cursor,
 		})
 		if err != nil {

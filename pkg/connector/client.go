@@ -150,6 +150,16 @@ var (
 	_ status.BridgeStateFiller    = (*SlackClient)(nil)
 )
 
+var dmConversationTypes = []string{"mpim", "im"}
+
+func slackPageLimit(unlimited bool, remaining int) int {
+	const maxPage = 200
+	if unlimited || remaining > maxPage {
+		return maxPage
+	}
+	return remaining
+}
+
 func (s *SlackClient) GetClient() *slack.Client {
 	return s.Client
 }
@@ -247,7 +257,7 @@ func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientUserBoo
 	var prefetchedChannels []*slack.Channel
 	prefetched := false
 	if s.Main.Config.DMOnly {
-		prefetchedChannels, err = s.fetchConversationsForSync(ctx, []string{"mpim", "im"})
+		prefetchedChannels, err = s.fetchConversationsForSync(ctx, dmConversationTypes)
 		prefetched = err == nil
 		if err != nil {
 			zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to discover DM conversations before connecting")
@@ -433,13 +443,9 @@ func (s *SlackClient) fetchConversationsForSync(ctx context.Context, conversatio
 	var cursor string
 	log.Debug().Bool("unlimited", unlimited).Int("remaining", remaining).Msg("Fetching conversation list for sync")
 	for unlimited || remaining > 0 {
-		reqLimit := remaining
-		if unlimited || remaining > 200 {
-			reqLimit = 100
-		}
 		channelsChunk, nextCursor, err := s.Client.GetConversationsForUserContext(ctx, &slack.GetConversationsForUserParameters{
 			Types:  conversationTypes,
-			Limit:  reqLimit,
+			Limit:  slackPageLimit(unlimited, remaining),
 			Cursor: cursor,
 		})
 		if err != nil {
@@ -491,7 +497,7 @@ func (s *SlackClient) syncChannels(ctx context.Context, channels []*slack.Channe
 		} else {
 			conversationTypes := []string{"public_channel", "private_channel", "mpim", "im"}
 			if s.Main.Config.DMOnly {
-				conversationTypes = []string{"mpim", "im"}
+				conversationTypes = dmConversationTypes
 			}
 			channels, err = s.fetchConversationsForSync(ctx, conversationTypes)
 			if err != nil {
