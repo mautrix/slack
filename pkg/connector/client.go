@@ -196,7 +196,7 @@ func (s *SlackClient) Connect(ctx context.Context) {
 			zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to fetch version data")
 		}
 		// TODO do actual warm boots by saving last received ts somewhere
-		bootResp, err = s.Client.ClientUserBootContext(ctx, time.Time{}, s.Main.Config.DMOnly)
+		bootResp, err = s.Client.ClientUserBootContext(ctx, time.Time{})
 		if err != nil {
 			s.handleBootError(ctx, err)
 			return

@@ -67,7 +67,6 @@ type slackEmailLoginAPI interface {
 type slackLoginCompleter func(ctx context.Context, user *bridgev2.User, token, cookieToken string) (*bridgev2.LoginStep, error)
 
 type SlackEmailLogin struct {
-	Connector  *SlackConnector
 	User       *bridgev2.User
 	API        slackEmailLoginAPI
 	complete   slackLoginCompleter
@@ -295,13 +294,11 @@ func (s *SlackEmailLogin) completeWorkspace(
 	workspace slackLoginWorkspace,
 	token, cookieToken string,
 ) (*bridgev2.LoginStep, error) {
-	var step *bridgev2.LoginStep
-	var err error
-	if s.complete == nil {
-		step, err = completeSlackEmailLogin(ctx, s.Connector, s.User, token, cookieToken)
-	} else {
-		step, err = s.complete(ctx, s.User, token, cookieToken)
+	complete := s.complete
+	if complete == nil {
+		complete = completeSlackEmailLogin
 	}
+	step, err := complete(ctx, s.User, token, cookieToken)
 	if err != nil {
 		zerolog.Ctx(ctx).Warn().Err(err).Str("workspace_id", workspace.ID).Msg("Failed to validate Slack email login session")
 		s.email = ""
@@ -315,11 +312,10 @@ func (s *SlackEmailLogin) completeWorkspace(
 
 func completeSlackEmailLogin(
 	ctx context.Context,
-	connector *SlackConnector,
 	user *bridgev2.User,
 	token, cookieToken string,
 ) (*bridgev2.LoginStep, error) {
-	return (&SlackTokenLogin{Connector: connector, User: user}).SubmitCookies(ctx, map[string]string{
+	return (&SlackTokenLogin{User: user}).SubmitCookies(ctx, map[string]string{
 		"auth_token":   token,
 		"cookie_token": cookieToken,
 	})
