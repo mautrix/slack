@@ -114,7 +114,7 @@ func (s *SlackEmailLogin) submitEmail(ctx context.Context, input map[string]stri
 		if errors.As(err, &apiErr) {
 			return slackEmailStep(slackLoginErrorInstructions(apiErr)), nil
 		}
-		return nil, fmt.Errorf("failed to request Slack email code: %w", err)
+		return nil, wrapSlackLoginError(err)
 	}
 	s.email = email
 	if captcha != nil {
@@ -152,7 +152,7 @@ func (s *SlackEmailLogin) SubmitCookies(ctx context.Context, cookies map[string]
 				return slackEmailStep("Slack rejected that email address. Check it and try again."), nil
 			}
 		}
-		return nil, fmt.Errorf("failed to submit Slack email CAPTCHA: %w", err)
+		return nil, wrapSlackLoginError(err)
 	}
 	s.captcha = nil
 	return slackEmailCodeStep("Slack emailed you a confirmation code. Enter the six characters from that email."), nil
@@ -178,7 +178,7 @@ func (s *SlackEmailLogin) submitCode(ctx context.Context, input map[string]strin
 				return slackEmailCodeStep("Slack is rate limiting code checks. Wait before trying again."), nil
 			}
 		}
-		return nil, fmt.Errorf("failed to confirm Slack email code: %w", err)
+		return nil, wrapSlackLoginError(err)
 	}
 	if len(workspaces) == 0 {
 		s.email = ""
