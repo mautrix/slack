@@ -121,6 +121,10 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 				}()
 			}
 		}
+	case *slack.IMCreatedEvent:
+		if s.Main.Config.DMOnly {
+			s.addDMChannelIDUnchecked(evt.Channel.ID)
+		}
 	case *slack.FileSharedEvent, *slack.FilePublicEvent, *slack.FilePrivateEvent,
 		*slack.FileChangeEvent, *slack.FileDeletedEvent,
 		*slack.DesktopNotificationEvent, *slack.ReconnectUrlEvent, *slack.LatencyReport:
@@ -201,6 +205,17 @@ func isChannelInfoChangeSubtype(subType string) bool {
 }
 
 func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.RemoteEvent, error) {
+	if s.Main.Config.DMOnly {
+		switch evt := rawEvt.(type) {
+		case *slack.ChannelJoinedEvent:
+			s.addDMChannel(&evt.Channel)
+		case *slack.GroupJoinedEvent:
+			s.addDMChannel(&evt.Channel)
+		}
+		if channelID := slackEventChannelID(rawEvt); channelID != "" && !s.isDMChannel(channelID) {
+			return nil, nil
+		}
+	}
 	var meta SlackEventMeta
 	var metaErr error
 	var wrapped bridgev2.RemoteEvent
@@ -312,6 +327,41 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		}
 	}
 	return wrapped, metaErr
+}
+
+func slackEventChannelID(rawEvt any) string {
+	switch evt := rawEvt.(type) {
+	case *slack.MessageEvent:
+		return evt.Channel
+	case *slack.ReactionAddedEvent:
+		return evt.Item.Channel
+	case *slack.ReactionRemovedEvent:
+		return evt.Item.Channel
+	case *slack.UserTypingEvent:
+		return evt.Channel
+	case *slack.ChannelMarkedEvent:
+		return evt.Channel
+	case *slack.IMMarkedEvent:
+		return evt.Channel
+	case *slack.GroupMarkedEvent:
+		return evt.Channel
+	case *slack.ChannelJoinedEvent:
+		return evt.Channel.ID
+	case *slack.ChannelLeftEvent:
+		return evt.Channel
+	case *slack.GroupJoinedEvent:
+		return evt.Channel.ID
+	case *slack.GroupLeftEvent:
+		return evt.Channel
+	case *slack.MemberJoinedChannelEvent:
+		return evt.Channel
+	case *slack.MemberLeftChannelEvent:
+		return evt.Channel
+	case *slack.ChannelUpdateEvent:
+		return evt.Channel
+	default:
+		return ""
+	}
 }
 
 func (s *SlackClient) getReactionInfo(ctx context.Context, reaction string) (emoji string, extraContent map[string]any) {

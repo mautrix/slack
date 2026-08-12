@@ -51,10 +51,15 @@ participant_sync_count: 5
 participant_sync_only_on_create: true
 # Should channel portals be muted by default?
 mute_channels_by_default: false
+# Only discover and bridge direct messages and group direct messages. When enabled,
+# conversation discovery is limited to DMs and channel-scoped events are ignored.
+# Other Slack API responses may still include channel metadata, which is not bridged.
+dm_only: false
 
 # Options for backfilling messages from Slack.
 backfill:
     # Number of conversations to fetch from Slack when syncing workspace.
     # This option applies even if message backfill is disabled below.
+    # This option has no effect when dm_only is true; all DMs are always discovered.
     # If set to -1, all chats in the client.boot response will be bridged, and nothing will be fetched separately.
     conversation_count: -1

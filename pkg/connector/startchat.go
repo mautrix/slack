@@ -119,6 +119,9 @@ func (s *SlackClient) CreateChatWithGhost(ctx context.Context, ghost *bridgev2.G
 }
 
 func (s *SlackClient) CreateGroup(ctx context.Context, params *bridgev2.GroupCreateParams) (*bridgev2.CreateChatResponse, error) {
+	if s.Main.Config.DMOnly && (params.Type == "public-channel" || params.Type == "private-channel") {
+		return nil, fmt.Errorf("cannot create Slack channels in DM-only mode")
+	}
 	if s.Client == nil {
 		return nil, bridgev2.ErrNotLoggedIn
 	}
@@ -157,6 +160,7 @@ func (s *SlackClient) CreateGroup(ctx context.Context, params *bridgev2.GroupCre
 		if err != nil {
 			return nil, fmt.Errorf("failed to open conversation: %w", err)
 		}
+		s.addDMChannel(resp)
 	default:
 		return nil, fmt.Errorf("unrecognized group type %q", params.Type)
 	}
