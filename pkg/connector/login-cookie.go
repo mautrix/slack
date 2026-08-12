@@ -64,7 +64,7 @@ func (s *SlackConnector) CreateLogin(ctx context.Context, user *bridgev2.User, f
 			User: user,
 		}, nil
 	default:
-		return nil, fmt.Errorf("unknown login flow %s", flowID)
+		return nil, bridgev2.ErrInvalidLoginFlowID
 	}
 }
 
@@ -141,11 +141,11 @@ func (s *SlackTokenLogin) SubmitCookies(ctx context.Context, input map[string]st
 	err := client.FetchVersionData(ctx)
 	if err != nil {
 		zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to fetch version data")
-		return nil, err
+		return nil, wrapSlackLoginError(err)
 	}
 	info, err := client.ClientUserBootContext(ctx, time.Time{})
 	if err != nil {
-		return nil, fmt.Errorf("client.boot failed: %w", err)
+		return nil, wrapSlackLoginError(err)
 	}
 	ul, err := s.User.NewLogin(ctx, &database.UserLogin{
 		ID:         slackid.MakeUserLoginID(info.Team.ID, info.Self.ID),

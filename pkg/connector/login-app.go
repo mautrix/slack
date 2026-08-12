@@ -64,7 +64,7 @@ func (s *SlackAppLogin) SubmitUserInput(ctx context.Context, input map[string]st
 	client := makeSlackClient(&s.User.Log, token, "", appToken)
 	info, err := client.AuthTestContext(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("auth.test failed: %w", err)
+		return nil, wrapSlackLoginError(err)
 	}
 	ul, err := s.User.NewLogin(ctx, &database.UserLogin{
 		ID:         slackid.MakeUserLoginID(info.TeamID, info.UserID),
