@@ -299,6 +299,14 @@ func (mc *MessageConverter) renderRichTextSectionElements(
 			openingTags(&htmlText, e.Style)
 			mrkdwn.RoomMentionToHTML(&htmlText, e.ChannelID, mxid, alias, name, mc.ServerName)
 			closingTags(&htmlText, e.Style)
+		case *slack.RichTextSectionUserGroupElement:
+			name, mentionedUsers := mc.GetMentionedUserGroupInfo(ctx, e.UsergroupID)
+			for _, userID := range mentionedUsers {
+				mentions.Add(userID)
+			}
+			openingTags(&htmlText, e.Style)
+			mrkdwn.UserGroupMentionToHTML(&htmlText, e.UsergroupID, name)
+			closingTags(&htmlText, e.Style)
 		case *slack.RichTextSectionLinkElement:
 			var linkText string
 			if e.Text != "" {

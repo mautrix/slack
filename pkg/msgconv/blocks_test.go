@@ -2,9 +2,12 @@ package msgconv
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/slack-go/slack"
+	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/database"
 
 	"go.mau.fi/mautrix-slack/pkg/msgconv/mrkdwn"
 )
@@ -13,6 +16,29 @@ func testMessageConverter() *MessageConverter {
 	return &MessageConverter{
 		SlackMrkdwnParser: mrkdwn.New(&mrkdwn.Params{}),
 	}
+}
+
+type testUserGroupClient struct {
+	bridgev2.NetworkAPI
+	handle      string
+	requestedID string
+}
+
+func (tugc *testUserGroupClient) GetClient() *slack.Client {
+	return nil
+}
+
+func (tugc *testUserGroupClient) GetEmoji(context.Context, string) (string, bool) {
+	return "", false
+}
+
+func (tugc *testUserGroupClient) GetChannelInfoForMention(context.Context, string) (string, *bridgev2.Portal, error) {
+	return "", nil, nil
+}
+
+func (tugc *testUserGroupClient) GetUserGroupInfoForMention(_ context.Context, userGroupID string) (string, []string, error) {
+	tugc.requestedID = userGroupID
+	return tugc.handle, []string{}, nil
 }
 
 func TestSlackBlocksToMatrixMessageUnfurlFallback(t *testing.T) {
@@ -83,6 +109,33 @@ func TestSlackBlocksToMatrixMessageMention(t *testing.T) {
 	}
 	if part.Content.Body != "take a look at message in #C123 at" {
 		t.Fatalf("unexpected body: %q", part.Content.Body)
+	}
+}
+
+func TestSlackBlocksToMatrixUserGroupMention(t *testing.T) {
+	mc := testMessageConverter()
+	client := &testUserGroupClient{handle: "platform-team"}
+	ctx := context.WithValue(context.Background(), contextKeySource, &bridgev2.UserLogin{UserLogin: &database.UserLogin{ID: "ABC-DEF"}, Client: client})
+	fmt.Println(ctx)
+	part, err := mc.slackBlocksToMatrix(ctx, nil, nil, slack.Blocks{
+		BlockSet: []slack.Block{
+			slack.NewRichTextBlock("", slack.NewRichTextSection(
+				slack.NewRichTextSectionTextElement("Hi ", nil),
+				slack.NewRichTextSectionUserGroupElement("S123"),
+			)),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.requestedID != "S123" {
+		t.Fatalf("unexpected requested ID: %q", client.requestedID)
+	}
+	if part.Content.Body != "Hi @platform-team" {
+		t.Fatalf("unexpected body: %q", part.Content.Body)
+	}
+	if part.Content.FormattedBody != "" {
+		t.Fatalf("unexpected formatted body: %q", part.Content.FormattedBody)
 	}
 }
 

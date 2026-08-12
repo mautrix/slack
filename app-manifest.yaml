@@ -35,6 +35,7 @@ oauth_config:
       - reactions:read
       - reactions:write
       - team:read
+      - usergroups:read
       - users:read
       - users.profile:read
       - users:read.email

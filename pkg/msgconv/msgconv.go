@@ -56,6 +56,7 @@ type SlackClientProvider interface {
 	GetClient() *slack.Client
 	GetEmoji(context.Context, string) (string, bool)
 	GetChannelInfoForMention(context.Context, string) (string, *bridgev2.Portal, error)
+	GetUserGroupInfoForMention(context.Context, string) (string, []string, error)
 }
 
 func (mc *MessageConverter) GetMentionedUserInfo(ctx context.Context, userID string) (mxid id.UserID, name string) {
@@ -100,6 +101,25 @@ func (mc *MessageConverter) GetMentionedRoomInfo(ctx context.Context, channelID 
 	}
 }
 
+func (mc *MessageConverter) GetMentionedUserGroupInfo(ctx context.Context, userGroupID string) (name string, userIDs []id.UserID) {
+	source := ctx.Value(contextKeySource).(*bridgev2.UserLogin)
+	teamID, loggedInUserID := slackid.ParseUserLoginID(source.ID)
+	name, users, err := source.Client.(SlackClientProvider).GetUserGroupInfoForMention(ctx, userGroupID)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Str("user_group_id", userGroupID).Msg("Failed to get info of mentioned user group")
+	}
+	userIDs = make([]id.UserID, 0, len(users))
+	for _, userID := range users {
+		userIDs = append(userIDs, mc.Bridge.Matrix.FormatGhostMXID(slackid.MakeUserID(teamID, userID)))
+		if userID == loggedInUserID {
+			userIDs = append(userIDs, source.UserMXID)
+		} else if otherUserLogin := mc.Bridge.GetCachedUserLoginByID(slackid.MakeUserLoginID(teamID, userID)); otherUserLogin != nil {
+			userIDs = append(userIDs, otherUserLogin.UserMXID)
+		}
+	}
+	return
+}
+
 func New(br *bridgev2.Bridge, db *slackdb.SlackDB) *MessageConverter {
 	mc := &MessageConverter{
 		Bridge: br,
@@ -119,9 +139,10 @@ func New(br *bridgev2.Bridge, db *slackdb.SlackDB) *MessageConverter {
 		MatrixHTMLParser: matrixfmt.New2(br, db),
 	}
 	mc.SlackMrkdwnParser = mrkdwn.New(&mrkdwn.Params{
-		ServerName:     br.Matrix.ServerName(),
-		GetUserInfo:    mc.GetMentionedUserInfo,
-		GetChannelInfo: mc.GetMentionedRoomInfo,
+		ServerName:       br.Matrix.ServerName(),
+		GetUserInfo:      mc.GetMentionedUserInfo,
+		GetChannelInfo:   mc.GetMentionedRoomInfo,
+		GetUserGroupInfo: mc.GetMentionedUserGroupInfo,
 	})
 	return mc
 }

@@ -104,7 +104,8 @@ func (n *astSlackURL) String() string {
 type astSlackSpecialMention struct {
 	astSlackTag
 
-	content string
+	content      string
+	resolvedName string
 }
 
 func (n *astSlackSpecialMention) String() string {
@@ -116,9 +117,10 @@ func (n *astSlackSpecialMention) String() string {
 }
 
 type Params struct {
-	ServerName     string
-	GetUserInfo    func(ctx context.Context, userID string) (mxid id.UserID, name string)
-	GetChannelInfo func(ctx context.Context, channelID string) (mxid id.RoomID, alias id.RoomAlias, name string)
+	ServerName       string
+	GetUserInfo      func(ctx context.Context, userID string) (mxid id.UserID, name string)
+	GetChannelInfo   func(ctx context.Context, channelID string) (mxid id.RoomID, alias id.RoomAlias, name string)
+	GetUserGroupInfo func(ctx context.Context, userGroupID string) (string, []id.UserID)
 }
 
 type slackTagParser struct {
@@ -152,23 +154,31 @@ func (s *slackTagParser) Parse(parent ast.Node, block text.Reader, pc parser.Con
 	text := string(match[4])
 
 	ctx := pc.Get(ContextKeyContext).(context.Context)
+	mentions := pc.Get(ContextKeyMentions).(*event.Mentions)
 
 	tag := astSlackTag{label: text}
 	switch sigil {
 	case "@":
 		mxid, name := s.GetUserInfo(ctx, content)
-		pc.Get(ContextKeyMentions).(*event.Mentions).Add(mxid)
+		mentions.Add(mxid)
 		return &astSlackUserMention{astSlackTag: tag, userID: content, mxid: mxid, name: name}
 	case "#":
 		mxid, alias, name := s.GetChannelInfo(ctx, content)
 		return &astSlackChannelMention{astSlackTag: tag, channelID: content, serverName: s.ServerName, mxid: mxid, alias: alias, name: name}
 	case "!":
+		resolvedName := ""
+		if userGroupID, ok := strings.CutPrefix(content, "subteam^"); ok && tag.label == "" {
+			var mentionedUsers []id.UserID
+			resolvedName, mentionedUsers = s.GetUserGroupInfo(ctx, userGroupID)
+			for _, userID := range mentionedUsers {
+				mentions.Add(userID)
+			}
+		}
 		switch content {
 		case "channel", "everyone", "here":
-			pc.Get(ContextKeyMentions).(*event.Mentions).Room = true
-		default:
+			mentions.Room = true
 		}
-		return &astSlackSpecialMention{astSlackTag: tag, content: content}
+		return &astSlackSpecialMention{astSlackTag: tag, content: content, resolvedName: resolvedName}
 	case "":
 		return &astSlackURL{astSlackTag: tag, url: content}
 	default:
@@ -205,6 +215,16 @@ func RoomMentionToHTML(out io.Writer, channelID string, mxid id.RoomID, alias id
 		_, _ = fmt.Fprintf(out, "%s", name)
 	} else {
 		_, _ = fmt.Fprintf(out, "&lt;#%s&gt;", channelID)
+	}
+}
+
+func UserGroupMentionToHTML(out io.Writer, userGroupID, name string) {
+	if name == "" {
+		_, _ = fmt.Fprintf(out, "&lt;!subteam^%s&gt;", html.EscapeString(userGroupID))
+	} else if strings.HasPrefix(name, "@") {
+		_, _ = io.WriteString(out, html.EscapeString(name))
+	} else {
+		_, _ = fmt.Fprintf(out, "@%s", html.EscapeString(name))
 	}
 }
 
@@ -256,7 +276,13 @@ func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source [
 			// do @room mentions?
 			return
 		case "subteam":
-			// do subteam handling? more spaces?
+			if len(parts) > 1 {
+				name := node.label
+				if name == "" {
+					name = node.resolvedName
+				}
+				UserGroupMentionToHTML(w, parts[1], name)
+			}
 			return
 		default:
 			return

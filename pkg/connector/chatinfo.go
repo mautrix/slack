@@ -18,6 +18,7 @@ package connector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"slices"
@@ -84,6 +85,49 @@ func (s *SlackClient) GetChannelInfoForMention(ctx context.Context, channelID st
 	}
 	//portal.UpdateInfo(ctx, s.wrapChatInfo(ctx, info, false), s.UserLogin, nil, time.Time{})
 	return s.formatChannelName(info), portal, nil
+}
+
+const userGroupInfoCacheExpiry = 8 * time.Hour
+const userGroupInfoRetryInterval = 15 * time.Minute
+
+func (s *SlackClient) GetUserGroupInfoForMention(ctx context.Context, userGroupID string) (name string, users []string, err error) {
+	s.userGroupInfoCacheLock.Lock()
+	defer s.userGroupInfoCacheLock.Unlock()
+
+	name = userGroupID
+	entry, found := s.userGroupInfoCache[userGroupID]
+	cacheExpired := time.Since(s.userGroupInfoCacheTS) >= userGroupInfoCacheExpiry
+	canRetry := time.Since(s.userGroupInfoCacheTS) >= userGroupInfoRetryInterval
+	if (!found || cacheExpired) && canRetry {
+		if err = ctx.Err(); err != nil {
+			return
+		}
+		s.userGroupInfoCacheTS = time.Now()
+		var groups []slack.UserGroup
+		groups, err = s.Client.GetUserGroupsContext(
+			ctx,
+			slack.GetUserGroupsOptionTeamID(s.TeamID),
+			slack.GetUserGroupsOptionIncludeDisabled(true),
+			slack.GetUserGroupsOptionIncludeUsers(true),
+		)
+		if err != nil {
+			var slackErr slack.SlackErrorResponse
+			if errors.As(err, &slackErr) && (slackErr.Err == "missing_scope" || slackErr.Err == "access_denied" || slackErr.Err == "no_permission" || slackErr.Err == "enterprise_is_restricted") {
+				s.userGroupInfoCacheTS = time.Now().Add(24 * time.Hour)
+			}
+			return
+		}
+		cache := make(map[string]*userGroupCacheEntry, len(groups))
+		for _, group := range groups {
+			cache[group.ID] = &userGroupCacheEntry{
+				name:  group.Handle,
+				users: group.Users,
+			}
+		}
+		s.userGroupInfoCache = cache
+		entry = cache[userGroupID]
+	}
+	return entry.name, entry.users, nil
 }
 
 func (s *SlackClient) fetchChannelMembers(ctx context.Context, channelID string, limit int) (output map[networkid.UserID]bridgev2.ChatMember) {
