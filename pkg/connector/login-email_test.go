@@ -152,6 +152,30 @@ func TestSlackEmailLoginStateMachine(t *testing.T) {
 	assert.Equal(t, "xoxd-test", completedCookie)
 }
 
+func TestSlackEmailLoginRejectedCodeRepromptsInsteadOfCancelling(t *testing.T) {
+	reachCodeStep := func(t *testing.T, confirmErr error) *SlackEmailLogin {
+		t.Helper()
+		login := &SlackEmailLogin{API: &fakeSlackEmailLoginAPI{confirmCodeErr: confirmErr}}
+		step, err := login.SubmitUserInput(context.Background(), map[string]string{loginFieldEmail: "person@example.com"})
+		require.NoError(t, err)
+		require.Equal(t, LoginStepIDEmailCode, step.StepID)
+		return login
+	}
+
+	t.Run("rejected code without an enumerated case stays on the code step", func(t *testing.T) {
+		login := reachCodeStep(t, &slackLoginAPIError{Code: "code_already_used"})
+		step, err := login.SubmitUserInput(context.Background(), map[string]string{loginFieldEmailCode: "abc-123"})
+		require.NoError(t, err)
+		assert.Equal(t, LoginStepIDEmailCode, step.StepID)
+	})
+
+	t.Run("fatal error still cancels the login", func(t *testing.T) {
+		login := reachCodeStep(t, &slackLoginAPIError{Code: "account_inactive"})
+		_, err := login.SubmitUserInput(context.Background(), map[string]string{loginFieldEmailCode: "abc-123"})
+		require.ErrorIs(t, err, ErrLoginAccountInactive)
+	})
+}
+
 func TestSlackEmailLoginCaptchaUsesEmbeddedWebviewAndKeepsNativeCodeStep(t *testing.T) {
 	api := &fakeSlackEmailLoginAPI{
 		captcha: &slackLoginCaptcha{SiteKey: "site-key"},
