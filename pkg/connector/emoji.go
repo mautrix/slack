@@ -308,6 +308,15 @@ func (s *SlackClient) tryGetEmoji(ctx context.Context, shortcode string, ensureU
 		return
 	}
 	found = true
+	if s.Main.useDirectMedia.Load() && !strings.HasPrefix(dbEmoji.Value, "alias:") {
+		valURI, directMediaErr := s.Main.br.Matrix.GenerateContentURI(ctx, makeSlackEmojiMediaID(dbEmoji.Value))
+		if directMediaErr == nil {
+			return string(valURI), true, true
+		}
+		zerolog.Ctx(ctx).Warn().Err(directMediaErr).
+			Str("shortcode", shortcode).
+			Msg("Failed to generate direct media URI for custom emoji, falling back to upload")
+	}
 	if dbEmoji.ImageMXC != "" {
 		val = string(dbEmoji.ImageMXC)
 		isImage = true
