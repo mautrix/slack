@@ -19,7 +19,6 @@ package connector
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"net/url"
 	"strings"
 
@@ -51,31 +50,12 @@ func parseSlackEmojiMediaID(mediaID networkid.MediaID) (*url.URL, error) {
 	return parsed, nil
 }
 
-func (s *SlackConnector) Download(ctx context.Context, mediaID networkid.MediaID, _ map[string]string) (mediaproxy.GetMediaResponse, error) {
+func (s *SlackConnector) Download(_ context.Context, mediaID networkid.MediaID, _ map[string]string) (mediaproxy.GetMediaResponse, error) {
 	emojiURL, err := parseSlackEmojiMediaID(mediaID)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, emojiURL.String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to prepare Slack emoji request: %w", err)
-	}
-	client := s.MsgConv.HTTP
-	client.CheckRedirect = func(req *http.Request, _ []*http.Request) error {
-		_, err := parseSlackEmojiMediaID(makeSlackEmojiMediaID(req.URL.String()))
-		return err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to download Slack emoji: %w", err)
-	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		_ = resp.Body.Close()
-		return nil, fmt.Errorf("failed to download Slack emoji: HTTP %d", resp.StatusCode)
-	}
-	return &mediaproxy.GetMediaResponseData{
-		Reader:        resp.Body,
-		ContentType:   resp.Header.Get("Content-Type"),
-		ContentLength: resp.ContentLength,
+	return &mediaproxy.GetMediaResponseURL{
+		URL: emojiURL.String(),
 	}, nil
 }
