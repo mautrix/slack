@@ -18,7 +18,6 @@ package connector
 
 import (
 	"context"
-	"sync/atomic"
 
 	"github.com/slack-go/slack"
 	"maunium.net/go/mautrix"
@@ -34,7 +33,7 @@ type SlackConnector struct {
 	DB      *slackdb.SlackDB
 	MsgConv *msgconv.MessageConverter
 
-	useDirectMedia atomic.Bool
+	directMedia bool
 }
 
 var (
@@ -56,7 +55,7 @@ func (s *SlackConnector) SetMaxFileSize(maxSize int64) {
 }
 
 func (s *SlackConnector) SetUseDirectMedia() {
-	s.useDirectMedia.Store(true)
+	s.directMedia = true
 }
 
 func (s *SlackConnector) Start(ctx context.Context) error {
