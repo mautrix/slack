@@ -179,8 +179,11 @@ func (s *SlackClient) PreHandleMatrixReaction(ctx context.Context, msg *bridgev2
 		dbEmoji, err = s.Main.DB.Emoji.GetByMXC(ctx, key)
 		if err != nil {
 			err = fmt.Errorf("failed to get emoji from db: %w", err)
+		} else if dbEmoji == nil {
+			err = fmt.Errorf("unknown emoji %q", key)
+		} else {
+			emojiID = dbEmoji.EmojiID
 		}
-		emojiID = dbEmoji.EmojiID
 	} else {
 		emojiID = emoji.GetShortcode(key)
 		if emojiID == "" {
