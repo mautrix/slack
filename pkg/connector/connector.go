@@ -32,11 +32,14 @@ type SlackConnector struct {
 	Config  Config
 	DB      *slackdb.SlackDB
 	MsgConv *msgconv.MessageConverter
+
+	directMedia bool
 }
 
 var (
 	_ bridgev2.NetworkConnector      = (*SlackConnector)(nil)
 	_ bridgev2.MaxFileSizeingNetwork = (*SlackConnector)(nil)
+	_ bridgev2.DirectMediableNetwork = (*SlackConnector)(nil)
 )
 
 func (s *SlackConnector) Init(bridge *bridgev2.Bridge) {
@@ -49,6 +52,10 @@ func (s *SlackConnector) Init(bridge *bridgev2.Bridge) {
 
 func (s *SlackConnector) SetMaxFileSize(maxSize int64) {
 	s.MsgConv.MaxFileSize = int(maxSize)
+}
+
+func (s *SlackConnector) SetUseDirectMedia() {
+	s.directMedia = true
 }
 
 func (s *SlackConnector) Start(ctx context.Context) error {

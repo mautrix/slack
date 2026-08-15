@@ -38,6 +38,9 @@ var _ bridgev2.StickerImportingNetworkAPI = (*SlackClient)(nil)
 const StickerSourceID = "slack"
 
 func (s *SlackClient) DownloadImagePack(ctx context.Context, url string) (*bridgev2.ImportedImagePack, error) {
+	if s.BootResp == nil {
+		return nil, bridgev2.ErrNotLoggedIn
+	}
 	if !strings.Contains(url, s.BootResp.Team.Domain) {
 		return nil, fmt.Errorf("image pack url must contain team domain (%s)", s.BootResp.Team.Domain)
 	}
@@ -80,6 +83,9 @@ func (s *SlackClient) workspaceImagePackMeta() *event.ImagePackMetadata {
 }
 
 func (s *SlackClient) ListImagePacks(ctx context.Context) ([]*event.ImagePackMetadata, error) {
+	if s.BootResp == nil {
+		return nil, bridgev2.ErrNotLoggedIn
+	}
 	return []*event.ImagePackMetadata{s.workspaceImagePackMeta()}, nil
 }
 
@@ -185,7 +191,16 @@ func downloadPlainFile(ctx context.Context, url, thing string) ([]byte, error) {
 	return data, nil
 }
 
-func reuploadEmoji(ctx context.Context, intent bridgev2.MatrixAPI, url string) (id.ContentURIString, error) {
+func (s *SlackConnector) reuploadEmoji(ctx context.Context, intent bridgev2.MatrixAPI, url string) (id.ContentURIString, error) {
+	if s.directMedia {
+		mediaID := DirectMediaEmojiFromURL(url).MediaID()
+		if mediaID != nil {
+			return s.br.Matrix.GenerateContentURI(ctx, mediaID)
+		}
+		zerolog.Ctx(ctx).Warn().
+			Str("url", url).
+			Msg("Unsupported custom emoji URL for direct media, falling back to upload")
+	}
 	data, err := downloadPlainFile(ctx, url, "emoji")
 	if err != nil {
 		return "", err
@@ -319,7 +334,7 @@ func (s *SlackClient) tryGetEmoji(ctx context.Context, shortcode string, ensureU
 		val, isImage, _ = s.tryGetEmoji(ctx, strings.TrimPrefix(dbEmoji.Value, "alias:"), ensureUploaded, false)
 	} else if ensureUploaded {
 		defer s.Main.DB.Emoji.WithLock(s.TeamID)()
-		dbEmoji.ImageMXC, err = reuploadEmoji(ctx, s.Main.br.Bot, dbEmoji.Value)
+		dbEmoji.ImageMXC, err = s.Main.reuploadEmoji(ctx, s.Main.br.Bot, dbEmoji.Value)
 		if err != nil {
 			zerolog.Ctx(ctx).Err(err).
 				Str("shortcode", shortcode).
