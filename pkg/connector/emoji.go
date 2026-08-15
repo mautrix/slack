@@ -38,6 +38,9 @@ var _ bridgev2.StickerImportingNetworkAPI = (*SlackClient)(nil)
 const StickerSourceID = "slack"
 
 func (s *SlackClient) DownloadImagePack(ctx context.Context, url string) (*bridgev2.ImportedImagePack, error) {
+	if s.BootResp == nil {
+		return nil, bridgev2.ErrNotLoggedIn
+	}
 	if !strings.Contains(url, s.BootResp.Team.Domain) {
 		return nil, fmt.Errorf("image pack url must contain team domain (%s)", s.BootResp.Team.Domain)
 	}
@@ -80,6 +83,9 @@ func (s *SlackClient) workspaceImagePackMeta() *event.ImagePackMetadata {
 }
 
 func (s *SlackClient) ListImagePacks(ctx context.Context) ([]*event.ImagePackMetadata, error) {
+	if s.BootResp == nil {
+		return nil, bridgev2.ErrNotLoggedIn
+	}
 	return []*event.ImagePackMetadata{s.workspaceImagePackMeta()}, nil
 }
 
