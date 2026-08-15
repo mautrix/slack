@@ -233,7 +233,7 @@ func (mc *MessageConverter) renderMessageMention(ctx context.Context, mention *s
 
 	linkText := "Slack message"
 	switch {
-	case mention.Text != "":
+	case mention.Text != "" && (mention.Text != mention.URL || (authorName == "" && channelName == "")):
 		linkText = mention.Text
 	case authorName != "" && channelName != "":
 		linkText = fmt.Sprintf("%s in %s", authorName, channelName)
@@ -243,31 +243,26 @@ func (mc *MessageConverter) renderMessageMention(ctx context.Context, mention *s
 		linkText = fmt.Sprintf("%s's message", authorName)
 	}
 
+	mentionLink := mention.URL
+	if matrixURL := mc.GetMentionedMessageURL(ctx, mention.ChannelID, mention.MessageTS); matrixURL != "" {
+		mentionLink = matrixURL
+	} else if mentionLink == "" {
+		if teamDomain := mc.getTeamDomain(ctx); teamDomain != "" {
+			timestampWithoutDot := strings.ReplaceAll(mention.MessageTS, ".", "")
+			mentionLink = fmt.Sprintf("https://%s.slack.com/archives/%s/p%s", teamDomain, mention.ChannelID, timestampWithoutDot)
+		}
+	}
+
 	var htmlText strings.Builder
 	openingTags(&htmlText, mention.Style)
-	switch {
-	case mention.URL != "":
+	if mentionLink != "" {
 		_, _ = fmt.Fprintf(
 			&htmlText,
 			`<a href="%s">%s</a>`,
-			html.EscapeString(mention.URL),
+			html.EscapeString(mentionLink),
 			html.EscapeString(linkText),
 		)
-	case mention.ChannelID != "" && mention.MessageTS != "":
-		if teamDomain := mc.getTeamDomain(ctx); teamDomain != "" {
-			timestampWithoutDot := strings.ReplaceAll(mention.MessageTS, ".", "")
-			_, _ = fmt.Fprintf(
-				&htmlText,
-				`<a href="https://%s.slack.com/archives/%s/p%s">%s</a>`,
-				html.EscapeString(teamDomain),
-				html.EscapeString(mention.ChannelID),
-				html.EscapeString(timestampWithoutDot),
-				html.EscapeString(linkText),
-			)
-		} else {
-			htmlText.WriteString(html.EscapeString(linkText))
-		}
-	default:
+	} else {
 		htmlText.WriteString(html.EscapeString(linkText))
 	}
 	closingTags(&htmlText, mention.Style)

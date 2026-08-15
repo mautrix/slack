@@ -120,6 +120,27 @@ func (mc *MessageConverter) GetMentionedUserGroupInfo(ctx context.Context, userG
 	return
 }
 
+func (mc *MessageConverter) GetMentionedMessageURL(ctx context.Context, channelID, messageTS string) string {
+	source := ctx.Value(contextKeySource).(*bridgev2.UserLogin)
+	teamID, _ := slackid.ParseUserLoginID(source.ID)
+	msgID := slackid.MakeMessageID(teamID, channelID, messageTS)
+	msg, err := mc.Bridge.DB.Message.GetFirstPartByID(ctx, source.ID, msgID)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Str("message_id", string(msgID)).Msg("Failed to get info of mentioned message")
+	}
+	if msg == nil || msg.HasFakeMXID() {
+		return ""
+	}
+	portal, err := mc.Bridge.GetExistingPortalByKey(ctx, msg.Room)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Stringer("message_id", msg.Room).Msg("Failed to get portal of mentioned message")
+	}
+	if portal == nil || portal.MXID == "" {
+		return ""
+	}
+	return portal.MXID.EventURI(msg.MXID, mc.Bridge.Bot.GetMXID().Homeserver()).MatrixToURL()
+}
+
 func New(br *bridgev2.Bridge, db *slackdb.SlackDB) *MessageConverter {
 	mc := &MessageConverter{
 		Bridge: br,
