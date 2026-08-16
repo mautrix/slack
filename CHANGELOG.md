@@ -1,3 +1,14 @@
+# v26.08
+
+* Added support for user group mentions.
+* Added support for using direct media for workspace emojis.
+* Added config option to only bridge DMs.
+* Added native password login support.
+  * Password login may require a CAPTCHA, in which case it won't work with bot
+    commands. Manual token login is still recommended.
+* Updated message bridging to convert Slack message links to matrix.to links if
+  the linked message was already bridged.
+
 # v26.07
 
 * Updated Docker image to Alpine 3.24.
