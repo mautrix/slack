@@ -286,11 +286,8 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 		//   ["ra"]      → Everyone except guests
 		//   ["admin"]   → Admins only (optionally plus specific users)
 		// Topic editing follows posting permissions, so mirror that here.
-		for _, t := range info.Properties.PostingRestrictedTo.Type {
-			if t == "admin" {
-				topicLevel = 50
-				break
-			}
+		if slices.Contains(info.Properties.PostingRestrictedTo.Type, "admin") {
+			topicLevel = 50
 		}
 	}
 	members.PowerLevels = &bridgev2.PowerLevelOverrides{

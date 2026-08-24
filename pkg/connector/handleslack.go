@@ -434,11 +434,11 @@ func wrapMemberChange(meta *SlackEventMeta, sender bridgev2.EventSender, newMemb
 		SlackEventMeta: meta,
 		Change: &bridgev2.ChatInfoChange{
 			MemberChanges: &bridgev2.ChatMemberList{
-				Members: []bridgev2.ChatMember{{
+				MemberMap: bridgev2.ChatMemberMap{}.Set(bridgev2.ChatMember{
 					EventSender:    sender,
 					Membership:     newMembership,
 					PrevMembership: prevMembership,
-				}},
+				}),
 			},
 		},
 	}

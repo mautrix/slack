@@ -352,6 +352,7 @@ func (s *SlackClient) runSocketMode(ctx context.Context) {
 	log := zerolog.Ctx(ctx)
 	for ctx.Err() == nil {
 		err := s.SocketMode.RunContext(ctx)
+		//lint:ignore SA4023 -
 		if err != nil {
 			log.Err(err).Msg("Error in socket mode connection")
 			s.UserLogin.BridgeState.Send(status.BridgeState{

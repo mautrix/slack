@@ -1,8 +1,8 @@
 module go.mau.fi/mautrix-slack
 
-go 1.25.0
+go 1.26.0
 
-toolchain go1.26.6
+toolchain go1.27.0
 
 tool go.mau.fi/util/cmd/maubuild
 
@@ -13,10 +13,10 @@ require (
 	github.com/slack-go/slack v0.24.0
 	github.com/stretchr/testify v1.11.1
 	github.com/yuin/goldmark v1.8.5
-	go.mau.fi/util v0.10.0
+	go.mau.fi/util v0.10.1-0.20260820140024-eb612d936fde
 	golang.org/x/net v0.58.0
 	gopkg.in/yaml.v3 v3.0.1
-	maunium.net/go/mautrix v0.30.0
+	maunium.net/go/mautrix v0.30.1-0.20260822101838-bdb58f2e6c0a
 )
 
 require (
