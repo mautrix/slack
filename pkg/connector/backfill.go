@@ -18,6 +18,7 @@ package connector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -91,6 +92,10 @@ func (s *SlackClient) FetchMessages(ctx context.Context, params bridgev2.FetchMe
 		chunk, err = s.Client.GetConversationHistoryContext(ctx, slackParams)
 	}
 	if err != nil {
+		var slackErr slack.SlackErrorResponse
+		if errors.As(err, &slackErr) && slackErr.Err == "channel_not_found" {
+			return &bridgev2.FetchMessagesResponse{HasMore: false}, nil
+		}
 		return nil, err
 	}
 	convertedMessages := make([]*bridgev2.BackfillMessage, 0, len(chunk.Messages))
