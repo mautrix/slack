@@ -117,6 +117,9 @@ func (mc *MessageConverter) ToSlack(
 		if content.BeeperLinkPreviews != nil && len(content.BeeperLinkPreviews) == 0 {
 			options = append(options, slack.MsgOptionDisableLinkUnfurl(), slack.MsgOptionDisableMediaUnfurl())
 		}
+		if content.BeeperBroadcastOutsideThread {
+			options = append(options, slack.MsgOptionBroadcast())
+		}
 		if origSender != nil {
 			options = append(options, slack.MsgOptionUsername(origSender.FormattedName))
 			urlProvider, ok := mc.Bridge.Matrix.(bridgev2.MatrixConnectorWithPublicMedia)
@@ -169,6 +172,7 @@ func (mc *MessageConverter) ToSlack(
 				Channel:         channelID,
 				ThreadTimestamp: threadRootID,
 			}
+			// TODO support broadcast outside thread flag
 			if caption != "" {
 				fileUpload.InitialComment = caption
 			}
@@ -200,9 +204,10 @@ func (mc *MessageConverter) ToSlack(
 				block = slack.NewRichTextBlock("", slack.NewRichTextSection(slack.NewRichTextSectionTextElement(caption, nil)))
 			}
 			fileShare := &slack.ShareFileParams{
-				Files:    []string{resp.File},
-				Channel:  channelID,
-				ThreadTS: threadRootID,
+				Files:     []string{resp.File},
+				Channel:   channelID,
+				ThreadTS:  threadRootID,
+				Broadcast: content.BeeperBroadcastOutsideThread,
 			}
 			if block != nil {
 				fileShare.Blocks = []slack.Block{block}

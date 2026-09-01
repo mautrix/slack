@@ -90,6 +90,11 @@ func (mc *MessageConverter) ToMatrix(
 			CaptionMerged: true,
 		}
 	}
+	if msg.SubType == slack.MsgSubTypeThreadBroadcast {
+		for _, part := range output.Parts {
+			part.Content.BeeperBroadcastOutsideThread = true
+		}
+	}
 	if msg.Username != "" {
 		for _, part := range output.Parts {
 			// TODO reupload avatar
@@ -165,6 +170,9 @@ func (mc *MessageConverter) EditToMatrix(
 	}
 	// TODO this doesn't handle edits to captions in msg.Attachments gifs properly
 	if modifiedPart != nil {
+		if msg.SubType == slack.MsgSubTypeThreadBroadcast {
+			modifiedPart.Content.BeeperBroadcastOutsideThread = true
+		}
 		output.ModifiedParts = append(output.ModifiedParts, modifiedPart.ToEditPart(editTargetPart))
 	}
 	return output
