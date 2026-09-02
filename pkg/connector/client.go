@@ -274,6 +274,7 @@ func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientUserBoo
 			zerolog.Ctx(ctx).Warn().Err(prefetchErr).Msg("Failed to discover DM conversations before connecting")
 		}
 	}
+	// TODO apply context to all loops and cancel on disconnect
 	if s.IsRealUser {
 		go s.consumeRTMEvents()
 		go s.RTM.ManageConnection()
@@ -313,7 +314,13 @@ func (s *SlackClient) resyncUsers() {
 	const resyncWait = 30 * time.Second
 	const shortResyncWait = 1 * time.Second
 	forceShortWait := false
-	for entry := range s.userResyncQueue {
+	for {
+		var entry *bridgev2.Ghost
+		select {
+		case entry = <-s.userResyncQueue:
+		case <-ctx.Done():
+			return
+		}
 		_, userID := slackid.ParseUserID(entry.ID)
 		entries := map[string]*bridgev2.Ghost{userID: entry}
 		var timer *time.Timer
@@ -335,6 +342,8 @@ func (s *SlackClient) resyncUsers() {
 				} else {
 					timer.Reset(resyncWait)
 				}
+			case <-ctx.Done():
+				return
 			case <-timer.C:
 				break CollectLoop
 			}
