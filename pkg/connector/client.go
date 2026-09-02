@@ -277,7 +277,7 @@ func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientUserBoo
 	if s.IsRealUser {
 		go s.consumeRTMEvents()
 		go s.RTM.ManageConnection()
-		go s.resyncUsers()
+		s.startUserResync()
 	} else {
 		go s.consumeSocketModeEvents()
 		go s.runSocketMode(ctx)
@@ -303,44 +303,49 @@ func (s *SlackClient) consumeSocketModeEvents() {
 	}
 }
 
-func (s *SlackClient) resyncUsers() {
+func (s *SlackClient) startUserResync() {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	ctx = s.UserLogin.Log.With().Str("component", "user resync loop").Logger().WithContext(ctx)
 	if cancelOld := s.stopResyncQueue.Swap(&cancel); cancelOld != nil {
 		(*cancelOld)()
 	}
+	go s.resyncUsers(ctx)
+}
+
+func (s *SlackClient) resyncUsers(ctx context.Context) {
+	ctx = s.UserLogin.Log.With().Str("component", "user resync loop").Logger().WithContext(ctx)
 	const resyncWait = 30 * time.Second
 	const shortResyncWait = 1 * time.Second
+	var entries map[string]*bridgev2.Ghost
+	var timer *time.Timer
+	var timerC <-chan time.Time
 	forceShortWait := false
-	for entry := range s.userResyncQueue {
-		_, userID := slackid.ParseUserID(entry.ID)
-		entries := map[string]*bridgev2.Ghost{userID: entry}
-		var timer *time.Timer
-		if entry.Name == "" || forceShortWait {
-			forceShortWait = true
-			timer = time.NewTimer(shortResyncWait)
-		} else {
-			timer = time.NewTimer(resyncWait)
-		}
-	CollectLoop:
-		for {
-			select {
-			case entry = <-s.userResyncQueue:
-				_, userID = slackid.ParseUserID(entry.ID)
-				entries[userID] = entry
-				if entry.Name == "" || forceShortWait {
-					forceShortWait = true
-					timer.Reset(shortResyncWait)
-				} else {
-					timer.Reset(resyncWait)
-				}
-			case <-timer.C:
-				break CollectLoop
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case entry := <-s.userResyncQueue:
+			_, userID := slackid.ParseUserID(entry.ID)
+			if entries == nil {
+				entries = make(map[string]*bridgev2.Ghost)
 			}
+			entries[userID] = entry
+			wait := resyncWait
+			if entry.Name == "" || forceShortWait {
+				forceShortWait = true
+				wait = shortResyncWait
+			}
+			if timer == nil {
+				timer = time.NewTimer(wait)
+			} else {
+				timer.Reset(wait)
+			}
+			timerC = timer.C
+		case <-timerC:
+			go s.syncManyUsers(ctx, entries)
+			entries = nil
+			timerC = nil
+			forceShortWait = false
 		}
-		go s.syncManyUsers(ctx, entries)
-		forceShortWait = false
 	}
 }
 
@@ -600,7 +605,6 @@ func (s *SlackClient) syncChannels(ctx context.Context, channels []*slack.Channe
 
 func (s *SlackClient) Disconnect() {
 	s.disconnect()
-	s.Client = nil
 }
 
 func (s *SlackClient) disconnect() {
@@ -651,6 +655,7 @@ func (s *SlackClient) invalidateSession(ctx context.Context, state status.Bridge
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to save user login after invalidating session")
 	}
 	s.Disconnect()
+	s.Client = nil
 	s.UserLogin.BridgeState.Send(state)
 }
 
