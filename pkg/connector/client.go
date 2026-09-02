@@ -134,8 +134,7 @@ type SlackClient struct {
 	IsRealUser bool
 	Ghost      *bridgev2.Ghost
 
-	stopSocketMode  context.CancelFunc
-	stopResyncQueue atomic.Pointer[context.CancelFunc]
+	stopConnection  atomic.Pointer[context.CancelFunc]
 	userResyncQueue chan *bridgev2.Ghost
 	initialConnect  time.Time
 
@@ -274,14 +273,19 @@ func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientUserBoo
 			zerolog.Ctx(ctx).Warn().Err(prefetchErr).Msg("Failed to discover DM conversations before connecting")
 		}
 	}
-	// TODO apply context to all loops and cancel on disconnect
+	ctx, cancel := context.WithCancel(ctx)
+	if oldCancel := s.stopConnection.Swap(&cancel); oldCancel != nil {
+		zerolog.Ctx(ctx).Warn().Msg("Cancelling previous connection")
+		(*oldCancel)()
+	}
 	if s.IsRealUser {
-		go s.consumeRTMEvents()
+		go s.consumeRTMEvents(ctx)
+		// TODO switch RTM to coder/websocket and pass the context there
 		go s.RTM.ManageConnection()
-		go s.resyncUsers()
+		go s.resyncUsers(ctx)
 	} else {
-		go s.consumeSocketModeEvents()
-		go s.runSocketMode(ctx)
+		go s.consumeSocketModeEvents(ctx)
+		go s.runSocketMode(ctx, cancel)
 	}
 	go s.SyncEmojis(ctx)
 	go s.syncChannels(ctx, prefetchedChannels, prefetched)
@@ -292,25 +296,32 @@ func (s *SlackClient) GetSpaceRoom() id.RoomID {
 	return s.TeamPortal.MXID
 }
 
-func (s *SlackClient) consumeRTMEvents() {
-	for evt := range s.RTM.IncomingEvents {
-		s.HandleSlackEvent(evt.Data)
+func (s *SlackClient) consumeRTMEvents(ctx context.Context) {
+	eventChan := s.RTM.IncomingEvents
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case evt := <-eventChan:
+			s.HandleSlackEvent(ctx, evt.Data)
+		}
 	}
 }
 
-func (s *SlackClient) consumeSocketModeEvents() {
-	for evt := range s.SocketMode.Events {
-		s.HandleSocketModeEvent(evt)
+func (s *SlackClient) consumeSocketModeEvents(ctx context.Context) {
+	eventChan := s.SocketMode.Events
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case evt := <-eventChan:
+			s.HandleSocketModeEvent(ctx, evt)
+		}
 	}
 }
 
-func (s *SlackClient) resyncUsers() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+func (s *SlackClient) resyncUsers(ctx context.Context) {
 	ctx = s.UserLogin.Log.With().Str("component", "user resync loop").Logger().WithContext(ctx)
-	if cancelOld := s.stopResyncQueue.Swap(&cancel); cancelOld != nil {
-		(*cancelOld)()
-	}
 	const resyncWait = 30 * time.Second
 	const shortResyncWait = 1 * time.Second
 	forceShortWait := false
@@ -353,11 +364,8 @@ func (s *SlackClient) resyncUsers() {
 	}
 }
 
-func (s *SlackClient) runSocketMode(ctx context.Context) {
-	var cancel context.CancelFunc
-	ctx, cancel = context.WithCancel(ctx)
+func (s *SlackClient) runSocketMode(ctx context.Context, cancel context.CancelFunc) {
 	defer cancel()
-	s.stopSocketMode = cancel
 	log := zerolog.Ctx(ctx)
 	for ctx.Err() == nil {
 		err := s.SocketMode.RunContext(ctx)
@@ -618,14 +626,9 @@ func (s *SlackClient) disconnect() {
 		if err != nil {
 			s.UserLogin.Log.Debug().Err(err).Msg("Failed to disconnect RTM")
 		}
-		// TODO stop consumeEvents?
 		s.RTM = nil
 	}
-	if stop := s.stopSocketMode; stop != nil {
-		stop()
-		s.SocketMode = nil
-	}
-	if cancel := s.stopResyncQueue.Swap(nil); cancel != nil {
+	if cancel := s.stopConnection.Swap(nil); cancel != nil {
 		(*cancel)()
 	}
 }

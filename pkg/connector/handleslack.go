@@ -35,12 +35,12 @@ import (
 	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
 
-func (s *SlackClient) HandleSlackEvent(rawEvt any) {
+func (s *SlackClient) HandleSlackEvent(ctx context.Context, rawEvt any) {
 	log := s.UserLogin.Log.With().
 		Str("action", "handle slack event").
 		Type("event_type", rawEvt).
 		Logger()
-	ctx := log.WithContext(context.TODO())
+	ctx = log.WithContext(ctx)
 	switch evt := rawEvt.(type) {
 	case *slack.ConnectingEvent:
 		omitBridgeState := s.UserLogin.BridgeState.GetPrevUnsent().StateEvent == status.StateTransientDisconnect
@@ -144,7 +144,7 @@ func (s *SlackClient) HandleSlackEvent(rawEvt any) {
 	}
 }
 
-func (s *SlackClient) HandleSocketModeEvent(evt socketmode.Event) {
+func (s *SlackClient) HandleSocketModeEvent(ctx context.Context, evt socketmode.Event) {
 	switch evt.Type {
 	case socketmode.EventTypeConnecting:
 		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnecting})
@@ -159,7 +159,7 @@ func (s *SlackClient) HandleSocketModeEvent(evt socketmode.Event) {
 			return
 		}
 		if eaEvt.Type == slackevents.CallbackEvent {
-			s.HandleSlackEvent(eaEvt.InnerEvent.Data)
+			s.HandleSlackEvent(ctx, eaEvt.InnerEvent.Data)
 		}
 	case socketmode.EventTypeInteractive:
 		//callback, ok := evt.Data.(slack.InteractionCallback)
