@@ -391,6 +391,8 @@ func slackEmailCodeStep(instructions string) *bridgev2.LoginStep {
 				Name:        "Confirmation code",
 				Description: "Six-character code from Slack",
 				Pattern:     `^[a-zA-Z0-9]{3}-?[a-zA-Z0-9]{3}$`,
+				MinLength:   6,
+				MaxLength:   7,
 			}},
 		},
 	}
@@ -425,6 +427,8 @@ func slackTwoFactorStep(instructions string) *bridgev2.LoginStep {
 				Name:        "Authentication code",
 				Description: "Six-digit code from your Slack authenticator or SMS",
 				Pattern:     slackLoginTwoFactorCodeRegex,
+				MinLength:   6,
+				MaxLength:   6,
 			}},
 		},
 	}
