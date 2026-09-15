@@ -43,6 +43,7 @@ type MessageConverter struct {
 
 	ServerName  string
 	MaxFileSize int
+	DirectMedia bool
 }
 
 type contextKey int

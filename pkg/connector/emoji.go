@@ -31,6 +31,7 @@ import (
 
 	"go.mau.fi/mautrix-slack/pkg/connector/slackdb"
 	"go.mau.fi/mautrix-slack/pkg/emoji"
+	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
 
 var _ bridgev2.StickerImportingNetworkAPI = (*SlackClient)(nil)
@@ -193,7 +194,7 @@ func downloadPlainFile(ctx context.Context, url, thing string) ([]byte, error) {
 
 func (s *SlackConnector) reuploadEmoji(ctx context.Context, intent bridgev2.MatrixAPI, url string) (id.ContentURIString, error) {
 	if s.directMedia {
-		mediaID := DirectMediaEmojiFromURL(url).MediaID()
+		mediaID := slackid.DirectMediaEmojiFromURL(url).MediaID()
 		if mediaID != nil {
 			return s.br.Matrix.GenerateContentURI(ctx, mediaID)
 		}
