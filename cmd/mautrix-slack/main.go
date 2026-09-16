@@ -35,7 +35,7 @@ var m = mxmain.BridgeMain{
 	Name:        "mautrix-slack",
 	Description: "A Matrix-Slack puppeting bridge",
 	URL:         "https://github.com/mautrix/slack",
-	Version:     "26.08",
+	Version:     "26.09",
 	SemCalVer:   true,
 	Connector:   c,
 }

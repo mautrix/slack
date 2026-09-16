@@ -1,3 +1,10 @@
+# v26.09
+
+* Bumped minimum Go version to 1.26.
+* Fixed user resync loop not stopping when the Slack client disconnects.
+* Removed legacy migration support. Upgrading directly from pre-v0.1.0 versions
+  is no longer supported.
+
 # v26.08
 
 * Added support for user group mentions.
