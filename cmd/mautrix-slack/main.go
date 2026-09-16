@@ -42,15 +42,6 @@ var m = mxmain.BridgeMain{
 
 func main() {
 	slackdb.PostgresArrayWrapper = pq.Array
-	m.PostInit = func() {
-		m.CheckLegacyDB(
-			16,
-			"c565641",
-			"v0.1.0",
-			m.LegacyMigrateSimple(legacyMigrateRenameTables, legacyMigrateCopyData, 14),
-			true,
-		)
-	}
 	m.PostStart = func() {
 		if m.Matrix.Provisioning != nil {
 			m.Matrix.Provisioning.Router.HandleFunc("GET /v1/ping", legacyProvPing)
