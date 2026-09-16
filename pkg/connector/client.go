@@ -48,10 +48,13 @@ func init() {
 	})
 }
 
+const slackMaxRetries = 5
+
 func makeSlackClient(log *zerolog.Logger, token, cookieToken, appToken string) *slack.Client {
 	options := []slack.Option{
 		slack.OptionLog(slackgoZerolog{Logger: log.With().Str("component", "slackgo").Logger()}),
 		slack.OptionDebug(log.GetLevel() == zerolog.TraceLevel),
+		slack.OptionRetry(slackMaxRetries),
 	}
 	if cookieToken != "" {
 		options = append(options, slack.OptionCookie("d", cookieToken))
