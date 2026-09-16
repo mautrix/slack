@@ -114,7 +114,7 @@ func (s *SlackEmailLogin) submitEmail(ctx context.Context, input map[string]stri
 		if errors.As(err, &apiErr) {
 			return slackEmailStep(slackLoginErrorInstructions(apiErr)), nil
 		}
-		return nil, fmt.Errorf("failed to request Slack email code: %w", err)
+		return nil, wrapSlackLoginError(err)
 	}
 	s.email = email
 	if captcha != nil {
@@ -152,7 +152,7 @@ func (s *SlackEmailLogin) SubmitCookies(ctx context.Context, cookies map[string]
 				return slackEmailStep("Slack rejected that email address. Check it and try again."), nil
 			}
 		}
-		return nil, fmt.Errorf("failed to submit Slack email CAPTCHA: %w", err)
+		return nil, wrapSlackLoginError(err)
 	}
 	s.captcha = nil
 	return slackEmailCodeStep("Slack emailed you a confirmation code. Enter the six characters from that email."), nil
@@ -165,20 +165,17 @@ func (s *SlackEmailLogin) submitCode(ctx context.Context, input map[string]strin
 	}
 	workspaces, err := s.API.ConfirmCode(ctx, s.email, strings.ReplaceAll(code, "-", ""))
 	if err != nil {
-		var apiErr *slackLoginAPIError
-		if errors.As(err, &apiErr) {
-			switch apiErr.Code {
-			case "invalid_code", "invalid_email_code", "failed":
-				return slackEmailCodeStep("Slack rejected that confirmation code. Check the email and try again."), nil
-			case "expired_code", "code_expired":
-				s.email = ""
-				s.captcha = nil
-				return slackEmailStep("That Slack confirmation code expired. Enter your email to request a new one."), nil
-			case "ratelimited", "rate_limited":
-				return slackEmailCodeStep("Slack is rate limiting code checks. Wait before trying again."), nil
-			}
+		switch slackAPIErrorCode(err) {
+		case "invalid_code", "invalid_email_code", "code_already_used", "failed":
+			return slackEmailCodeStep("Slack rejected that confirmation code. Check the email and try again."), nil
+		case "expired_code", "code_expired":
+			s.email = ""
+			s.captcha = nil
+			return slackEmailStep("That Slack confirmation code expired. Enter your email to request a new one."), nil
+		case "ratelimited", "rate_limited":
+			return slackEmailCodeStep("Slack is rate limiting code checks. Wait before trying again."), nil
 		}
-		return nil, fmt.Errorf("failed to confirm Slack email code: %w", err)
+		return nil, wrapSlackLoginError(err)
 	}
 	if len(workspaces) == 0 {
 		s.email = ""
@@ -267,21 +264,18 @@ func (s *SlackEmailLogin) submitTwoFactor(
 	challenge := s.twoFactor
 	token, cookieToken, err := s.API.SubmitTwoFactor(ctx, challenge, code)
 	if err != nil {
-		var apiErr *slackLoginAPIError
-		if errors.As(err, &apiErr) {
-			switch apiErr.Code {
-			case "ratelimited", "rate_limited":
-				return slackTwoFactorStep("Slack is rate limiting authentication-code checks. Wait before trying again."), nil
-			case "two_factor_expired", "two_factor_state_expired":
-				s.twoFactor = nil
-				return s.startTwoFactor(
-					ctx,
-					challenge.Workspace,
-					"That two-factor session expired. Enter a new authentication code.",
-				)
-			case "invalid_2fa_code", "invalid_two_factor_code", "invalid_pin":
-				return slackTwoFactorStep("Slack rejected that authentication code. Check the code and try again."), nil
-			}
+		switch slackAPIErrorCode(err) {
+		case "ratelimited", "rate_limited":
+			return slackTwoFactorStep("Slack is rate limiting authentication-code checks. Wait before trying again."), nil
+		case "two_factor_expired", "two_factor_state_expired":
+			s.twoFactor = nil
+			return s.startTwoFactor(
+				ctx,
+				challenge.Workspace,
+				"That two-factor session expired. Enter a new authentication code.",
+			)
+		case "invalid_2fa_code", "invalid_two_factor_code", "invalid_pin":
+			return slackTwoFactorStep("Slack rejected that authentication code. Check the code and try again."), nil
 		}
 		return slackTwoFactorStep("Slack did not complete two-factor authentication. Check the code and try again."), nil
 	}
