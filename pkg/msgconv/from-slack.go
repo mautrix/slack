@@ -280,6 +280,11 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 	convertAudio := file.SubType == "slack_audio" && ffmpeg.Supported()
 	needsMediaSize := content.Info.Width == 0 && content.Info.Height == 0 && strings.HasPrefix(content.Info.MimeType, "image/")
 	requireFile := convertAudio || needsMediaSize || content.Info.MimeType == ""
+	if mc.DirectMedia && !requireFile {
+		if part := mc.directMediaFilePart(ctx, partID, file.ID, &content); part != nil {
+			return part
+		}
+	}
 	var retErr *bridgev2.ConvertedMessagePart
 	reuploadFunc := func(dest io.Writer) (res *bridgev2.FileStreamResult, err error) {
 		res = &bridgev2.FileStreamResult{
@@ -406,6 +411,28 @@ RetryLoop:
 		ID:      partID,
 		Type:    event.EventMessage,
 		Content: &content,
+	}
+}
+
+func (mc *MessageConverter) directMediaFilePart(ctx context.Context, partID networkid.PartID, fileID string, content *event.MessageEventContent) *bridgev2.ConvertedMessagePart {
+	source := ctx.Value(contextKeySource).(*bridgev2.UserLogin)
+	mediaID := (&slackid.DirectMediaFile{
+		UserLoginID: source.ID,
+		FileID:      fileID,
+	}).MediaID()
+	if mediaID == nil {
+		return nil
+	}
+	mxc, err := mc.Bridge.Matrix.GenerateContentURI(ctx, mediaID)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to generate direct media content URI, falling back to upload")
+		return nil
+	}
+	content.URL = mxc
+	return &bridgev2.ConvertedMessagePart{
+		ID:      partID,
+		Type:    event.EventMessage,
+		Content: content,
 	}
 }
 

@@ -56,6 +56,7 @@ func (s *SlackConnector) SetMaxFileSize(maxSize int64) {
 
 func (s *SlackConnector) SetUseDirectMedia() {
 	s.directMedia = true
+	s.MsgConv.DirectMedia = true
 }
 
 func (s *SlackConnector) Start(ctx context.Context) error {

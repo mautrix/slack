@@ -19,125 +19,73 @@ package connector
 import (
 	"context"
 	"fmt"
-	"slices"
-	"strings"
+	"io"
 
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/mediaproxy"
+
+	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
 
-type MediaIDType byte
-
-const (
-	MediaIDTypeEmoji MediaIDType = 1
-)
-
-func (s *SlackConnector) Download(_ context.Context, mediaID networkid.MediaID, _ map[string]string) (mediaproxy.GetMediaResponse, error) {
-	rawParsedID, err := ParseMediaID(mediaID)
+func (s *SlackConnector) Download(ctx context.Context, mediaID networkid.MediaID, _ map[string]string) (mediaproxy.GetMediaResponse, error) {
+	rawParsedID, err := slackid.ParseMediaID(mediaID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse media ID: %w", err)
 	}
 	switch parsedID := rawParsedID.(type) {
-	case *DirectMediaEmoji:
+	case *slackid.DirectMediaEmoji:
 		return &mediaproxy.GetMediaResponseURL{
 			URL: parsedID.URL(),
 		}, nil
+	case *slackid.DirectMediaFile:
+		return s.downloadFile(ctx, parsedID)
 	default:
 		return nil, fmt.Errorf("unknown media ID type: %T", parsedID)
 	}
 }
 
-func ParseMediaID(mediaID networkid.MediaID) (any, error) {
-	if len(mediaID) == 0 {
-		return nil, fmt.Errorf("empty media ID")
+func (s *SlackConnector) downloadFile(ctx context.Context, meta *slackid.DirectMediaFile) (mediaproxy.GetMediaResponse, error) {
+	login, err := s.br.GetExistingUserLoginByID(ctx, meta.UserLoginID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user login: %w", err)
+	} else if login == nil {
+		return nil, mautrix.MNotFound.WithMessage("Direct media login not found")
 	}
-	mediaIDType := MediaIDType(mediaID[0])
-	mediaID = mediaID[1:]
-	switch mediaIDType {
-	case MediaIDTypeEmoji:
-		teamID, mediaID, err := readShortString(mediaID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read team ID: %w", err)
-		}
-		emojiID, mediaID, err := readShortString(mediaID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read emoji ID: %w", err)
-		}
-		fileName, _, err := readShortString(mediaID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read file name: %w", err)
-		}
-		return &DirectMediaEmoji{
-			TeamID:   teamID,
-			EmojiID:  emojiID,
-			FileName: fileName,
-		}, nil
-	default:
-		return nil, fmt.Errorf("unknown media ID type: %d", mediaIDType)
+	client, ok := login.Client.(*SlackClient)
+	if !ok || client.Client == nil {
+		return nil, mautrix.MNotFound.WithMessage("Direct media login is not connected")
 	}
+
+	file, _, _, err := client.Client.GetFileInfoContext(ctx, meta.FileID, 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get file info: %w", err)
+	}
+	url := file.URLPrivateDownload
+	if url == "" {
+		url = file.URLPrivate
+	}
+	if url == "" {
+		return nil, mautrix.MNotFound.WithMessage("File has no downloadable URL")
+	}
+
+	return &mediaproxy.GetMediaResponseCallback{
+		ContentType:   file.Mimetype,
+		ContentLength: int64(file.Size),
+		Callback: func(w io.Writer) (int64, error) {
+			cw := &countingWriter{Writer: w}
+			return cw.n, client.Client.GetFileContext(ctx, url, cw)
+		},
+	}, nil
 }
 
-const slackEmojiURLPrefix = "https://emoji.slack-edge.com/"
-
-type DirectMediaEmoji struct {
-	TeamID   string
-	EmojiID  string
-	FileName string
+type countingWriter struct {
+	io.Writer
+	n int64
 }
 
-func DirectMediaEmojiFromURL(url string) *DirectMediaEmoji {
-	data, ok := strings.CutPrefix(url, slackEmojiURLPrefix)
-	if !ok {
-		return nil
-	}
-	parts := strings.Split(data, "/")
-	if len(parts) != 3 {
-		return nil
-	}
-	teamID := parts[0]
-	emojiID := parts[1]
-	fileName := parts[2]
-	if len(teamID) > 16 || len(emojiID) > 100 || len(fileName) > 32 {
-		return nil
-	}
-	return &DirectMediaEmoji{
-		TeamID:   teamID,
-		EmojiID:  emojiID,
-		FileName: fileName,
-	}
-}
-
-func (dme *DirectMediaEmoji) URL() string {
-	if dme == nil {
-		return ""
-	}
-	return fmt.Sprintf("%s%s/%s/%s", slackEmojiURLPrefix, dme.TeamID, dme.EmojiID, dme.FileName)
-}
-
-func (dme *DirectMediaEmoji) MediaID() networkid.MediaID {
-	if dme == nil || len(dme.TeamID) > 16 || len(dme.EmojiID) > 100 || len(dme.FileName) > 32 {
-		return nil
-	}
-	return slices.Concat(
-		[]byte{byte(MediaIDTypeEmoji)},
-		[]byte{byte(len(dme.TeamID))},
-		[]byte(dme.TeamID),
-		[]byte{byte(len(dme.EmojiID))},
-		[]byte(dme.EmojiID),
-		[]byte{byte(len(dme.FileName))},
-		[]byte(dme.FileName),
-	)
-}
-
-func readShortString(input []byte) (value string, remaining []byte, err error) {
-	if len(input) == 0 {
-		return "", nil, fmt.Errorf("input is empty")
-	}
-	length := int(input[0])
-	if len(input) < 1+length {
-		return "", nil, fmt.Errorf("input is too short for length %d", length)
-	}
-	value = string(input[1 : 1+length])
-	remaining = input[1+length:]
-	return
+func (cw *countingWriter) Write(p []byte) (int, error) {
+	n, err := cw.Writer.Write(p)
+	cw.n += int64(n)
+	return n, err
 }
