@@ -127,6 +127,9 @@ func (s *SlackClient) GetUserGroupInfoForMention(ctx context.Context, userGroupI
 		s.userGroupInfoCache = cache
 		entry = cache[userGroupID]
 	}
+	if entry == nil {
+		return
+	}
 	return entry.name, entry.users, nil
 }
 
