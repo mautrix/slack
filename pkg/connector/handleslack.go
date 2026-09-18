@@ -19,6 +19,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
+	"go.mau.fi/util/exerrors"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
@@ -40,6 +42,13 @@ func (s *SlackClient) HandleSlackEvent(ctx context.Context, rawEvt any) {
 		Str("action", "handle slack event").
 		Type("event_type", rawEvt).
 		Logger()
+	defer func() {
+		if v := recover(); v != nil {
+			log.Err(exerrors.RecoverToError(v)).
+				Bytes(zerolog.ErrorStackFieldName, debug.Stack()).
+				Msg("Panic while handling Slack event")
+		}
+	}()
 	ctx = log.WithContext(ctx)
 	switch evt := rawEvt.(type) {
 	case *slack.ConnectingEvent:

@@ -13,7 +13,7 @@ require (
 	github.com/slack-go/slack v0.24.0
 	github.com/stretchr/testify v1.12.0
 	github.com/yuin/goldmark v1.8.6
-	go.mau.fi/util v0.10.1
+	go.mau.fi/util v0.10.2-0.20260918114240-455eed8f7db3
 	golang.org/x/net v0.59.0
 	gopkg.in/yaml.v3 v3.0.1
 	maunium.net/go/mautrix v0.31.0
