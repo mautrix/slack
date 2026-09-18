@@ -140,7 +140,6 @@ func (s *SlackTokenLogin) SubmitCookies(ctx context.Context, input map[string]st
 	client := makeSlackClient(&s.User.Log, token, cookieToken, "")
 	if err := client.FetchVersionData(ctx); err != nil {
 		zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to fetch version data")
-		return nil, wrapSlackLoginError(err)
 	}
 	info, err := client.ClientUserBootContext(ctx, time.Time{})
 	if err != nil {
