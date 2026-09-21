@@ -42,13 +42,6 @@ var m = mxmain.BridgeMain{
 
 func main() {
 	slackdb.PostgresArrayWrapper = pq.Array
-	m.PostStart = func() {
-		if m.Matrix.Provisioning != nil {
-			m.Matrix.Provisioning.Router.HandleFunc("GET /v1/ping", legacyProvPing)
-			m.Matrix.Provisioning.Router.HandleFunc("POST /v1/login", legacyProvLogin)
-			m.Matrix.Provisioning.Router.HandleFunc("POST /v1/logout", legacyProvLogout)
-		}
-	}
 	m.InitVersion(Tag, Commit, BuildTime)
 	m.Run()
 }
