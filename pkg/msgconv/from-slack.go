@@ -276,6 +276,8 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 	if url == "" && file.PermalinkPublic == "" {
 		log.Warn().Msg("No usable URL found in file object")
 		return makeErrorMessage(partID, "File URL not found")
+	} else if file.IsExternal {
+		return makeErrorMessage(partID, "Unsupported external file")
 	}
 	convertAudio := file.SubType == "slack_audio" && ffmpeg.Supported()
 	needsMediaSize := content.Info.Width == 0 && content.Info.Height == 0 && strings.HasPrefix(content.Info.MimeType, "image/")

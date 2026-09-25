@@ -69,6 +69,9 @@ func (s *SlackConnector) downloadFile(ctx context.Context, meta *slackid.DirectM
 		return nil, mautrix.MNotFound.WithMessage("File has no downloadable URL")
 	}
 
+	if file.IsExternal {
+		return &mediaproxy.GetMediaResponseURL{URL: url}, nil
+	}
 	return &mediaproxy.GetMediaResponseCallback{
 		ContentType:   file.Mimetype,
 		ContentLength: int64(file.Size),
