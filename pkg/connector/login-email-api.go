@@ -224,6 +224,20 @@ func (s slackLoginWorkspace) displayName() string {
 	return "Slack workspace"
 }
 
+func (s slackLoginWorkspace) needsBrowserLogin() bool {
+	return s.SSORequired || (s.MagicLoginURL == "" && s.MagicLoginCode == "")
+}
+
+func (s slackLoginWorkspace) signInURL() string {
+	if parsed, err := url.Parse(s.URL); err == nil && parsed.Scheme == "https" && strings.HasSuffix(parsed.Host, ".slack.com") {
+		return parsed.String()
+	}
+	if domain := strings.TrimSuffix(s.Domain, ".slack.com"); domain != "" && !strings.ContainsAny(domain, "./:") {
+		return fmt.Sprintf("https://%s.slack.com/", domain)
+	}
+	return slackLoginCaptchaPageURL
+}
+
 func (s slackLoginWorkspace) loginLabel() string {
 	name := s.displayName()
 	if s.Domain != "" && s.Domain != name {
@@ -236,9 +250,7 @@ func (s *slackFindWorkspacesResponse) flatten() []slackLoginWorkspace {
 	workspaces := make([]slackLoginWorkspace, 0)
 	seen := make(map[string]struct{})
 	add := func(workspace slackLoginWorkspace) {
-		if workspace.ID == "" ||
-			workspace.SSORequired ||
-			(workspace.MagicLoginURL == "" && workspace.MagicLoginCode == "") {
+		if workspace.ID == "" {
 			return
 		}
 		if _, ok := seen[workspace.ID]; ok {
