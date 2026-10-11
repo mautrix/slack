@@ -339,6 +339,14 @@ func (mc *MessageConverter) renderRichTextSectionElements(
 			htmlText.WriteString(e.Timestamp.String())
 		case *slack.RichTextSectionMessageMentionElement:
 			htmlText.WriteString(mc.renderMessageMention(ctx, e))
+		case *slack.RichTextSectionAttachmentMentionElement:
+			linkText := e.Text
+			if linkText == "" {
+				linkText = e.URL
+			}
+			openingTags(&htmlText, e.Style)
+			_, _ = fmt.Fprintf(&htmlText, `<a href="%s">%s</a>`, html.EscapeString(e.URL), textToHTML(linkText))
+			closingTags(&htmlText, e.Style)
 		default:
 			zerolog.Ctx(ctx).Debug().
 				Type("section_type", e).
