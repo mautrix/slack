@@ -115,7 +115,15 @@ func (mc *MessageConverter) EditToMatrix(
 	msg *slack.Msg,
 	origMsg *slack.Msg,
 	existing []*database.Message,
-) *bridgev2.ConvertedEdit {
+) (*bridgev2.ConvertedEdit, error) {
+	editTargetPart := existing[0]
+	meta := editTargetPart.Metadata.(*slackid.MessageMetadata)
+	if msg.Edited != nil && meta.LastEditTS >= msg.Edited.Timestamp {
+		return nil, fmt.Errorf(
+			"%w: last bridged edit is same as or newer than this one (%s >= %s)",
+			bridgev2.ErrIgnoringRemoteEvent, meta.LastEditTS, msg.Edited.Timestamp,
+		)
+	}
 	ctx = context.WithValue(ctx, contextKeyPortal, portal)
 	ctx = context.WithValue(ctx, contextKeySource, source)
 	client := source.Client.(SlackClientProvider).GetClient()
@@ -132,10 +140,6 @@ func (mc *MessageConverter) EditToMatrix(
 				output.DeletedParts = append(output.DeletedParts, part)
 			}
 		}
-	}
-	editTargetPart := existing[0]
-	if msg.Edited != nil {
-		editTargetPart.Metadata.(*slackid.MessageMetadata).LastEditTS = msg.Edited.Timestamp
 	}
 	modifiedPart := mc.makeTextPart(ctx, msg, portal, intent)
 	captionMerged := false
@@ -162,20 +166,29 @@ func (mc *MessageConverter) EditToMatrix(
 			}
 		}
 	}
-	if msg.Username != "" {
-		modifiedPart.Content.BeeperPerMessageProfile = &event.BeeperPerMessageProfile{
-			ID:          msg.Username,
-			Displayname: msg.Username,
-		}
-	}
 	// TODO this doesn't handle edits to captions in msg.Attachments gifs properly
 	if modifiedPart != nil {
+		if msg.Username != "" {
+			modifiedPart.Content.BeeperPerMessageProfile = &event.BeeperPerMessageProfile{
+				ID:          msg.Username,
+				Displayname: msg.Username,
+			}
+		}
 		if msg.SubType == slack.MsgSubTypeThreadBroadcast {
 			modifiedPart.Content.BeeperBroadcastOutsideThread = true
 		}
-		output.ModifiedParts = append(output.ModifiedParts, modifiedPart.ToEditPart(editTargetPart))
+		editPart := modifiedPart.ToEditPart(editTargetPart)
+		if msg.Edited != nil {
+			meta.LastEditTS = msg.Edited.Timestamp
+		} else {
+			if editPart.TopLevelExtra == nil {
+				editPart.TopLevelExtra = make(map[string]any)
+			}
+			editPart.TopLevelExtra["com.beeper.dont_render_edited"] = true
+		}
+		output.ModifiedParts = append(output.ModifiedParts, editPart)
 	}
-	return output
+	return output, nil
 }
 
 func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, portal *bridgev2.Portal, intent bridgev2.MatrixAPI) *bridgev2.ConvertedMessagePart {
