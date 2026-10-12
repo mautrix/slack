@@ -552,7 +552,7 @@ type SlackChatInfoChange struct {
 
 var _ bridgev2.RemoteChatInfoChange = (*SlackChatInfoChange)(nil)
 
-func (s *SlackChatInfoChange) GetChatInfoChange(ctx context.Context) (*bridgev2.ChatInfoChange, error) {
+func (s *SlackChatInfoChange) GetChatInfoChange(ctx context.Context, portal *bridgev2.Portal) (*bridgev2.ChatInfoChange, error) {
 	return s.Change, nil
 }
 
