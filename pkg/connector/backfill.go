@@ -90,6 +90,12 @@ func (s *SlackClient) FetchMessages(ctx context.Context, params bridgev2.FetchMe
 		})
 	} else {
 		chunk, err = s.Client.GetConversationHistoryContext(ctx, slackParams)
+		if chunk != nil {
+			// Main conversation history is returned in reverse chronological order,
+			// but threads are returned in chronological order.
+			// FetchMessages is defined to always return chronological order.
+			slices.Reverse(chunk.Messages)
+		}
 	}
 	if err != nil {
 		var slackErr slack.SlackErrorResponse
@@ -111,7 +117,6 @@ func (s *SlackClient) FetchMessages(ctx context.Context, params bridgev2.FetchMe
 			maxMsgID = msg.Timestamp
 		}
 	}
-	slices.Reverse(convertedMessages)
 	lastRead := s.getLastReadCache(channelID)
 	return &bridgev2.FetchMessagesResponse{
 		Messages: convertedMessages,
