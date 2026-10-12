@@ -585,9 +585,12 @@ func TestSlackFindWorkspacesFlattenDeduplicates(t *testing.T) {
 		CurrentOrgs: []slackWorkspaceOrg{{Org: &slackLoginWorkspace{ID: "E1", MagicLoginURL: "https://example.invalid"}}},
 	}
 	workspaces := response.flatten()
-	ids := []string{workspaces[0].ID, workspaces[1].ID, workspaces[2].ID}
+	ids := make([]string, 0, len(workspaces))
+	for _, workspace := range workspaces {
+		ids = append(ids, workspace.ID)
+	}
 	slices.Sort(ids)
-	assert.Equal(t, []string{"E1", "T1", "T4"}, ids)
+	assert.Equal(t, []string{"E1", "T1", "T2", "T3", "T4"}, ids)
 }
 
 func TestSlackLoginAPIRateLimitWithoutJSON(t *testing.T) {

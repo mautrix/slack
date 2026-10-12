@@ -39,6 +39,7 @@ const (
 	LoginStepIDEmailCode    = "fi.mau.slack.login.enter_email_code"
 	LoginStepIDWorkspace    = "fi.mau.slack.login.select_workspace"
 	LoginStepIDTwoFactor    = "fi.mau.slack.login.two_factor"
+	LoginStepIDBrowser      = "fi.mau.slack.login.workspace_browser"
 
 	loginFieldEmail         = "email"
 	loginFieldCaptchaToken  = "captcha_token"
@@ -73,6 +74,7 @@ type SlackEmailLogin struct {
 	email      string
 	captcha    *slackLoginCaptcha
 	twoFactor  *slackLoginTwoFactor
+	browser    *slackLoginWorkspace
 	workspaces map[string]slackLoginWorkspace
 }
 
@@ -89,6 +91,8 @@ func (s *SlackEmailLogin) SubmitUserInput(ctx context.Context, input map[string]
 	switch {
 	case s.twoFactor != nil:
 		return s.submitTwoFactor(ctx, input)
+	case s.browser != nil:
+		return slackBrowserStep(*s.browser), nil
 	case s.workspaces != nil:
 		return s.submitWorkspace(ctx, input)
 	case s.captcha != nil:
@@ -127,6 +131,11 @@ func (s *SlackEmailLogin) submitEmail(ctx context.Context, input map[string]stri
 func (s *SlackEmailLogin) SubmitCookies(ctx context.Context, cookies map[string]string) (*bridgev2.LoginStep, error) {
 	if s.twoFactor != nil {
 		return nil, errors.New("slack two-factor login does not accept browser cookies")
+	}
+	if s.browser != nil {
+		workspace := *s.browser
+		s.browser = nil
+		return s.completeWorkspace(ctx, workspace, cookies["auth_token"], cookies["cookie_token"])
 	}
 	if s.captcha == nil || s.email == "" {
 		return nil, errors.New("slack email CAPTCHA is not pending")
@@ -208,6 +217,10 @@ func (s *SlackEmailLogin) submitWorkspace(ctx context.Context, input map[string]
 }
 
 func (s *SlackEmailLogin) finishWorkspace(ctx context.Context, workspace slackLoginWorkspace) (*bridgev2.LoginStep, error) {
+	if workspace.needsBrowserLogin() {
+		s.browser = &workspace
+		return slackBrowserStep(workspace), nil
+	}
 	if workspace.TwoFactorRequired {
 		return s.startTwoFactor(ctx, workspace, "Enter the authentication code required by this Slack workspace.")
 	}
@@ -298,6 +311,7 @@ func (s *SlackEmailLogin) completeWorkspace(
 		s.email = ""
 		s.captcha = nil
 		s.twoFactor = nil
+		s.browser = nil
 		s.workspaces = nil
 		return slackEmailStep("Slack created a session, but the bridge could not validate it. Enter your email to try again."), nil
 	}
@@ -421,6 +435,19 @@ func slackTwoFactorStep(instructions string) *bridgev2.LoginStep {
 				Pattern:     slackLoginTwoFactorCodeRegex,
 			}},
 		},
+	}
+}
+
+func slackBrowserStep(workspace slackLoginWorkspace) *bridgev2.LoginStep {
+	instructions := fmt.Sprintf("%s doesn't support email sign-in. Sign in to it in the browser to continue.", workspace.displayName())
+	if workspace.SSORequired {
+		instructions = fmt.Sprintf("%s uses single sign-on. Sign in with your organization's account in the browser to continue.", workspace.displayName())
+	}
+	return &bridgev2.LoginStep{
+		Type:          bridgev2.LoginStepTypeCookies,
+		StepID:        LoginStepIDBrowser,
+		Instructions:  instructions,
+		CookiesParams: slackTokenCookiesParams(workspace.signInURL()),
 	}
 }
 

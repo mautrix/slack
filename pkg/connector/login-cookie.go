@@ -98,38 +98,42 @@ new Promise(resolve => {
 })
 `
 
+func slackTokenCookiesParams(url string) *bridgev2.LoginCookiesParams {
+	return &bridgev2.LoginCookiesParams{
+		URL:       url,
+		UserAgent: "",
+		Fields: []bridgev2.LoginCookieField{{
+			ID:       "auth_token",
+			Required: true,
+			Sources: []bridgev2.LoginCookieFieldSource{{
+				Type: bridgev2.LoginCookieTypeSpecial,
+				Name: "fi.mau.slack.auth_token",
+			}, {
+				Type:            bridgev2.LoginCookieTypeRequestBody,
+				Name:            "token",
+				RequestURLRegex: `^https://.+?\.slack\.com/api/(client|experiments|api|users|teams|conversations)\..+$`,
+			}},
+			Pattern: `^xoxc-.+$`,
+		}, {
+			ID:       "cookie_token",
+			Required: true,
+			Sources: []bridgev2.LoginCookieFieldSource{{
+				Type:         bridgev2.LoginCookieTypeCookie,
+				Name:         "d",
+				CookieDomain: "slack.com",
+			}},
+			Pattern: `^xoxd-[a-zA-Z0-9/+=]+$`,
+		}},
+		ExtractJS: ExtractSlackTokenJS,
+	}
+}
+
 func (s *SlackTokenLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) {
 	return &bridgev2.LoginStep{
-		Type:         bridgev2.LoginStepTypeCookies,
-		StepID:       LoginStepIDAuthToken,
-		Instructions: "Enter a JSON object with your auth token and cookie token, or a cURL command copied from browser devtools.\n\nFor example: `{\"auth_token\":\"xoxc-...\",\"cookie_token\":\"xoxd-...\"}`",
-		CookiesParams: &bridgev2.LoginCookiesParams{
-			URL:       "https://slack.com/signin",
-			UserAgent: "",
-			Fields: []bridgev2.LoginCookieField{{
-				ID:       "auth_token",
-				Required: true,
-				Sources: []bridgev2.LoginCookieFieldSource{{
-					Type: bridgev2.LoginCookieTypeSpecial,
-					Name: "fi.mau.slack.auth_token",
-				}, {
-					Type:            bridgev2.LoginCookieTypeRequestBody,
-					Name:            "token",
-					RequestURLRegex: `^https://.+?\.slack\.com/api/(client|experiments|api|users|teams|conversations)\..+$`,
-				}},
-				Pattern: `^xoxc-.+$`,
-			}, {
-				ID:       "cookie_token",
-				Required: true,
-				Sources: []bridgev2.LoginCookieFieldSource{{
-					Type:         bridgev2.LoginCookieTypeCookie,
-					Name:         "d",
-					CookieDomain: "slack.com",
-				}},
-				Pattern: `^xoxd-[a-zA-Z0-9/+=]+$`,
-			}},
-			ExtractJS: ExtractSlackTokenJS,
-		},
+		Type:          bridgev2.LoginStepTypeCookies,
+		StepID:        LoginStepIDAuthToken,
+		Instructions:  "Enter a JSON object with your auth token and cookie token, or a cURL command copied from browser devtools.\n\nFor example: `{\"auth_token\":\"xoxc-...\",\"cookie_token\":\"xoxd-...\"}`",
+		CookiesParams: slackTokenCookiesParams("https://slack.com/signin"),
 	}, nil
 }
 
