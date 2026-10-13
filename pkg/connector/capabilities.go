@@ -214,7 +214,7 @@ func (s *SlackClient) GetCapabilities(ctx context.Context, portal *bridgev2.Port
 		caps = dmCaps
 	}
 	if meta.EditMaxAge != nil && *meta.EditMaxAge >= 0 {
-		caps = ptr.Clone(roomCaps)
+		caps = ptr.Clone(caps)
 		caps.ID += "+edit_max_age=" + strconv.Itoa(*meta.EditMaxAge)
 		caps.EditMaxAge = ptr.Ptr(jsontime.S(time.Duration(*meta.EditMaxAge) * time.Minute))
 		if *meta.EditMaxAge == 0 {
@@ -222,9 +222,7 @@ func (s *SlackClient) GetCapabilities(ctx context.Context, portal *bridgev2.Port
 		}
 	}
 	if meta.AllowDelete != nil && !*meta.AllowDelete {
-		if caps == roomCaps {
-			caps = ptr.Clone(roomCaps)
-		}
+		caps = ptr.Clone(caps)
 		caps.ID += "+disallow_delete"
 		caps.Delete = event.CapLevelRejected
 	}
