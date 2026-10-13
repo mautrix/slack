@@ -222,8 +222,8 @@ func (s *SlackClient) GetCapabilities(ctx context.Context, portal *bridgev2.Port
 		}
 	}
 	if meta.AllowDelete != nil && !*meta.AllowDelete {
-		if caps == roomCaps {
-			caps = ptr.Clone(roomCaps)
+		if caps == roomCaps || caps == dmCaps {
+			caps = ptr.Clone(caps)
 		}
 		caps.ID += "+disallow_delete"
 		caps.Delete = event.CapLevelRejected
