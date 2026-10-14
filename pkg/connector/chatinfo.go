@@ -19,7 +19,6 @@ package connector
 import (
 	"cmp"
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -32,7 +31,6 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
-	"go.mau.fi/util/exerrors"
 	"go.mau.fi/util/jsontime"
 	"go.mau.fi/util/ptr"
 	"maunium.net/go/mautrix/bridgev2"
@@ -494,15 +492,6 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 	}
 }
 
-var placeholderAvatarHash = [32]byte(exerrors.Must(hex.DecodeString("115dd2254509660adad9d2b0e09b6afbf26846d2e7f57d811f98b6726b7f51af")))
-
-func requestUpdatedTS(ghost *bridgev2.Ghost) int64 {
-	if ghost.AvatarHash == placeholderAvatarHash {
-		return 0
-	}
-	return ghost.Metadata.(*slackid.GhostMetadata).SlackUpdatedTS
-}
-
 func (s *SlackClient) syncManyUsers(ctx context.Context, ghosts map[string]*bridgev2.Ghost) {
 	params := slack.GetCachedUsersParameters{
 		CheckInteraction:        true,
@@ -510,8 +499,9 @@ func (s *SlackClient) syncManyUsers(ctx context.Context, ghosts map[string]*brid
 		UpdatedIDs:              make(map[string]int64, len(ghosts)),
 	}
 	for _, ghost := range ghosts {
+		meta := ghost.Metadata.(*slackid.GhostMetadata)
 		_, userID := slackid.ParseUserID(ghost.ID)
-		params.UpdatedIDs[userID] = requestUpdatedTS(ghost)
+		params.UpdatedIDs[userID] = meta.SlackUpdatedTS
 	}
 	zerolog.Ctx(ctx).Debug().Any("request_map", params.UpdatedIDs).Msg("Requesting user info")
 	infos, err := s.Client.GetUsersCacheContext(ctx, s.TeamID, params)
@@ -591,5 +581,5 @@ func (s *SlackClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*
 		s.userResyncQueue <- ghost
 		return nil, nil
 	}
-	return s.fetchUserInfo(ctx, userID, requestUpdatedTS(ghost), ghost)
+	return s.fetchUserInfo(ctx, userID, meta.SlackUpdatedTS, ghost)
 }

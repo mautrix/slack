@@ -1,4 +1,4 @@
--- v0 -> v2 (compatible with v1+): Latest schema
+-- v0 -> v3 (compatible with v1+): Latest schema
 CREATE TABLE emoji (
     team_id   TEXT NOT NULL,
     emoji_id  TEXT NOT NULL,
