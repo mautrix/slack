@@ -148,9 +148,9 @@ func (s *SlackEmailLogin) SubmitCookies(ctx context.Context, cookies map[string]
 		return nil, errors.New("slack email login client is not initialized")
 	}
 	if err := s.API.SubmitCaptcha(ctx, s.email, captchaResponse); err != nil {
+		zerolog.Ctx(ctx).Warn().Err(err).Msg("Slack email login CAPTCHA submission failed")
 		var apiErr *slackLoginAPIError
 		if errors.As(err, &apiErr) {
-			zerolog.Ctx(ctx).Warn().Err(err).Msg("Slack email login CAPTCHA submission failed")
 			switch apiErr.Code {
 			case "captcha_required", "captcha_failed", "invalid_captcha":
 				return slackCaptchaStep(s.captcha, "Slack rejected or expired that CAPTCHA solution. Complete a new embedded challenge to continue.")
