@@ -27,19 +27,9 @@ type PortalMetadata struct {
 	AllowDelete *bool  `json:"allow_delete,omitempty"`
 }
 
-const CurrentGhostInfoVersion = 1
-
 type GhostMetadata struct {
 	SlackUpdatedTS int64         `json:"slack_updated_ts"`
 	LastSync       jsontime.Unix `json:"last_sync"`
-	InfoVersion    int           `json:"info_version,omitempty"`
-}
-
-func (gm *GhostMetadata) RequestUpdatedTS() int64 {
-	if gm.InfoVersion < CurrentGhostInfoVersion {
-		return 0
-	}
-	return gm.SlackUpdatedTS
 }
 
 type UserLoginMetadata struct {

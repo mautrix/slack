@@ -481,7 +481,6 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 			meta.LastSync = jsontime.UnixNow()
 			if info != nil {
 				meta.SlackUpdatedTS = int64(info.Updated)
-				meta.InfoVersion = slackid.CurrentGhostInfoVersion
 			} else if botInfo != nil {
 				meta.SlackUpdatedTS = int64(botInfo.Updated)
 			}
@@ -502,7 +501,7 @@ func (s *SlackClient) syncManyUsers(ctx context.Context, ghosts map[string]*brid
 	for _, ghost := range ghosts {
 		meta := ghost.Metadata.(*slackid.GhostMetadata)
 		_, userID := slackid.ParseUserID(ghost.ID)
-		params.UpdatedIDs[userID] = meta.RequestUpdatedTS()
+		params.UpdatedIDs[userID] = meta.SlackUpdatedTS
 	}
 	zerolog.Ctx(ctx).Debug().Any("request_map", params.UpdatedIDs).Msg("Requesting user info")
 	infos, err := s.Client.GetUsersCacheContext(ctx, s.TeamID, params)
@@ -582,5 +581,5 @@ func (s *SlackClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*
 		s.userResyncQueue <- ghost
 		return nil, nil
 	}
-	return s.fetchUserInfo(ctx, userID, meta.RequestUpdatedTS(), ghost)
+	return s.fetchUserInfo(ctx, userID, meta.SlackUpdatedTS, ghost)
 }
