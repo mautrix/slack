@@ -17,6 +17,7 @@
 package connector
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -441,14 +442,19 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 		if avatarURL == "" && info.Profile.Image512 != "" {
 			avatarURL = info.Profile.Image512
 		}
+		teamID := cmp.Or(info.TeamID, s.TeamID)
 		if avatarURL == "" && info.Profile.AvatarHash != "" {
 			avatarURL = (&url.URL{
 				Scheme: "https",
 				Host:   "ca.slack-edge.com",
-				Path:   fmt.Sprintf("/%s-%s-%s-512", s.TeamID, info.ID, info.Profile.AvatarHash),
+				Path:   fmt.Sprintf("/%s-%s-%s-512", teamID, info.ID, info.Profile.AvatarHash),
 			}).String()
 		}
-		avatar = makeAvatar(avatarURL, info.Profile.AvatarHash)
+		avatarID := info.Profile.AvatarHash
+		if teamID != s.TeamID && avatarID != "" {
+			avatarID = teamID + "-" + avatarID
+		}
+		avatar = makeAvatar(avatarURL, avatarID)
 		// Optimization to avoid updating legacy avatars
 		oldAvatarID := string(ghost.AvatarID)
 		if strings.HasPrefix(oldAvatarID, "https://") && (oldAvatarID == avatarURL || strings.Contains(oldAvatarID, info.Profile.AvatarHash)) {
@@ -475,6 +481,7 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 			meta.LastSync = jsontime.UnixNow()
 			if info != nil {
 				meta.SlackUpdatedTS = int64(info.Updated)
+				meta.InfoVersion = slackid.CurrentGhostInfoVersion
 			} else if botInfo != nil {
 				meta.SlackUpdatedTS = int64(botInfo.Updated)
 			}
@@ -495,7 +502,7 @@ func (s *SlackClient) syncManyUsers(ctx context.Context, ghosts map[string]*brid
 	for _, ghost := range ghosts {
 		meta := ghost.Metadata.(*slackid.GhostMetadata)
 		_, userID := slackid.ParseUserID(ghost.ID)
-		params.UpdatedIDs[userID] = meta.SlackUpdatedTS
+		params.UpdatedIDs[userID] = meta.RequestUpdatedTS()
 	}
 	zerolog.Ctx(ctx).Debug().Any("request_map", params.UpdatedIDs).Msg("Requesting user info")
 	infos, err := s.Client.GetUsersCacheContext(ctx, s.TeamID, params)
@@ -575,5 +582,5 @@ func (s *SlackClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*
 		s.userResyncQueue <- ghost
 		return nil, nil
 	}
-	return s.fetchUserInfo(ctx, userID, meta.SlackUpdatedTS, ghost)
+	return s.fetchUserInfo(ctx, userID, meta.RequestUpdatedTS(), ghost)
 }
