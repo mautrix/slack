@@ -19,7 +19,6 @@ package connector
 import (
 	"context"
 	"fmt"
-	"io"
 
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2/networkid"
@@ -72,23 +71,13 @@ func (s *SlackConnector) downloadFile(ctx context.Context, meta *slackid.DirectM
 	if file.IsExternal {
 		return &mediaproxy.GetMediaResponseURL{URL: url}, nil
 	}
-	return &mediaproxy.GetMediaResponseCallback{
+	resp, err := client.Client.GetFileResponseContext(ctx, url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download file: %w", err)
+	}
+	return &mediaproxy.GetMediaResponseData{
+		Reader:        resp.Body,
 		ContentType:   file.Mimetype,
-		ContentLength: int64(file.Size),
-		Callback: func(w io.Writer) (int64, error) {
-			cw := &countingWriter{Writer: w}
-			return cw.n, client.Client.GetFileContext(ctx, url, cw)
-		},
+		ContentLength: max(resp.ContentLength, 0),
 	}, nil
-}
-
-type countingWriter struct {
-	io.Writer
-	n int64
-}
-
-func (cw *countingWriter) Write(p []byte) (int, error) {
-	n, err := cw.Writer.Write(p)
-	cw.n += int64(n)
-	return n, err
 }
