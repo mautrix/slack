@@ -17,6 +17,7 @@
 package connector
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -441,14 +442,19 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 		if avatarURL == "" && info.Profile.Image512 != "" {
 			avatarURL = info.Profile.Image512
 		}
+		teamID := cmp.Or(info.TeamID, s.TeamID)
 		if avatarURL == "" && info.Profile.AvatarHash != "" {
 			avatarURL = (&url.URL{
 				Scheme: "https",
 				Host:   "ca.slack-edge.com",
-				Path:   fmt.Sprintf("/%s-%s-%s-512", s.TeamID, info.ID, info.Profile.AvatarHash),
+				Path:   fmt.Sprintf("/%s-%s-%s-512", teamID, info.ID, info.Profile.AvatarHash),
 			}).String()
 		}
-		avatar = makeAvatar(avatarURL, info.Profile.AvatarHash)
+		avatarID := info.Profile.AvatarHash
+		if teamID != s.TeamID && avatarID != "" {
+			avatarID = teamID + "-" + avatarID
+		}
+		avatar = makeAvatar(avatarURL, avatarID)
 		// Optimization to avoid updating legacy avatars
 		oldAvatarID := string(ghost.AvatarID)
 		if strings.HasPrefix(oldAvatarID, "https://") && (oldAvatarID == avatarURL || strings.Contains(oldAvatarID, info.Profile.AvatarHash)) {
