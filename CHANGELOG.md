@@ -1,3 +1,13 @@
+# v26.10
+
+* Added support for using direct media for normal attachments.
+* Added automatic retries on request errors to Slack.
+* Added support for bridging attachment mentions as links.
+* Changed login to ignore errors fetching latest version info.
+* Fixed backfill sending thread messages in the wrong order.
+* Fixed Slack Connect users not getting avatars.
+* Removed last bits of legacy provisioning API.
+
 # v26.09
 
 * Bumped minimum Go version to 1.26.
