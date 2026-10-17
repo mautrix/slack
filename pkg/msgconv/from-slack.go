@@ -18,9 +18,11 @@ package msgconv
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"image"
 	"io"
 	"net/http"
@@ -61,13 +63,13 @@ func (mc *MessageConverter) ToMatrix(
 		teamID, channelID := slackid.ParsePortalID(portal.ID)
 		output.ThreadRoot = ptr.Ptr(slackid.MakeMessageID(teamID, channelID, msg.ThreadTimestamp))
 	}
-	textPart := mc.makeTextPart(ctx, msg, portal, intent)
+	textPart := mc.makeTextPart(ctx, msg, portal, intent, client)
 	if textPart != nil {
 		output.Parts = append(output.Parts, textPart)
 	}
 	for i, file := range msg.Files {
 		// mode=tombstone seems to mean the file was deleted
-		if file.Mode == "tombstone" {
+		if file.Mode == "tombstone" || isCanvas(&file) {
 			continue
 		}
 		partID := slackid.MakePartID(slackid.PartTypeFile, i, file.ID)
@@ -141,9 +143,12 @@ func (mc *MessageConverter) EditToMatrix(
 			}
 		}
 	}
-	modifiedPart := mc.makeTextPart(ctx, msg, portal, intent)
+	modifiedPart := mc.makeTextPart(ctx, msg, portal, intent, client)
 	captionMerged := false
 	for i, file := range msg.Files {
+		if isCanvas(&file) {
+			continue
+		}
 		partID := slackid.MakePartID(slackid.PartTypeFile, i, file.ID)
 		existingPart, ok := existingMap[partID]
 		if file.Mode == "tombstone" {
@@ -191,7 +196,7 @@ func (mc *MessageConverter) EditToMatrix(
 	return output, nil
 }
 
-func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, portal *bridgev2.Portal, intent bridgev2.MatrixAPI) *bridgev2.ConvertedMessagePart {
+func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, client *slack.Client) *bridgev2.ConvertedMessagePart {
 	var text string
 	if msg.Text != "" {
 		text = msg.Text
@@ -223,7 +228,47 @@ func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, po
 			textPart.Content.FormattedBody += fmt.Sprintf(`<p><a href="https://app.slack.com/client/%s/%s">Click here to join via the Slack app</a></p>`, teamID, channelID)
 		}
 	}
+	for _, file := range msg.Files {
+		if file.Mode == "tombstone" || !isCanvas(&file) {
+			continue
+		}
+		canvasHTML := mc.renderCanvasLink(ctx, client, &file)
+		if textPart == nil {
+			content := format.HTMLToContent(canvasHTML)
+			textPart = &bridgev2.ConvertedMessagePart{
+				Type:    event.EventMessage,
+				Content: &content,
+			}
+		} else {
+			canvasContent := format.HTMLToContent(canvasHTML)
+			textPart.Content.EnsureHasHTML()
+			textPart.Content.Body += "\n\n" + canvasContent.Body
+			textPart.Content.FormattedBody += canvasHTML
+		}
+	}
 	return textPart
+}
+
+func isCanvas(file *slack.File) bool {
+	return file.Filetype == "quip"
+}
+
+func (mc *MessageConverter) renderCanvasLink(ctx context.Context, client *slack.Client, file *slack.File) string {
+	title, permalink := file.Title, file.Permalink
+	if title == "" || permalink == "" {
+		info, _, _, err := client.GetFileInfoContext(ctx, file.ID, 0, 0)
+		if err != nil || info == nil {
+			zerolog.Ctx(ctx).Err(err).Str("file_id", file.ID).Msg("Failed to fetch canvas info")
+		} else {
+			title = cmp.Or(title, info.Title)
+			permalink = cmp.Or(permalink, info.Permalink)
+		}
+	}
+	titleHTML := mc.mrkdwnToMatrixHtml(ctx, html.UnescapeString(cmp.Or(title, file.PrettyType, "Canvas")), &event.Mentions{})
+	if permalink == "" {
+		return fmt.Sprintf("<p><b>%s</b></p>", titleHTML)
+	}
+	return fmt.Sprintf(`<p><b>%s</b><br><a href="%s">Open the canvas in Slack</a></p>`, titleHTML, html.EscapeString(permalink))
 }
 
 func (mc *MessageConverter) slackTextToMatrix(ctx context.Context, text string) *bridgev2.ConvertedMessagePart {
