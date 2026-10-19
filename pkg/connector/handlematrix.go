@@ -374,20 +374,46 @@ func (s *SlackClient) HandleMatrixReadReceipt(ctx context.Context, msg *bridgev2
 	} else if !s.IsRealUser {
 		return nil
 	}
+	var threadTS string
+	var threadMsg *database.Message
+	var err error
+	if msg.Receipt.ThreadID != "" && msg.Receipt.ThreadID != "main" {
+		threadMsg, err = s.UserLogin.Bridge.DB.Message.GetPartByMXID(ctx, msg.Receipt.ThreadID)
+		if err != nil {
+			return err
+		} else if threadMsg != nil {
+			var ok bool
+			_, _, threadTS, ok = slackid.ParseMessageID(threadMsg.ID)
+			if !ok {
+				return errors.New("invalid thread message ID")
+			}
+		}
+	}
 	if msg.ExactMessage != nil {
 		_, channelID, messageTS, ok := slackid.ParseMessageID(msg.ExactMessage.ID)
 		if !ok {
 			return errors.New("invalid message ID")
 		}
+		if threadTS != "" {
+			return wrapSlackMatrixError(s.Client.MarkThreadContext(ctx, channelID, threadTS, messageTS))
+		}
 		return wrapSlackMatrixError(s.Client.MarkConversationContext(ctx, channelID, messageTS))
 	}
-	lastMessage, err := s.UserLogin.Bridge.DB.Message.GetLastPartAtOrBeforeTime(ctx, msg.Portal.PortalKey, msg.ReadUpTo)
+	var lastMessage *database.Message
+	if threadTS != "" {
+		lastMessage, err = s.UserLogin.Bridge.DB.Message.GetLastPartAtOrBeforeTimeInThread(ctx, msg.Portal.PortalKey, threadMsg.ID, msg.ReadUpTo)
+	} else {
+		lastMessage, err = s.UserLogin.Bridge.DB.Message.GetLastPartAtOrBeforeTime(ctx, msg.Portal.PortalKey, msg.ReadUpTo)
+	}
 	if err != nil {
 		return err
 	} else if lastMessage != nil {
 		_, channelID, messageTS, ok := slackid.ParseMessageID(lastMessage.ID)
 		if !ok {
 			return errors.New("invalid message ID")
+		}
+		if threadTS != "" {
+			return wrapSlackMatrixError(s.Client.MarkThreadContext(ctx, channelID, threadTS, messageTS))
 		}
 		return wrapSlackMatrixError(s.Client.MarkConversationContext(ctx, channelID, messageTS))
 	}
