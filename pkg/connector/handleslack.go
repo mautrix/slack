@@ -296,6 +296,9 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		s.setLastReadCache(evt.Channel, evt.Timestamp)
 		wrapped = wrapReadReceipt(&meta)
 	case *slack.ThreadMarkedEvent:
+		if evt.Subscription.LastRead == "" {
+			return nil, nil
+		}
 		meta, metaErr = s.makeEventMeta(ctx, evt.Subscription.Channel, nil, s.UserID, evt.EventTimestamp)
 		meta.ID = slackid.MakeMessageID(s.TeamID, evt.Subscription.Channel, evt.Subscription.LastRead)
 		wrappedReceipt := wrapReadReceipt(&meta)
