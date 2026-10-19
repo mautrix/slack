@@ -177,6 +177,15 @@ func (s *SlackClient) HandleMatrixMessageRemove(ctx context.Context, msg *bridge
 	return err
 }
 
+func unknownEmojiError(key string) error {
+	return bridgev2.WrapErrorInStatus(fmt.Errorf("unknown emoji %q", key)).
+		WithMessage("that emoji isn't available in this Slack workspace").
+		WithIsCertain(true).
+		WithSendNotice(true).
+		WithErrorReason(event.MessageStatusUnsupported).
+		WithStatus(event.MessageStatusFail)
+}
+
 func (s *SlackClient) PreHandleMatrixReaction(ctx context.Context, msg *bridgev2.MatrixReaction) (resp bridgev2.MatrixReactionPreResponse, err error) {
 	key := msg.Content.RelatesTo.Key
 	var emojiID string
@@ -186,14 +195,14 @@ func (s *SlackClient) PreHandleMatrixReaction(ctx context.Context, msg *bridgev2
 		if err != nil {
 			err = fmt.Errorf("failed to get emoji from db: %w", err)
 		} else if dbEmoji == nil {
-			err = fmt.Errorf("unknown emoji %q", key)
+			err = unknownEmojiError(key)
 		} else {
 			emojiID = dbEmoji.EmojiID
 		}
 	} else {
 		emojiID = emoji.GetShortcode(key)
 		if emojiID == "" {
-			err = fmt.Errorf("unknown emoji %q", key)
+			err = unknownEmojiError(key)
 		}
 	}
 	if err != nil {
