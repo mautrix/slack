@@ -178,10 +178,14 @@ func (s *SlackClient) GetClient() *slack.Client {
 
 func (s *SlackClient) handleBootError(ctx context.Context, err error) {
 	if err.Error() == "user_removed_from_team" || err.Error() == "invalid_auth" {
-		s.invalidateSession(ctx, status.BridgeState{
+		state := status.BridgeState{
 			StateEvent: status.StateBadCredentials,
 			Error:      status.BridgeStateErrorCode(fmt.Sprintf("slack-%s", strings.ReplaceAll(err.Error(), "_", "-"))),
-		})
+		}
+		if err.Error() == "invalid_auth" {
+			state.UserAction = status.UserActionRelogin
+		}
+		s.invalidateSession(ctx, state)
 	} else {
 		s.UserLogin.BridgeState.Send(status.BridgeState{
 			StateEvent: status.StateUnknownError,
@@ -196,6 +200,7 @@ func (s *SlackClient) Connect(ctx context.Context) {
 		s.UserLogin.BridgeState.Send(status.BridgeState{
 			StateEvent: status.StateBadCredentials,
 			Error:      "slack-not-logged-in",
+			UserAction: status.UserActionRelogin,
 		})
 		return
 	}

@@ -93,6 +93,7 @@ func (s *SlackClient) HandleSlackEvent(ctx context.Context, rawEvt any) {
 		s.invalidateSession(ctx, status.BridgeState{
 			StateEvent: status.StateBadCredentials,
 			Error:      "slack-invalid-auth",
+			UserAction: status.UserActionRelogin,
 		})
 	case *slack.FatalConnectionErrorEvent:
 		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateUnknownError, Error: "slack-rtm-fatal-error"})
