@@ -381,11 +381,12 @@ func (s *SlackClient) HandleMatrixReadReceipt(ctx context.Context, msg *bridgev2
 		threadMsg, err = s.UserLogin.Bridge.DB.Message.GetPartByMXID(ctx, msg.Receipt.ThreadID)
 		if err != nil {
 			return err
-		}
-		var ok bool
-		_, _, threadTS, ok = slackid.ParseMessageID(threadMsg.ID)
-		if !ok {
-			return errors.New("invalid thread message ID")
+		} else if threadMsg != nil {
+			var ok bool
+			_, _, threadTS, ok = slackid.ParseMessageID(threadMsg.ID)
+			if !ok {
+				return errors.New("invalid thread message ID")
+			}
 		}
 	}
 	if msg.ExactMessage != nil {
