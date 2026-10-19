@@ -28,6 +28,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
+	"maunium.net/go/mautrix/event"
 
 	"go.mau.fi/mautrix-slack/pkg/connector/slackdb"
 	"go.mau.fi/mautrix-slack/pkg/emoji"
@@ -139,7 +140,12 @@ func (s *SlackClient) sendToSlack(
 		}
 		return resp.FileMsgTS, nil
 	} else {
-		return "", errors.New("no message or attachment to send")
+		return "", bridgev2.WrapErrorInStatus(errors.New("nothing to send")).
+			WithErrorAsMessage().
+			WithIsCertain(true).
+			WithSendNotice(true).
+			WithErrorReason(event.MessageStatusUnsupported).
+			WithStatus(event.MessageStatusFail)
 	}
 }
 
