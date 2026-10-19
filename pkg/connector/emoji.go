@@ -173,13 +173,13 @@ func (s *SlackClient) addEmoji(ctx context.Context, emojiName, emojiValue string
 	return dbEmoji
 }
 
-func downloadPlainFile(ctx context.Context, url, thing string) ([]byte, error) {
+func (s *SlackConnector) downloadPlainFile(ctx context.Context, url, thing string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare request: %w", err)
 	}
 
-	getResp, err := http.DefaultClient.Do(req)
+	getResp, err := s.MsgConv.HTTP.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download %s: %w", thing, err)
 	}
@@ -202,7 +202,7 @@ func (s *SlackConnector) reuploadEmoji(ctx context.Context, intent bridgev2.Matr
 			Str("url", url).
 			Msg("Unsupported custom emoji URL for direct media, falling back to upload")
 	}
-	data, err := downloadPlainFile(ctx, url, "emoji")
+	data, err := s.downloadPlainFile(ctx, url, "emoji")
 	if err != nil {
 		return "", err
 	}
