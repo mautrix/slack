@@ -148,9 +148,11 @@ func (s *SlackClient) CreateGroup(ctx context.Context, params *bridgev2.GroupCre
 		if err != nil {
 			return nil, fmt.Errorf("failed to create channel: %w", err)
 		}
-		resp, err = s.Client.InviteUsersToConversationContext(ctx, resp.ID, plainUsers...)
-		if err != nil {
-			return nil, fmt.Errorf("failed to invite users: %w", err)
+		if len(plainUsers) > 0 {
+			resp, err = s.Client.InviteUsersToConversationContext(ctx, resp.ID, plainUsers...)
+			if err != nil {
+				return nil, fmt.Errorf("failed to invite users: %w", err)
+			}
 		}
 	case "group":
 		resp, _, _, err = s.Client.OpenConversationContext(ctx, &slack.OpenConversationParameters{
