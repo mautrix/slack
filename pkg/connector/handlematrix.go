@@ -57,7 +57,7 @@ func (s *SlackClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 	}
 	conv, err := s.Main.MsgConv.ToSlack(ctx, s.Client, msg.Portal, msg.Content, msg.Event, msg.ThreadRoot, nil, msg.OrigSender, s.IsRealUser)
 	if err != nil {
-		return nil, wrapSlackMatrixError(err)
+		return nil, wrapSlackConversionError(err)
 	}
 	timestamp, err := s.sendToSlack(ctx, channelID, conv, msg)
 	if err != nil {
@@ -159,19 +159,29 @@ func (s *SlackClient) HandleMatrixEdit(ctx context.Context, msg *bridgev2.Matrix
 	}
 	conv, err := s.Main.MsgConv.ToSlack(ctx, s.Client, msg.Portal, msg.Content, msg.Event, nil, msg.EditTarget, msg.OrigSender, s.IsRealUser)
 	if err != nil {
-		return wrapSlackMatrixError(err)
+		return wrapSlackConversionError(err)
 	}
 	msg.EditTarget.Metadata.(*slackid.MessageMetadata).LastEditTS, err = s.sendToSlack(ctx, channelID, conv, nil)
 	return wrapSlackMatrixError(err)
 }
 
-func wrapSlackMatrixError(err error) error {
-	if err == nil {
-		return nil
-	}
-	if errors.As(err, &bridgev2.MessageStatus{}) {
+func wrapSlackConversionError(err error) error {
+	if err == nil || errors.As(err, &bridgev2.MessageStatus{}) {
 		return err
 	}
+	if status := msgconvErrorStatus(err); status != nil {
+		return status
+	}
+	if slackAPIErrorCode(err) != "" {
+		return wrapSlackMatrixError(err)
+	}
+	return bridgev2.WrapErrorInStatus(err).
+		WithMessage("failed to prepare message for Slack").
+		WithIsCertain(true).
+		WithSendNotice(true)
+}
+
+func msgconvErrorStatus(err error) error {
 	switch {
 	case errors.Is(err, msgconv.ErrUnknownMsgType):
 		return bridgev2.ErrUnsupportedMessageType
@@ -188,6 +198,16 @@ func wrapSlackMatrixError(err error) error {
 		return bridgev2.ErrMediaReuploadFailed
 	case errors.Is(err, msgconv.ErrMediaConvertFailed):
 		return bridgev2.ErrMediaConvertFailed
+	}
+	return nil
+}
+
+func wrapSlackMatrixError(err error) error {
+	if err == nil || errors.As(err, &bridgev2.MessageStatus{}) {
+		return err
+	}
+	if status := msgconvErrorStatus(err); status != nil {
+		return status
 	}
 	switch slackAPIErrorCode(err) {
 	case "edit_window_closed":

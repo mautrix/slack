@@ -147,6 +147,7 @@ func New(br *bridgev2.Bridge, db *slackdb.SlackDB) *MessageConverter {
 		Bridge: br,
 		HTTP: http.Client{
 			Transport: &http.Transport{
+				Proxy:                 http.ProxyFromEnvironment,
 				DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
 				TLSHandshakeTimeout:   10 * time.Second,
 				ResponseHeaderTimeout: 20 * time.Second,

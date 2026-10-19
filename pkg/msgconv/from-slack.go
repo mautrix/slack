@@ -368,7 +368,10 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 			var resp *http.Response
 			req, err = http.NewRequestWithContext(ctx, http.MethodGet, file.PermalinkPublic, nil)
 			if err == nil {
-				resp, err = mc.HTTP.Do(req)
+				// Large files are streamed, so only the context bounds the whole download.
+				client := mc.HTTP
+				client.Timeout = 0
+				resp, err = client.Do(req)
 			}
 			if err == nil {
 				_, err = io.Copy(dest, resp.Body)
