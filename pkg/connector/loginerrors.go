@@ -58,7 +58,7 @@ var (
 	ErrLoginRateLimited = bridgev2.RespError{
 		ErrCode:    "FI.MAU.SLACK.RATE_LIMITED",
 		Err:        "Slack is rate limiting the login. Please wait a moment and try again.",
-		StatusCode: http.StatusTooManyRequests,
+		StatusCode: http.StatusBadRequest,
 	}
 	ErrLoginCaptchaRejected = bridgev2.RespError{
 		ErrCode:    "FI.MAU.SLACK.CAPTCHA_REJECTED",

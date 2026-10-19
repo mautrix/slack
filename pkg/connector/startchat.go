@@ -209,12 +209,13 @@ func (s *SlackClient) SearchUsers(ctx context.Context, query string) ([]*bridgev
 }
 
 // wrapSlackRespError translates a Slack API error into an HTTP error for the provisioning API,
-// keeping the original error in the chain.
+// keeping the original error in the chain. Clients retry 429 and 502-504 automatically, which isn't
+// wanted for provisioning requests, so those statuses aren't used.
 func wrapSlackRespError(err error) error {
 	var mapped bridgev2.RespError
 	switch slackAPIErrorCode(err) {
 	case "ratelimited", "rate_limited":
-		mapped = bridgev2.RespError(mautrix.MLimitExceeded.WithMessage("Slack is rate limiting requests. Please wait a moment and try again."))
+		mapped = bridgev2.RespError(mautrix.MLimitExceeded.WithMessage("Slack is rate limiting requests. Please wait a moment and try again.").WithStatus(http.StatusBadRequest))
 	case "invalid_auth", "not_authed", "token_revoked", "token_expired", "account_inactive",
 		"no_permission", "not_authorized", "access_denied", "missing_scope", "not_allowed_token_type",
 		"restricted_action", "team_access_not_granted", "user_is_restricted", "ekm_access_denied",
@@ -229,7 +230,7 @@ func wrapSlackRespError(err error) error {
 	case "invalid_name", "invalid_name_specials", "invalid_name_maxlength", "invalid_name_punctuation", "invalid_name_required":
 		mapped = bridgev2.RespError(mautrix.MInvalidParam.WithMessage("Invalid channel name"))
 	default:
-		mapped = bridgev2.RespError(mautrix.MUnknown.WithMessage("Request to Slack failed").WithStatus(http.StatusBadGateway))
+		mapped = bridgev2.RespError(mautrix.MUnknown.WithMessage("Request to Slack failed"))
 	}
 	return fmt.Errorf("%w: %w", mapped, err)
 }
