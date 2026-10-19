@@ -346,6 +346,17 @@ func (s *SlackClient) selfPowerLevel(info *slack.Channel) int {
 	return 0
 }
 
+func (s *SlackClient) displayRealNames() bool {
+	switch s.BootResp.Prefs.DisplayRealNamesOverride {
+	case 1:
+		return true
+	case -1:
+		return false
+	default:
+		return s.BootResp.Team.Prefs.DisplayRealNames
+	}
+}
+
 func (s *SlackClient) formatChannelName(info *slack.Channel) string {
 	return s.Main.Config.FormatChannelName(&ChannelNameParams{
 		Channel:      info,
@@ -435,8 +446,9 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 	var ep database.ExtraProfile
 	if info != nil {
 		name = ptr.Ptr(s.Main.Config.FormatDisplayname(&DisplaynameParams{
-			User: info,
-			Team: &s.BootResp.Team.TeamInfo,
+			User:             info,
+			Team:             &s.BootResp.Team.TeamInfo,
+			DisplayRealNames: s.displayRealNames(),
 		}))
 		avatarURL := info.Profile.ImageOriginal
 		if avatarURL == "" && info.Profile.Image512 != "" {

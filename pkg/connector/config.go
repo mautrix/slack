@@ -84,7 +84,8 @@ func executeTemplate(tpl *template.Template, data any) string {
 
 type DisplaynameParams struct {
 	*slack.User
-	Team *slack.TeamInfo
+	Team             *slack.TeamInfo
+	DisplayRealNames bool
 }
 
 func (c *Config) FormatDisplayname(user *DisplaynameParams) string {

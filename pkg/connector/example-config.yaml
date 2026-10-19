@@ -6,6 +6,7 @@
 #  .IsBot - Whether the user is a bot
 #  .Profile.DisplayName - The username or real name of the user (depending on settings)
 # Variables only available for users (not bots):
+#  .DisplayRealNames - Whether the logged-in user has Slack set to show full names instead of display names
 #  .TeamID - The internal ID of the workspace the user is in
 #  .TZ - The timezone region of the user (e.g. Europe/London)
 #  .TZLabel - The label of the timezone of the user (e.g. Greenwich Mean Time)
