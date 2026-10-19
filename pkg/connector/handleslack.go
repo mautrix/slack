@@ -103,8 +103,8 @@ func (s *SlackClient) HandleSlackEvent(ctx context.Context, rawEvt any) {
 			Error:      "slack-rtm-error",
 			Info:       map[string]any{"go_error": evt.Error()},
 		})
-	case *slack.MessageEvent, *slack.ReactionAddedEvent, *slack.ReactionRemovedEvent,
-		*slack.UserTypingEvent, *slack.ChannelMarkedEvent, *slack.IMMarkedEvent, *slack.GroupMarkedEvent,
+	case *slack.MessageEvent, *slack.ReactionAddedEvent, *slack.ReactionRemovedEvent, *slack.UserTypingEvent,
+		*slack.ChannelMarkedEvent, *slack.IMMarkedEvent, *slack.GroupMarkedEvent, *slack.ThreadMarkedEvent,
 		*slack.ChannelJoinedEvent, *slack.ChannelLeftEvent, *slack.GroupJoinedEvent, *slack.GroupLeftEvent,
 		*slack.MemberJoinedChannelEvent, *slack.MemberLeftChannelEvent,
 		*slack.ChannelUpdateEvent:
@@ -295,6 +295,12 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
 		s.setLastReadCache(evt.Channel, evt.Timestamp)
 		wrapped = wrapReadReceipt(&meta)
+	case *slack.ThreadMarkedEvent:
+		meta, metaErr = s.makeEventMeta(ctx, evt.Subscription.Channel, nil, s.UserID, evt.EventTimestamp)
+		meta.ID = slackid.MakeMessageID(s.TeamID, evt.Subscription.Channel, evt.Subscription.LastRead)
+		wrappedReceipt := wrapReadReceipt(&meta)
+		wrappedReceipt.ThreadRoot = slackid.MakeMessageID(s.TeamID, evt.Subscription.Channel, evt.Subscription.ThreadTimestamp)
+		wrapped = wrappedReceipt
 	case *slack.IMMarkedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
 		s.setLastReadCache(evt.Channel, evt.Timestamp)
@@ -558,6 +564,7 @@ func (s *SlackChatInfoChange) GetChatInfoChange(ctx context.Context, portal *bri
 
 type SlackReadReceipt struct {
 	*SlackEventMeta
+	ThreadRoot networkid.MessageID
 }
 
 var _ bridgev2.RemoteReadReceipt = (*SlackReadReceipt)(nil)
@@ -570,6 +577,10 @@ func (s *SlackReadReceipt) GetLastReceiptTarget() networkid.MessageID {
 
 func (s *SlackReadReceipt) GetReceiptTargets() []networkid.MessageID {
 	return nil
+}
+
+func (s *SlackReadReceipt) GetReceiptThread() networkid.MessageID {
+	return s.ThreadRoot
 }
 
 func (s *SlackReadReceipt) GetReadUpTo() time.Time {
