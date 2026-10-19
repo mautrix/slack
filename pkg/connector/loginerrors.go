@@ -22,6 +22,7 @@ import (
 	"net/http"
 
 	"github.com/slack-go/slack"
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
 )
 
@@ -69,11 +70,7 @@ var (
 		Err:        "This workspace requires signing in through a browser. Use the auth token login flow instead.",
 		StatusCode: http.StatusBadRequest,
 	}
-	ErrLoginUnknown = bridgev2.RespError{
-		ErrCode:    "M_UNKNOWN",
-		Err:        "Internal error logging in to Slack",
-		StatusCode: http.StatusInternalServerError,
-	}
+	ErrLoginUnknown = bridgev2.RespError(mautrix.MUnknown.WithMessage("Internal error logging in to Slack"))
 )
 
 // slackAPIErrorCode digs a Slack API error string (e.g. invalid_auth) out of the error

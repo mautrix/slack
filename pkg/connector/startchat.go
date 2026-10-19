@@ -19,9 +19,11 @@ package connector
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/slack-go/slack"
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 
@@ -71,11 +73,11 @@ func (s *SlackClient) ResolveIdentifier(ctx context.Context, identifier string, 
 		identifier = strings.ToUpper(identifier)
 	}
 	if !isValidSlackID(identifier) {
-		return nil, fmt.Errorf("invalid character in identifier")
+		return nil, bridgev2.RespError(mautrix.MInvalidParam.WithMessage("Invalid Slack user ID"))
 	}
 	userInfo, err := s.Client.GetUserInfoContext(ctx, identifier)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get user info: %w", err)
+		return nil, wrapSlackRespError(fmt.Errorf("failed to get user info: %w", err))
 	}
 	userID := slackid.MakeUserID(s.TeamID, userInfo.ID)
 	ghost, err := s.Main.br.GetGhostByID(ctx, userID)
@@ -106,7 +108,7 @@ func (s *SlackClient) CreateChatWithGhost(ctx context.Context, ghost *bridgev2.G
 		Users:    []string{identifier},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to open conversation: %w", err)
+		return nil, wrapSlackRespError(fmt.Errorf("failed to open conversation: %w", err))
 	}
 	chatInfo, err := s.wrapChatInfo(ctx, resp, true)
 	if err != nil {
@@ -120,7 +122,7 @@ func (s *SlackClient) CreateChatWithGhost(ctx context.Context, ghost *bridgev2.G
 
 func (s *SlackClient) CreateGroup(ctx context.Context, params *bridgev2.GroupCreateParams) (*bridgev2.CreateChatResponse, error) {
 	if s.Main.Config.DMOnly && (params.Type == "public-channel" || params.Type == "private-channel") {
-		return nil, fmt.Errorf("cannot create Slack channels in DM-only mode")
+		return nil, bridgev2.RespError(mautrix.MForbidden.WithMessage("Creating Slack channels is disabled in DM-only mode"))
 	}
 	if s.Client == nil {
 		return nil, bridgev2.ErrNotLoggedIn
@@ -130,7 +132,7 @@ func (s *SlackClient) CreateGroup(ctx context.Context, params *bridgev2.GroupCre
 		var teamID string
 		teamID, plainUsers[i] = slackid.ParseUserID(user)
 		if teamID != s.TeamID || !isValidSlackID(plainUsers[i]) {
-			return nil, fmt.Errorf("invalid user ID %q", user)
+			return nil, bridgev2.RespError(mautrix.MInvalidParam.WithMessage("Invalid user ID %q", user))
 		}
 	}
 	var resp *slack.Channel
@@ -138,7 +140,7 @@ func (s *SlackClient) CreateGroup(ctx context.Context, params *bridgev2.GroupCre
 	switch params.Type {
 	case "public-channel", "private-channel":
 		if params.Name == nil {
-			return nil, fmt.Errorf("missing name for channel")
+			return nil, bridgev2.RespError(mautrix.MInvalidParam.WithMessage("Channel name is required"))
 		}
 		resp, err = s.Client.CreateConversationContext(ctx, slack.CreateConversationParams{
 			ChannelName: params.Name.Name,
@@ -146,12 +148,12 @@ func (s *SlackClient) CreateGroup(ctx context.Context, params *bridgev2.GroupCre
 			TeamID:      s.TeamID,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create channel: %w", err)
+			return nil, wrapSlackRespError(fmt.Errorf("failed to create channel: %w", err))
 		}
 		if len(plainUsers) > 0 {
 			resp, err = s.Client.InviteUsersToConversationContext(ctx, resp.ID, plainUsers...)
 			if err != nil {
-				return nil, fmt.Errorf("failed to invite users: %w", err)
+				return nil, wrapSlackRespError(fmt.Errorf("failed to invite users: %w", err))
 			}
 		}
 	case "group":
@@ -160,16 +162,16 @@ func (s *SlackClient) CreateGroup(ctx context.Context, params *bridgev2.GroupCre
 			Users:    plainUsers,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to open conversation: %w", err)
+			return nil, wrapSlackRespError(fmt.Errorf("failed to open conversation: %w", err))
 		}
 		s.addDMChannel(resp)
 	default:
-		return nil, fmt.Errorf("unrecognized group type %q", params.Type)
+		return nil, bridgev2.RespError(mautrix.MInvalidParam.WithMessage("Unrecognized group type %q", params.Type))
 	}
 	if params.Topic != nil {
 		resp, err = s.Client.SetTopicOfConversationContext(ctx, resp.ID, params.Topic.Topic)
 		if err != nil {
-			return nil, fmt.Errorf("failed to set topic: %w", err)
+			return nil, wrapSlackRespError(fmt.Errorf("failed to set topic: %w", err))
 		}
 	}
 	chatInfo, err := s.wrapChatInfo(ctx, resp, true)
@@ -188,7 +190,7 @@ func (s *SlackClient) SearchUsers(ctx context.Context, query string) ([]*bridgev
 	}
 	resp, err := s.Client.SearchUsersCacheContext(ctx, s.TeamID, query)
 	if err != nil {
-		return nil, err
+		return nil, wrapSlackRespError(fmt.Errorf("failed to search users: %w", err))
 	}
 	results := make([]*bridgev2.ResolveIdentifierResponse, len(resp.Results))
 	for i, user := range resp.Results {
@@ -204,4 +206,30 @@ func (s *SlackClient) SearchUsers(ctx context.Context, query string) ([]*bridgev
 		}
 	}
 	return results, nil
+}
+
+// wrapSlackRespError translates a Slack API error into an HTTP error for the provisioning API,
+// keeping the original error in the chain.
+func wrapSlackRespError(err error) error {
+	var mapped bridgev2.RespError
+	switch slackAPIErrorCode(err) {
+	case "ratelimited", "rate_limited":
+		mapped = bridgev2.RespError(mautrix.MLimitExceeded.WithMessage("Slack is rate limiting requests. Please wait a moment and try again."))
+	case "invalid_auth", "not_authed", "token_revoked", "token_expired", "account_inactive",
+		"no_permission", "not_authorized", "access_denied", "missing_scope", "not_allowed_token_type",
+		"restricted_action", "team_access_not_granted", "user_is_restricted", "ekm_access_denied",
+		"cant_invite", "cant_invite_self":
+		mapped = bridgev2.RespError(mautrix.MForbidden.WithMessage("Slack denied the request"))
+	case "user_not_found", "users_not_found":
+		mapped = bridgev2.RespError(mautrix.MNotFound.WithMessage("User not found on Slack"))
+	case "channel_not_found":
+		mapped = bridgev2.RespError(mautrix.MNotFound.WithMessage("Channel not found on Slack"))
+	case "name_taken":
+		mapped = bridgev2.RespError(mautrix.MInvalidParam.WithMessage("A channel with that name already exists"))
+	case "invalid_name", "invalid_name_specials", "invalid_name_maxlength", "invalid_name_punctuation", "invalid_name_required":
+		mapped = bridgev2.RespError(mautrix.MInvalidParam.WithMessage("Invalid channel name"))
+	default:
+		mapped = bridgev2.RespError(mautrix.MUnknown.WithMessage("Request to Slack failed").WithStatus(http.StatusBadGateway))
+	}
+	return fmt.Errorf("%w: %w", mapped, err)
 }
