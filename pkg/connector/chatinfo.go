@@ -374,7 +374,7 @@ func (s *SlackClient) getTeamInfo() *bridgev2.ChatInfo {
 	return &bridgev2.ChatInfo{
 		Name:   &name,
 		Topic:  nil,
-		Avatar: makeAvatar(avatarURL, ""),
+		Avatar: s.makeAvatar(avatarURL, ""),
 		Members: &bridgev2.ChatMemberList{
 			IsFull:           false,
 			TotalMemberCount: 0,
@@ -413,7 +413,7 @@ func (s *SlackClient) GetChatInfo(ctx context.Context, portal *bridgev2.Portal) 
 	}
 }
 
-func makeAvatar(avatarURL, slackAvatarHash string) *bridgev2.Avatar {
+func (s *SlackClient) makeAvatar(avatarURL, slackAvatarHash string) *bridgev2.Avatar {
 	avatarID := networkid.AvatarID(slackAvatarHash)
 	if avatarID == "" {
 		avatarID = networkid.AvatarID(avatarURL)
@@ -421,7 +421,7 @@ func makeAvatar(avatarURL, slackAvatarHash string) *bridgev2.Avatar {
 	return &bridgev2.Avatar{
 		ID: avatarID,
 		Get: func(ctx context.Context) ([]byte, error) {
-			return downloadPlainFile(ctx, avatarURL, "avatar")
+			return s.Main.downloadPlainFile(ctx, avatarURL, "avatar")
 		},
 		Remove: avatarURL == "",
 	}
@@ -454,7 +454,7 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 		if teamID != s.TeamID && avatarID != "" {
 			avatarID = teamID + "-" + avatarID
 		}
-		avatar = makeAvatar(avatarURL, avatarID)
+		avatar = s.makeAvatar(avatarURL, avatarID)
 		// Optimization to avoid updating legacy avatars
 		oldAvatarID := string(ghost.AvatarID)
 		if strings.HasPrefix(oldAvatarID, "https://") && (oldAvatarID == avatarURL || strings.Contains(oldAvatarID, info.Profile.AvatarHash)) {
@@ -467,7 +467,7 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 		isBot = isBot || info.IsBot || info.IsAppUser
 	} else if botInfo != nil {
 		name = ptr.Ptr(s.Main.Config.FormatBotDisplayname(botInfo, &s.BootResp.Team.TeamInfo))
-		avatar = makeAvatar(botInfo.Icons.Image72, botInfo.Icons.Image72)
+		avatar = s.makeAvatar(botInfo.Icons.Image72, botInfo.Icons.Image72)
 		isBot = true
 	}
 	return &bridgev2.UserInfo{

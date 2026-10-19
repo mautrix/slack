@@ -100,8 +100,8 @@ func (s *SlackClient) HandleSlackEvent(ctx context.Context, rawEvt any) {
 		log.Err(evt).Msg("Got RTM error")
 		s.UserLogin.BridgeState.Send(status.BridgeState{
 			StateEvent: status.StateUnknownError,
-			Error:      status.BridgeStateErrorCode(fmt.Sprintf("slack-rtm-error-%d", evt.Code)),
-			Message:    fmt.Sprintf("%d: %s", evt.Code, evt.Msg),
+			Error:      "slack-rtm-error",
+			Info:       map[string]any{"go_error": evt.Error()},
 		})
 	case *slack.MessageEvent, *slack.ReactionAddedEvent, *slack.ReactionRemovedEvent,
 		*slack.UserTypingEvent, *slack.ChannelMarkedEvent, *slack.IMMarkedEvent, *slack.GroupMarkedEvent,
