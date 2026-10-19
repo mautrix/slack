@@ -324,6 +324,7 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 			resp, err = http.DefaultClient.Get(file.PermalinkPublic)
 			if err == nil {
 				_, err = io.Copy(dest, resp.Body)
+				_ = resp.Body.Close()
 			}
 		}
 		if err != nil {
