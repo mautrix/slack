@@ -226,7 +226,7 @@ func (s *SlackClient) HandleMatrixReactionRemove(ctx context.Context, msg *bridg
 		Channel:   channelID,
 		Timestamp: messageID,
 	})
-	if err != nil && err.Error() != "reaction" {
+	if err != nil && err.Error() != "no_reaction" {
 		return err
 	}
 	return nil
