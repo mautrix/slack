@@ -28,6 +28,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
+	"maunium.net/go/mautrix/event"
 
 	"go.mau.fi/mautrix-slack/pkg/connector/slackdb"
 	"go.mau.fi/mautrix-slack/pkg/emoji"
@@ -156,7 +157,29 @@ func (s *SlackClient) HandleMatrixEdit(ctx context.Context, msg *bridgev2.Matrix
 		return err
 	}
 	msg.EditTarget.Metadata.(*slackid.MessageMetadata).LastEditTS, err = s.sendToSlack(ctx, channelID, conv, nil)
-	return err
+	return wrapSlackEditError(err)
+}
+
+func wrapSlackEditError(err error) error {
+	switch slackAPIErrorCode(err) {
+	case "edit_window_closed":
+		return bridgev2.ErrEditTargetTooOld
+	case "cant_update_message", "cant_delete_message":
+		return bridgev2.WrapErrorInStatus(err).
+			WithMessage("you don't have permission to change this message").
+			WithErrorReason(event.MessageStatusNoPermission).
+			WithStatus(event.MessageStatusFail).
+			WithIsCertain(true).
+			WithSendNotice(true)
+	case "message_not_found":
+		return bridgev2.WrapErrorInStatus(err).
+			WithMessage("message not found on Slack").
+			WithStatus(event.MessageStatusFail).
+			WithIsCertain(true).
+			WithSendNotice(true)
+	default:
+		return err
+	}
 }
 
 func (s *SlackClient) HandleMatrixMessageRemove(ctx context.Context, msg *bridgev2.MatrixMessageRemove) error {
@@ -168,7 +191,7 @@ func (s *SlackClient) HandleMatrixMessageRemove(ctx context.Context, msg *bridge
 		return errors.New("invalid message ID")
 	}
 	_, _, err := s.Client.DeleteMessageContext(ctx, channelID, messageID)
-	return err
+	return wrapSlackEditError(err)
 }
 
 func (s *SlackClient) PreHandleMatrixReaction(ctx context.Context, msg *bridgev2.MatrixReaction) (resp bridgev2.MatrixReactionPreResponse, err error) {
