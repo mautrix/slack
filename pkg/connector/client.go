@@ -41,10 +41,15 @@ import (
 
 func init() {
 	status.BridgeStateHumanErrors.Update(status.BridgeStateErrorMap{
-		"slack-not-logged-in":          "Please log in again",
-		"slack-invalid-auth":           "Invalid credentials, please log in again",
-		"slack-user-removed-from-team": "You were removed from the Slack workspace",
-		"slack-id-mismatch":            "Unexpected internal error: got different user ID",
+		"slack-not-logged-in":               "Please log in again",
+		"slack-invalid-auth":                "Invalid credentials, please log in again",
+		"slack-user-removed-from-team":      "You were removed from the Slack workspace",
+		"slack-id-mismatch":                 "Unexpected internal error: got different user ID",
+		"slack-rtm-disconnected":            "Disconnected from Slack",
+		"slack-rtm-fatal-error":             "Failed to connect to Slack",
+		"slack-rtm-error":                   "Unknown error from Slack",
+		"slack-socketmode-error":            "Error in Slack socket mode connection",
+		"slack-socketmode-connection-error": "Failed to connect to Slack",
 	})
 }
 
@@ -177,16 +182,23 @@ func (s *SlackClient) GetClient() *slack.Client {
 }
 
 func (s *SlackClient) handleBootError(ctx context.Context, err error) {
-	if err.Error() == "user_removed_from_team" || err.Error() == "invalid_auth" {
+	switch slackAPIErrorCode(err) {
+	case "user_removed_from_team":
 		s.invalidateSession(ctx, status.BridgeState{
 			StateEvent: status.StateBadCredentials,
-			Error:      status.BridgeStateErrorCode(fmt.Sprintf("slack-%s", strings.ReplaceAll(err.Error(), "_", "-"))),
+			Error:      "slack-user-removed-from-team",
 		})
-	} else {
+	case "invalid_auth":
+		s.invalidateSession(ctx, status.BridgeState{
+			StateEvent: status.StateBadCredentials,
+			Error:      "slack-invalid-auth",
+		})
+	default:
 		s.UserLogin.BridgeState.Send(status.BridgeState{
 			StateEvent: status.StateUnknownError,
 			Error:      "slack-unknown-fetch-error",
-			Message:    fmt.Sprintf("Unknown error from Slack: %s", err.Error()),
+			Message:    "Unknown error from Slack",
+			Info:       map[string]any{"go_error": err.Error()},
 		})
 	}
 }
@@ -237,7 +249,8 @@ func (s *SlackClient) Connect(ctx context.Context) {
 		s.UserLogin.BridgeState.Send(status.BridgeState{
 			StateEvent: status.StateUnknownError,
 			Error:      "slack-unknown-connect-error",
-			Message:    fmt.Sprintf("Unknown error from Slack: %s", err.Error()),
+			Message:    "Unknown error from Slack",
+			Info:       map[string]any{"go_error": err.Error()},
 		})
 	}
 }
@@ -378,7 +391,7 @@ func (s *SlackClient) runSocketMode(ctx context.Context, cancel context.CancelFu
 			s.UserLogin.BridgeState.Send(status.BridgeState{
 				StateEvent: status.StateTransientDisconnect,
 				Error:      "slack-socketmode-error",
-				Message:    err.Error(),
+				Info:       map[string]any{"go_error": err.Error()},
 			})
 			time.Sleep(10 * time.Second)
 		} else {
