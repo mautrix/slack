@@ -98,7 +98,12 @@ func (s *SlackClient) GetChannelInfoForMention(ctx context.Context, channelID st
 			return "", portal, err
 		}
 		ghost.UpdateInfoIfNecessary(ctx, s.UserLogin, bridgev2.RemoteEventUnknown)
-		return ghost.Name, portal, nil
+		if info.User != s.UserID {
+			return ghost.Name, portal, nil
+		}
+		selfChat := *info
+		selfChat.Name = ghost.Name
+		return s.formatChannelName(&selfChat), portal, nil
 	default:
 		return s.formatChannelName(info), portal, nil
 	}
