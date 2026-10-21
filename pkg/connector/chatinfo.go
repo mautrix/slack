@@ -55,6 +55,9 @@ func (s *SlackClient) fetchChatInfoWithCache(ctx context.Context, channelID stri
 	if cached, ok := s.chatInfoCache[channelID]; ok && time.Since(cached.ts) < ChatInfoCacheExpiry {
 		return cached.data, nil
 	} else if onlyIfNotAttempted && s.chatInfoFetchAttempted[channelID] {
+		if ok {
+			return cached.data, nil
+		}
 		return nil, fmt.Errorf("chat info fetch already attempted for channel %s", channelID)
 	}
 	zerolog.Ctx(ctx).Debug().Str("channel_id", channelID).Msg("Fetching channel info")
@@ -85,7 +88,20 @@ func (s *SlackClient) GetChannelInfoForMention(ctx context.Context, channelID st
 		return "", nil, fmt.Errorf("failed to get portal for channel %s: %w", channelID, err)
 	}
 	//portal.UpdateInfo(ctx, s.wrapChatInfo(ctx, info, false), s.UserLogin, nil, time.Time{})
-	return s.formatChannelName(info), portal, nil
+	switch {
+	case info.IsMpIM:
+		name, err := s.generateGroupDMName(ctx, info.Members)
+		return name, portal, err
+	case info.IsIM:
+		ghost, err := s.UserLogin.Bridge.GetGhostByID(ctx, slackid.MakeUserID(s.TeamID, info.User))
+		if err != nil {
+			return "", portal, err
+		}
+		ghost.UpdateInfoIfNecessary(ctx, s.UserLogin, bridgev2.RemoteEventUnknown)
+		return ghost.Name, portal, nil
+	default:
+		return s.formatChannelName(info), portal, nil
+	}
 }
 
 const userGroupInfoCacheExpiry = 8 * time.Hour
