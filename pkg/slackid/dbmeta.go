@@ -40,6 +40,7 @@ type UserLoginMetadata struct {
 }
 
 type MessageMetadata struct {
-	CaptionMerged bool   `json:"caption_merged"`
-	LastEditTS    string `json:"last_edit_ts"`
+	CaptionMerged  bool   `json:"caption_merged"`
+	LastEditTS     string `json:"last_edit_ts"`
+	SentFromMatrix bool   `json:"sent_from_matrix,omitempty"`
 }
