@@ -142,9 +142,10 @@ type SlackClient struct {
 	IsRealUser bool
 	Ghost      *bridgev2.Ghost
 
-	stopConnection  atomic.Pointer[context.CancelFunc]
-	userResyncQueue chan *bridgev2.Ghost
-	initialConnect  time.Time
+	stopConnection   atomic.Pointer[context.CancelFunc]
+	userResyncQueue  chan *bridgev2.Ghost
+	initialConnect   time.Time
+	rtmHelloReceived atomic.Bool
 
 	fileCreatedListeners *exsync.Map[string, chan struct{}]
 
@@ -257,6 +258,7 @@ func (s *SlackClient) Connect(ctx context.Context) {
 
 func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientUserBootResponse) error {
 	s.initialConnect = time.Now()
+	s.rtmHelloReceived.Store(false)
 	s.BootResp = bootResp
 	if s.Main.Config.DMOnly {
 		for idx := range bootResp.IMs {
@@ -611,23 +613,47 @@ func (s *SlackClient) syncChannels(ctx context.Context, channels []*slack.Channe
 		})
 	}
 	for portalKey := range existingPortals {
-		_, channelID := slackid.ParsePortalID(portalKey.ID)
-		if channelID == "" {
-			continue
-		}
-		latestMessageID, ok := latestMessageIDs[channelID]
-		if !ok {
-			// TODO delete portal if it's actually gone?
-			continue
-		}
-		s.Main.br.QueueRemoteEvent(s.UserLogin, &SlackChatResync{
-			SlackEventMeta: &SlackEventMeta{
-				Type:      bridgev2.RemoteEventChatResync,
-				PortalKey: portalKey,
-			},
-			Client:        s,
-			LatestMessage: latestMessageID,
-		})
+		s.queueCatchUpResync(portalKey, latestMessageIDs)
+	}
+}
+
+func (s *SlackClient) queueCatchUpResync(portalKey networkid.PortalKey, latestMessageIDs map[string]string) {
+	_, channelID := slackid.ParsePortalID(portalKey.ID)
+	if channelID == "" {
+		return
+	}
+	latestMessageID, ok := latestMessageIDs[channelID]
+	if !ok {
+		// TODO delete portal if it's actually gone?
+		return
+	}
+	s.Main.br.QueueRemoteEvent(s.UserLogin, &SlackChatResync{
+		SlackEventMeta: &SlackEventMeta{
+			Type:      bridgev2.RemoteEventChatResync,
+			PortalKey: portalKey,
+		},
+		Client:        s,
+		LatestMessage: latestMessageID,
+	})
+}
+
+// catchUpAfterReconnect backfills messages that were sent while the RTM websocket was reconnecting,
+// since Slack doesn't replay events from the previous connection.
+func (s *SlackClient) catchUpAfterReconnect(ctx context.Context) {
+	log := zerolog.Ctx(ctx).With().Str("action", "reconnect catch-up").Logger()
+	ctx = log.WithContext(ctx)
+	latestMessageIDs := s.getLatestMessageIDs(ctx)
+	if latestMessageIDs == nil {
+		return
+	}
+	userPortals, err := s.UserLogin.Bridge.DB.UserPortal.GetAllForLogin(ctx, s.UserLogin.UserLogin)
+	if err != nil {
+		log.Err(err).Msg("Failed to fetch user portals")
+		return
+	}
+	log.Debug().Int("portal_count", len(userPortals)).Msg("Checking portals for messages missed during reconnect")
+	for _, up := range userPortals {
+		s.queueCatchUpResync(up.Portal, latestMessageIDs)
 	}
 }
 

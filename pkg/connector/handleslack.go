@@ -87,8 +87,12 @@ func (s *SlackClient) HandleSlackEvent(ctx context.Context, rawEvt any) {
 			Int("error_code", evt.Error.Code).
 			Msg("Got RTM error")
 	case *slack.HelloEvent:
-		log.Debug().Msg("Received hello event from websocket (now really connected)")
+		reconnected := s.rtmHelloReceived.Swap(true)
+		log.Debug().Bool("reconnected", reconnected).Msg("Received hello event from websocket (now really connected)")
 		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnected})
+		if reconnected {
+			go s.catchUpAfterReconnect(ctx)
+		}
 	case *slack.InvalidAuthEvent:
 		s.invalidateSession(ctx, status.BridgeState{
 			StateEvent: status.StateBadCredentials,
