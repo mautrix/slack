@@ -245,9 +245,11 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 			evtSender := s.makeEventSender(member)
 			members.MemberMap[evtSender.Sender] = bridgev2.ChatMember{EventSender: evtSender}
 		}
-		info.Name, err = s.generateGroupDMName(ctx, info.Members)
-		if err != nil {
-			return nil, err
+		if info.Properties == nil || !info.Properties.HasCustomMpdmName {
+			info.Name, err = s.generateGroupDMName(ctx, info.Members)
+			if err != nil {
+				return nil, err
+			}
 		}
 	case info.IsIM:
 		roomType = database.RoomTypeDM
