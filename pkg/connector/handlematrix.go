@@ -71,6 +71,7 @@ func (s *SlackClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Mat
 			ID:        slackid.MakeMessageID(s.TeamID, channelID, timestamp),
 			SenderID:  slackid.MakeUserID(s.TeamID, s.UserID),
 			Timestamp: slackid.ParseSlackTimestamp(timestamp),
+			Metadata:  &slackid.MessageMetadata{SentFromMatrix: true},
 		},
 		StreamOrder: slackid.ParseSlackTimestamp(timestamp).UnixMicro(),
 	}, nil

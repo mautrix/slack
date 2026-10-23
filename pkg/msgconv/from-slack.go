@@ -126,6 +126,9 @@ func (mc *MessageConverter) EditToMatrix(
 			bridgev2.ErrIgnoringRemoteEvent, meta.LastEditTS, msg.Edited.Timestamp,
 		)
 	}
+	if msg.Edited == nil && meta.SentFromMatrix {
+		return nil, fmt.Errorf("%w: non-user change to a message sent from Matrix", bridgev2.ErrIgnoringRemoteEvent)
+	}
 	ctx = context.WithValue(ctx, contextKeyPortal, portal)
 	ctx = context.WithValue(ctx, contextKeySource, source)
 	client := source.Client.(SlackClientProvider).GetClient()
