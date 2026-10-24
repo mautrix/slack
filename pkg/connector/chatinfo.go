@@ -89,7 +89,7 @@ func (s *SlackClient) GetChannelInfoForMention(ctx context.Context, channelID st
 	}
 	//portal.UpdateInfo(ctx, s.wrapChatInfo(ctx, info, false), s.UserLogin, nil, time.Time{})
 	switch {
-	case info.IsMpIM:
+	case info.IsMpIM && (info.Properties == nil || !info.Properties.HasCustomMpdmName):
 		name, err := s.generateGroupDMName(ctx, info.Members)
 		return name, portal, err
 	case info.IsIM:
