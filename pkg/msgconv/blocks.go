@@ -219,11 +219,8 @@ func (mc *MessageConverter) renderMessageMention(ctx context.Context, mention *s
 	if mention.ChannelID != "" && ctx.Value(contextKeySource) != nil && mc.Bridge != nil {
 		_, _, channelName = mc.GetMentionedRoomInfo(ctx, mention.ChannelID)
 	}
-	if channelName == "" {
-		channelName = mention.ChannelID
-	}
-	if channelName != "" && !strings.HasPrefix(channelName, "#") {
-		channelName = "#" + channelName
+	if channelName == "" && mention.ChannelID != "" {
+		channelName = "#" + mention.ChannelID
 	}
 
 	var authorName string
