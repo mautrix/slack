@@ -680,7 +680,7 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 					htmlText.WriteString(fmt.Sprintf("<blockquote>%s</blockquote>", fallback))
 				}
 			}
-		} else if attachment.FromURL != "" && attachment.OriginalURL != "" && attachment.Title != "" && len(attachment.Fields) == 0 && len(attachment.Actions) == 0 {
+		} else if attachment.FromURL != "" && attachment.OriginalURL != "" && attachment.Title != "" && (len(attachment.Fields) == 0 || !attachment.IsAppUnfurl) && len(attachment.Actions) == 0 {
 			urlPreviews = append(urlPreviews, mc.attachmentToURLPreview(ctx, portal, intent, attachment))
 			continue
 		} else if len(attachment.Blocks.BlockSet) > 0 {
