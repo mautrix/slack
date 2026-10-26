@@ -118,13 +118,17 @@ func (s *SlackClient) FetchMessages(ctx context.Context, params bridgev2.FetchMe
 		}
 	}
 	lastRead := s.getLastReadCache(channelID)
-	return &bridgev2.FetchMessagesResponse{
+	resp := &bridgev2.FetchMessagesResponse{
 		Messages: convertedMessages,
 		Cursor:   networkid.PaginationCursor(chunk.ResponseMetadata.Cursor),
 		HasMore:  chunk.HasMore,
 		Forward:  params.Forward,
 		MarkRead: lastRead != "" && maxMsgID != "" && lastRead >= maxMsgID,
-	}, nil
+	}
+	if !resp.MarkRead && lastRead != "" && threadTS == "" {
+		resp.ReadUpTo = slackid.ParseSlackTimestamp(lastRead)
+	}
+	return resp, nil
 }
 
 func (s *SlackClient) wrapBackfillMessage(ctx context.Context, portal *bridgev2.Portal, msg *slack.Msg, inThread bool) *bridgev2.BackfillMessage {
