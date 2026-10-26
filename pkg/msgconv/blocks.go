@@ -116,14 +116,13 @@ func (mc *MessageConverter) attachmentToURLPreview(ctx context.Context, portal *
 			}
 		}
 	}
-	// TODO handle mrkdwn in description? there can at least be links
 	return &event.BeeperLinkPreview{
 		LinkPreview: event.LinkPreview{
 			CanonicalURL: attachment.FromURL,
 			Title:        attachment.Title,
 			SiteName:     attachment.ServiceName,
 			Type:         "website",
-			Description:  attachment.Text,
+			Description:  format.HTMLToText(mc.mrkdwnToMatrixHtml(ctx, attachment.Text, &event.Mentions{})),
 			ImageURL:     mxc,
 			ImageSize:    event.IntOrString(imageSize),
 			ImageWidth:   event.IntOrString(imageWidth),
