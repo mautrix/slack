@@ -637,8 +637,6 @@ func (s *SlackClient) queueCatchUpResync(portalKey networkid.PortalKey, latestMe
 	})
 }
 
-// catchUpAfterReconnect backfills messages that were sent while the RTM websocket was reconnecting,
-// since Slack doesn't replay events from the previous connection.
 func (s *SlackClient) catchUpAfterReconnect(ctx context.Context) {
 	log := zerolog.Ctx(ctx).With().Str("action", "reconnect catch-up").Logger()
 	ctx = log.WithContext(ctx)
