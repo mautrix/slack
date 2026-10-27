@@ -397,14 +397,20 @@ func (s *SlackClient) HandleMatrixReadReceipt(ctx context.Context, msg *bridgev2
 func (s *SlackClient) HandleMatrixTyping(ctx context.Context, msg *bridgev2.MatrixTyping) error {
 	if s.Client == nil {
 		return bridgev2.ErrNotLoggedIn
-	} else if !s.IsRealUser {
+	} else if !s.IsRealUser || !msg.IsTyping {
 		return nil
 	}
 	_, channelID := slackid.ParsePortalID(msg.Portal.ID)
 	if channelID == "" {
 		return nil
 	}
-	s.RTM.SendMessage(s.RTM.NewTypingMessage(channelID))
+	rtm := s.RTM
+	if rtm == nil {
+		return bridgev2.ErrNotLoggedIn
+	}
+	if !rtm.TrySendMessage(rtm.NewTypingMessage(channelID)) {
+		return errors.New("RTM outgoing queue is full")
+	}
 	return nil
 }
 
