@@ -61,6 +61,12 @@ func (s *SlackClient) HandleSlackEvent(ctx context.Context, rawEvt any) {
 		if !omitBridgeState {
 			s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnecting})
 		}
+	case *slack.ConnectionErrorEvent:
+		err := evt.ErrorObj
+		if _, authErr := s.Client.AuthTestContext(ctx); authErr != nil {
+			err = fmt.Errorf("%w (auth check: %w)", err, authErr)
+		}
+		s.handleConnectError(ctx, err)
 	case *slack.ConnectedEvent:
 		log.Debug().Msg("Connected to websocket, waiting for hello event")
 	case *slack.DisconnectedEvent:
