@@ -310,11 +310,7 @@ func (s *SlackClient) boot(ctx context.Context, client *slack.Client) (*slack.Cl
 }
 
 func (s *SlackClient) connectAfterBoot(ctx context.Context, bootCancel *context.CancelFunc, bootResp *slack.ClientUserBootResponse) {
-	(*bootCancel)()
-	if !s.stopConnection.CompareAndSwap(bootCancel, nil) {
-		return
-	}
-	err := s.connect(ctx, bootResp)
+	err := s.connect(ctx, bootCancel, bootResp)
 	if err != nil {
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to connect")
 		s.UserLogin.BridgeState.Send(status.BridgeState{
@@ -326,7 +322,7 @@ func (s *SlackClient) connectAfterBoot(ctx context.Context, bootCancel *context.
 	}
 }
 
-func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientUserBootResponse) error {
+func (s *SlackClient) connect(ctx context.Context, bootCancel *context.CancelFunc, bootResp *slack.ClientUserBootResponse) error {
 	s.initialConnect = time.Now()
 	s.rtmHelloReceived.Store(false)
 	s.BootResp = bootResp
@@ -362,14 +358,23 @@ func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientUserBoo
 		}
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	if oldCancel := s.stopConnection.Swap(&cancel); oldCancel != nil {
-		zerolog.Ctx(ctx).Warn().Msg("Cancelling previous connection")
-		(*oldCancel)()
+	if !s.stopConnection.CompareAndSwap(bootCancel, &cancel) {
+		zerolog.Ctx(ctx).Debug().Msg("Connection was stopped or replaced while booting")
+		cancel()
+		return nil
+	}
+	if bootCancel != nil {
+		(*bootCancel)()
 	}
 	if s.IsRealUser {
-		go s.consumeRTMEvents(ctx)
+		rtm := s.RTM
+		if rtm == nil {
+			cancel()
+			return nil
+		}
+		go s.consumeRTMEvents(ctx, rtm)
 		// TODO switch RTM to coder/websocket and pass the context there
-		go s.RTM.ManageConnection()
+		go rtm.ManageConnection()
 		go s.resyncUsers(ctx)
 	} else {
 		go s.consumeSocketModeEvents(ctx)
@@ -384,8 +389,8 @@ func (s *SlackClient) GetSpaceRoom() id.RoomID {
 	return s.TeamPortal.MXID
 }
 
-func (s *SlackClient) consumeRTMEvents(ctx context.Context) {
-	eventChan := s.RTM.IncomingEvents
+func (s *SlackClient) consumeRTMEvents(ctx context.Context, rtm *slack.RTM) {
+	eventChan := rtm.IncomingEvents
 	for {
 		select {
 		case <-ctx.Done():
