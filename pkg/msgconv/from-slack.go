@@ -160,6 +160,9 @@ func (mc *MessageConverter) EditToMatrix(
 			// we'll need to fetch the first media part to merge it in
 			if !captionMerged && modifiedPart != nil && (len(msg.Files) == 1 || editTargetPart.PartID != "") {
 				if editTargetPart.PartID != "" {
+					if !ok {
+						continue
+					}
 					editTargetPart = existingPart
 				}
 				filePart := mc.slackFileToMatrix(ctx, portal, intent, client, partID, &file)
