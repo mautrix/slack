@@ -18,8 +18,11 @@ package connector
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 
+	"github.com/slack-go/slack"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/mediaproxy"
@@ -58,7 +61,7 @@ func (s *SlackConnector) downloadFile(ctx context.Context, meta *slackid.DirectM
 
 	file, _, _, err := client.Client.GetFileInfoContext(ctx, meta.FileID, 0, 0)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get file info: %w", err)
+		return nil, wrapSlackDownloadError(fmt.Errorf("failed to get file info: %w", err))
 	}
 	url := file.URLPrivateDownload
 	if url == "" {
@@ -73,11 +76,44 @@ func (s *SlackConnector) downloadFile(ctx context.Context, meta *slackid.DirectM
 	}
 	resp, err := client.Client.GetFileResponseContext(ctx, url)
 	if err != nil {
-		return nil, fmt.Errorf("failed to download file: %w", err)
+		return nil, wrapSlackDownloadError(fmt.Errorf("failed to download file: %w", err))
 	}
 	return &mediaproxy.GetMediaResponseData{
 		Reader:        resp.Body,
 		ContentType:   file.Mimetype,
 		ContentLength: max(resp.ContentLength, 0),
 	}, nil
+}
+
+func wrapSlackDownloadError(err error) error {
+	var mapped mautrix.RespError
+	var statusErr slack.StatusCodeError
+	if errors.As(err, &statusErr) {
+		switch statusErr.Code {
+		case http.StatusNotFound, http.StatusGone:
+			mapped = mautrix.MNotFound.WithMessage("File not found on Slack")
+		case http.StatusUnauthorized, http.StatusForbidden:
+			mapped = mautrix.MForbidden.WithMessage("Slack denied access to the file")
+		case http.StatusTooManyRequests:
+			mapped = mautrix.MLimitExceeded.WithMessage("Slack is rate limiting file downloads").WithCanRetry(true)
+		default:
+			mapped = mautrix.MUnknown.WithMessage("Slack failed to serve the file").WithStatus(http.StatusBadGateway).WithCanRetry(true)
+		}
+		return fmt.Errorf("%w: %w", mapped, err)
+	}
+	switch slackAPIErrorCode(err) {
+	case "":
+		return err
+	case "file_not_found", "file_deleted":
+		mapped = mautrix.MNotFound.WithMessage("File not found on Slack")
+	case "invalid_auth", "not_authed", "token_revoked", "token_expired", "account_inactive",
+		"no_permission", "not_authorized", "access_denied", "missing_scope", "not_allowed_token_type",
+		"team_access_not_granted", "ekm_access_denied":
+		mapped = mautrix.MForbidden.WithMessage("Slack denied access to the file")
+	case "ratelimited", "rate_limited":
+		mapped = mautrix.MLimitExceeded.WithMessage("Slack is rate limiting file downloads").WithCanRetry(true)
+	default:
+		mapped = mautrix.MUnknown.WithMessage("Slack failed to serve the file").WithStatus(http.StatusBadGateway).WithCanRetry(true)
+	}
+	return fmt.Errorf("%w: %w", mapped, err)
 }
