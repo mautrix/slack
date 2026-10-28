@@ -62,8 +62,12 @@ func (s *SlackClient) HandleSlackEvent(ctx context.Context, rawEvt any) {
 			s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnecting})
 		}
 	case *slack.ConnectionErrorEvent:
+		cli := s.Client
+		if cli == nil || ctx.Err() != nil {
+			break
+		}
 		err := evt.ErrorObj
-		if _, authErr := s.Client.AuthTestContext(ctx); authErr != nil {
+		if _, authErr := cli.AuthTestContext(ctx); authErr != nil {
 			err = fmt.Errorf("%w (auth check: %w)", err, authErr)
 		}
 		s.handleConnectError(ctx, err)
