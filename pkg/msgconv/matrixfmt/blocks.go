@@ -449,7 +449,23 @@ func (parser *HTMLParser) nodeToBlock(node *html.Node, ctx Context) *slack.RichT
 	if len(sectionElems) > 0 {
 		elems = append([]slack.RichTextElement{slack.NewRichTextSection(sectionElems...)}, elems...)
 	}
-	return slack.NewRichTextBlock("", elems...)
+	return slack.NewRichTextBlock("", joinSections(elems)...)
+}
+
+func joinSections(elems []slack.RichTextElement) []slack.RichTextElement {
+	joined := elems[:0]
+	for _, elem := range elems {
+		section, ok := elem.(*slack.RichTextSection)
+		if ok && len(joined) > 0 {
+			if prev, ok := joined[len(joined)-1].(*slack.RichTextSection); ok {
+				prev.Elements = append(prev.Elements, slack.NewRichTextSectionTextElement("\n\n", nil))
+				prev.Elements = append(prev.Elements, section.Elements...)
+				continue
+			}
+		}
+		joined = append(joined, elem)
+	}
+	return joined
 }
 
 func (parser *HTMLParser) ParseText(ctx context.Context, text string, mentions *event.Mentions, portal *bridgev2.Portal) *slack.RichTextBlock {
