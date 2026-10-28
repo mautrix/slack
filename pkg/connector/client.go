@@ -573,6 +573,10 @@ func (s *SlackClient) getLatestMessageIDs(ctx context.Context) map[string]string
 }
 
 func (s *SlackClient) fetchConversationsForSync(ctx context.Context, conversationTypes []string) ([]*slack.Channel, error) {
+	cli := s.Client
+	if cli == nil {
+		return nil, bridgev2.ErrNotLoggedIn
+	}
 	log := zerolog.Ctx(ctx)
 	unlimited := s.Main.Config.DMOnly || s.Main.Config.Backfill.ConversationCount < 0
 	remaining := s.Main.Config.Backfill.ConversationCount
@@ -582,7 +586,7 @@ func (s *SlackClient) fetchConversationsForSync(ctx context.Context, conversatio
 	log.Debug().Bool("unlimited", unlimited).Int("remaining", remaining).Msg("Fetching conversation list for sync")
 	for (unlimited || remaining > 0) && pages < maxSlackPaginationPages {
 		pages++
-		channelsChunk, nextCursor, err := s.Client.GetConversationsForUserContext(ctx, &slack.GetConversationsForUserParameters{
+		channelsChunk, nextCursor, err := cli.GetConversationsForUserContext(ctx, &slack.GetConversationsForUserParameters{
 			Types:  conversationTypes,
 			Limit:  slackPageLimit(unlimited, remaining),
 			Cursor: cursor,
