@@ -574,6 +574,17 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string, lastUpda
 		botInfo, err = s.Client.GetBotInfoContext(ctx, slack.GetBotInfoParameters{
 			Bot: userID,
 		})
+		var slackErr slack.SlackErrorResponse
+		if errors.As(err, &slackErr) && slackErr.Err == "bot_not_found" {
+			zerolog.Ctx(ctx).Debug().Str("bot_id", userID).Msg("Bot not found, not retrying until next sync interval")
+			return &bridgev2.UserInfo{
+				IsBot: ptr.Ptr(true),
+				ExtraUpdates: func(ctx context.Context, ghost *bridgev2.Ghost) bool {
+					ghost.Metadata.(*slackid.GhostMetadata).LastSync = jsontime.UnixNow()
+					return true
+				},
+			}, nil
+		}
 	} else if s.IsRealUser {
 		var infos map[string]*slack.User
 		infos, err = s.Client.GetUsersCacheContext(ctx, s.TeamID, slack.GetCachedUsersParameters{
