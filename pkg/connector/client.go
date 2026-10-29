@@ -19,7 +19,9 @@ package connector
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"sync"
@@ -43,7 +45,11 @@ func init() {
 	status.BridgeStateHumanErrors.Update(status.BridgeStateErrorMap{
 		"slack-not-logged-in":               "Please log in again",
 		"slack-invalid-auth":                "Invalid credentials, please log in again",
+		"slack-token-revoked":               "Your Slack session was signed out, please log in again",
 		"slack-user-removed-from-team":      "You were removed from the Slack workspace",
+		"slack-account-inactive":            "Your Slack account has been deactivated",
+		"slack-team-disabled":               "The Slack workspace is no longer available",
+		"slack-connection-error":            "Failed to connect to Slack, retrying",
 		"slack-id-mismatch":                 "Unexpected internal error: got different user ID",
 		"slack-rtm-disconnected":            "Disconnected from Slack",
 		"slack-rtm-fatal-error":             "Failed to connect to Slack",
@@ -182,18 +188,35 @@ func (s *SlackClient) GetClient() *slack.Client {
 	return s.Client
 }
 
-func (s *SlackClient) handleBootError(ctx context.Context, err error) {
+func (s *SlackClient) handleConnectError(ctx context.Context, err error) (retry bool) {
+	if ctx.Err() != nil {
+		return false
+	}
+	zerolog.Ctx(ctx).Err(err).Msg("Failed to connect to Slack")
 	switch slackAPIErrorCode(err) {
-	case "user_removed_from_team":
-		s.invalidateSession(ctx, status.BridgeState{
-			StateEvent: status.StateBadCredentials,
-			Error:      "slack-user-removed-from-team",
-		})
-	case "invalid_auth":
+	case "invalid_auth", "not_authed":
 		s.invalidateSession(ctx, status.BridgeState{
 			StateEvent: status.StateBadCredentials,
 			Error:      "slack-invalid-auth",
 		})
+	case "token_revoked", "token_expired":
+		s.invalidateSession(ctx, status.BridgeState{
+			StateEvent: status.StateBadCredentials,
+			Error:      "slack-token-revoked",
+		})
+	case "account_inactive":
+		s.disconnectUntilRestart("slack-account-inactive")
+	case "team_disabled":
+		s.disconnectUntilRestart("slack-team-disabled")
+	case "user_removed_from_team":
+		s.disconnectUntilRestart("slack-user-removed-from-team")
+	case "", "ratelimited", "internal_error", "fatal_error", "service_unavailable", "request_timeout":
+		s.UserLogin.BridgeState.Send(status.BridgeState{
+			StateEvent: status.StateTransientDisconnect,
+			Error:      "slack-connection-error",
+			Info:       map[string]any{"go_error": err.Error()},
+		})
+		return true
 	default:
 		s.UserLogin.BridgeState.Send(status.BridgeState{
 			StateEvent: status.StateUnknownError,
@@ -202,6 +225,17 @@ func (s *SlackClient) handleBootError(ctx context.Context, err error) {
 			Info:       map[string]any{"go_error": err.Error()},
 		})
 	}
+	return false
+}
+
+func connectRetryDelay(attempt int, err error) time.Duration {
+	maxDelay := min(2*time.Second<<min(attempt, 8), 5*time.Minute)
+	delay := maxDelay/2 + rand.N(maxDelay/2)
+	var rateErr *slack.RateLimitedError
+	if errors.As(err, &rateErr) {
+		delay = max(delay, rateErr.RetryAfter)
+	}
+	return delay
 }
 
 func (s *SlackClient) Connect(ctx context.Context) {
@@ -212,39 +246,71 @@ func (s *SlackClient) Connect(ctx context.Context) {
 		})
 		return
 	}
-	var bootResp *slack.ClientUserBootResponse
+	bootCtx, cancel := context.WithCancel(ctx)
+	if oldCancel := s.stopConnection.Swap(&cancel); oldCancel != nil {
+		(*oldCancel)()
+	}
+	bootResp, err := s.boot(bootCtx, s.Client)
+	if err == nil {
+		s.connectAfterBoot(ctx, &cancel, bootResp)
+	} else if s.handleConnectError(bootCtx, err) {
+		go s.retryConnect(ctx, bootCtx, &cancel, s.Client, err)
+	} else {
+		cancel()
+	}
+}
+
+func (s *SlackClient) retryConnect(ctx, bootCtx context.Context, cancel *context.CancelFunc, client *slack.Client, err error) {
+	for attempt := 0; ; attempt++ {
+		delay := connectRetryDelay(attempt, err)
+		zerolog.Ctx(ctx).Debug().
+			Int("attempt_num", attempt+1).
+			Stringer("delay", delay).
+			Msg("Retrying Slack connection after delay")
+		select {
+		case <-time.After(delay):
+		case <-bootCtx.Done():
+			return
+		}
+		var bootResp *slack.ClientUserBootResponse
+		bootResp, err = s.boot(bootCtx, client)
+		if err == nil {
+			s.connectAfterBoot(ctx, cancel, bootResp)
+			return
+		} else if !s.handleConnectError(bootCtx, err) {
+			(*cancel)()
+			return
+		}
+	}
+}
+
+func (s *SlackClient) boot(ctx context.Context, client *slack.Client) (*slack.ClientUserBootResponse, error) {
 	if s.IsRealUser {
-		err := s.Client.FetchVersionData(ctx)
+		err := client.FetchVersionData(ctx)
 		if err != nil {
 			zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to fetch version data")
 		}
 		// TODO do actual warm boots by saving last received ts somewhere
-		bootResp, err = s.Client.ClientUserBootContext(ctx, time.Time{})
-		if err != nil {
-			s.handleBootError(ctx, err)
-			return
-		}
-	} else {
-		teamResp, err := s.Client.GetTeamInfoContext(ctx)
-		if err != nil {
-			zerolog.Ctx(ctx).Err(err).Msg("Failed to fetch team info")
-			s.handleBootError(ctx, err)
-			return
-		}
-		userResp, err := s.Client.GetUserInfoContext(ctx, s.UserID)
-		if err != nil {
-			zerolog.Ctx(ctx).Err(err).Msg("Failed to fetch user info")
-			s.handleBootError(ctx, err)
-			return
-		}
-		bootResp = &slack.ClientUserBootResponse{
-			Self: *userResp,
-			Team: slack.BootTeam{
-				TeamInfo: *teamResp,
-			},
-		}
+		return client.ClientUserBootContext(ctx, time.Time{})
 	}
-	err := s.connect(ctx, bootResp)
+	teamResp, err := client.GetTeamInfoContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch team info: %w", err)
+	}
+	userResp, err := client.GetUserInfoContext(ctx, s.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch user info: %w", err)
+	}
+	return &slack.ClientUserBootResponse{
+		Self: *userResp,
+		Team: slack.BootTeam{
+			TeamInfo: *teamResp,
+		},
+	}, nil
+}
+
+func (s *SlackClient) connectAfterBoot(ctx context.Context, bootCancel *context.CancelFunc, bootResp *slack.ClientUserBootResponse) {
+	err := s.connect(ctx, bootCancel, bootResp)
 	if err != nil {
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to connect")
 		s.UserLogin.BridgeState.Send(status.BridgeState{
@@ -256,7 +322,7 @@ func (s *SlackClient) Connect(ctx context.Context) {
 	}
 }
 
-func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientUserBootResponse) error {
+func (s *SlackClient) connect(ctx context.Context, bootCancel *context.CancelFunc, bootResp *slack.ClientUserBootResponse) error {
 	s.initialConnect = time.Now()
 	s.rtmHelloReceived.Store(false)
 	s.BootResp = bootResp
@@ -292,14 +358,23 @@ func (s *SlackClient) connect(ctx context.Context, bootResp *slack.ClientUserBoo
 		}
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	if oldCancel := s.stopConnection.Swap(&cancel); oldCancel != nil {
-		zerolog.Ctx(ctx).Warn().Msg("Cancelling previous connection")
-		(*oldCancel)()
+	if !s.stopConnection.CompareAndSwap(bootCancel, &cancel) {
+		zerolog.Ctx(ctx).Debug().Msg("Connection was stopped or replaced while booting")
+		cancel()
+		return nil
+	}
+	if bootCancel != nil {
+		(*bootCancel)()
 	}
 	if s.IsRealUser {
-		go s.consumeRTMEvents(ctx)
+		rtm := s.RTM
+		if rtm == nil {
+			cancel()
+			return nil
+		}
+		go s.consumeRTMEvents(ctx, rtm)
 		// TODO switch RTM to coder/websocket and pass the context there
-		go s.RTM.ManageConnection()
+		go rtm.ManageConnection()
 		go s.resyncUsers(ctx)
 	} else {
 		go s.consumeSocketModeEvents(ctx)
@@ -314,8 +389,8 @@ func (s *SlackClient) GetSpaceRoom() id.RoomID {
 	return s.TeamPortal.MXID
 }
 
-func (s *SlackClient) consumeRTMEvents(ctx context.Context) {
-	eventChan := s.RTM.IncomingEvents
+func (s *SlackClient) consumeRTMEvents(ctx context.Context, rtm *slack.RTM) {
+	eventChan := rtm.IncomingEvents
 	for {
 		select {
 		case <-ctx.Done():
@@ -498,6 +573,10 @@ func (s *SlackClient) getLatestMessageIDs(ctx context.Context) map[string]string
 }
 
 func (s *SlackClient) fetchConversationsForSync(ctx context.Context, conversationTypes []string) ([]*slack.Channel, error) {
+	cli := s.Client
+	if cli == nil {
+		return nil, bridgev2.ErrNotLoggedIn
+	}
 	log := zerolog.Ctx(ctx)
 	unlimited := s.Main.Config.DMOnly || s.Main.Config.Backfill.ConversationCount < 0
 	remaining := s.Main.Config.Backfill.ConversationCount
@@ -507,7 +586,7 @@ func (s *SlackClient) fetchConversationsForSync(ctx context.Context, conversatio
 	log.Debug().Bool("unlimited", unlimited).Int("remaining", remaining).Msg("Fetching conversation list for sync")
 	for (unlimited || remaining > 0) && pages < maxSlackPaginationPages {
 		pages++
-		channelsChunk, nextCursor, err := s.Client.GetConversationsForUserContext(ctx, &slack.GetConversationsForUserParameters{
+		channelsChunk, nextCursor, err := cli.GetConversationsForUserContext(ctx, &slack.GetConversationsForUserParameters{
 			Types:  conversationTypes,
 			Limit:  slackPageLimit(unlimited, remaining),
 			Cursor: cursor,
@@ -704,6 +783,15 @@ func (s *SlackClient) invalidateSession(ctx context.Context, state status.Bridge
 	}
 	s.Disconnect()
 	s.UserLogin.BridgeState.Send(state)
+}
+
+func (s *SlackClient) disconnectUntilRestart(code status.BridgeStateErrorCode) {
+	s.Disconnect()
+	s.UserLogin.BridgeState.Send(status.BridgeState{
+		StateEvent: status.StateBadCredentials,
+		Error:      code,
+		UserAction: status.UserActionRestart,
+	})
 }
 
 func (s *SlackClient) IsThisUser(ctx context.Context, userID networkid.UserID) bool {
