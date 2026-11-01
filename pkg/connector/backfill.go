@@ -84,10 +84,12 @@ func (s *SlackClient) FetchMessages(ctx context.Context, params bridgev2.FetchMe
 		if !ok {
 			return nil, fmt.Errorf("invalid thread root ID")
 		}
+		s.threadFetchLock.Lock()
 		chunk, err = s.Client.GetConversationRepliesContext(ctx, &slack.GetConversationRepliesParameters{
 			GetConversationHistoryParameters: *slackParams,
 			Timestamp:                        threadTS,
 		})
+		s.threadFetchLock.Unlock()
 	} else {
 		chunk, err = s.Client.GetConversationHistoryContext(ctx, slackParams)
 		if chunk != nil {
