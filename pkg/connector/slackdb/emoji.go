@@ -20,6 +20,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -64,7 +65,7 @@ const (
 	deleteEmojiQueryPostgres = `DELETE FROM emoji WHERE team_id=$1 AND emoji_id=ANY($2)`
 	deleteEmojiQuerySQLite   = `DELETE FROM emoji WHERE team_id=? AND emoji_id IN (?)`
 	pruneEmojiQueryPostgres  = `DELETE FROM emoji WHERE team_id=$1 AND emoji_id<>ALL($2)`
-	pruneEmojiQuerySQLite    = `DELETE FROM emoji WHERE team_id=? AND emoji_id NOT IN (?)`
+	pruneEmojiQuerySQLite    = `DELETE FROM emoji WHERE team_id=$1 AND emoji_id NOT IN (SELECT value FROM json_each($2))`
 )
 
 func (eq *EmojiQuery) WithLock(teamID string) func() {
@@ -124,8 +125,11 @@ func (eq *EmojiQuery) Prune(ctx context.Context, teamID string, emojiIDs ...stri
 	case dbutil.Postgres:
 		return eq.Exec(ctx, pruneEmojiQueryPostgres, teamID, PostgresArrayWrapper(emojiIDs))
 	default:
-		query, args := buildSQLiteEmojiDeleteQuery(pruneEmojiQuerySQLite, teamID, emojiIDs...)
-		return eq.Exec(ctx, query, args...)
+		emojiIDsJSON, err := json.Marshal(emojiIDs)
+		if err != nil {
+			return err
+		}
+		return eq.Exec(ctx, pruneEmojiQuerySQLite, teamID, string(emojiIDsJSON))
 	}
 }
 
