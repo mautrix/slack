@@ -124,6 +124,8 @@ func (s *SlackClient) FetchMessages(ctx context.Context, params bridgev2.FetchMe
 		HasMore:  chunk.HasMore,
 		Forward:  params.Forward,
 		MarkRead: lastRead != "" && maxMsgID != "" && lastRead >= maxMsgID,
+
+		AggressiveDeduplication: threadTS != "",
 	}
 	if !resp.MarkRead && lastRead != "" && threadTS == "" {
 		resp.ReadUpTo = slackid.ParseSlackTimestamp(lastRead)
