@@ -43,6 +43,8 @@ import (
 
 const ChatInfoCacheExpiry = 1 * time.Hour
 
+var errChatInfoAlreadyAttempted = errors.New("chat info fetch already attempted")
+
 func (s *SlackClient) invalidateChatInfoCache(channelID string) {
 	s.chatInfoCacheLock.Lock()
 	defer s.chatInfoCacheLock.Unlock()
@@ -58,7 +60,7 @@ func (s *SlackClient) fetchChatInfoWithCache(ctx context.Context, channelID stri
 		if ok {
 			return cached.data, nil
 		}
-		return nil, fmt.Errorf("chat info fetch already attempted for channel %s", channelID)
+		return nil, fmt.Errorf("%w for channel %s", errChatInfoAlreadyAttempted, channelID)
 	}
 	zerolog.Ctx(ctx).Debug().Str("channel_id", channelID).Msg("Fetching channel info")
 	info, err := s.Client.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
@@ -80,7 +82,9 @@ func (s *SlackClient) fetchChatInfoWithCache(ctx context.Context, channelID stri
 
 func (s *SlackClient) GetChannelInfoForMention(ctx context.Context, channelID string) (string, *bridgev2.Portal, error) {
 	info, err := s.fetchChatInfoWithCache(ctx, channelID, true)
-	if err != nil {
+	if errors.Is(err, errChatInfoAlreadyAttempted) {
+		return "", nil, nil
+	} else if err != nil {
 		return "", nil, err
 	}
 	portal, err := s.UserLogin.Bridge.GetPortalByKey(ctx, s.makePortalKey(info))
