@@ -53,6 +53,7 @@ func (s *SlackConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities 
 	}
 
 	return &bridgev2.NetworkGeneralCapabilities{
+		ThreadReadReceipts: true,
 		// GetUserInfo has an internal rate limit of 1 fetch per 24 hours,
 		// so we're fine to tell the bridge to fetch user info all the time.
 		AggressiveUpdateInfo: true,
