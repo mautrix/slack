@@ -157,6 +157,37 @@ func TestTableNotTopLevelIsCodeBlock(t *testing.T) {
 	requireCodeBlock(t, parseBlocks(t, `<table><tr><td colspan="2">A</td></tr><tr><td>x</td><td>y</td></tr></table>`), "A |\nx | y")
 }
 
+func TestCodeBlockTableKeepsLinkURLs(t *testing.T) {
+	requireCodeBlock(t, parseBlocks(t, `<blockquote><table><tr><th>PR</th></tr><tr><td><a href="https://github.com/x/y/pull/1">la PR</a></td></tr>`+
+		`<tr><td><a href="https://example.com">https://example.com</a></td></tr></table></blockquote>`),
+		"la PR (https://github.com/x/y/pull/1)\nhttps://example.com")
+}
+
+func TestTableCaptionIsKept(t *testing.T) {
+	blocks := parseBlocks(t, `<table><caption>Facturas</caption><tr><th>A</th></tr><tr><td>1</td></tr></table>`)
+	if got := fmt.Sprint(blockTypes(blocks)); got != "[rich_text table]" {
+		t.Fatalf("expected the caption before the table, got %s", got)
+	}
+	caption := blocks[0].(*slack.RichTextBlock).Elements[0].(*slack.RichTextSection).Elements[0].(*slack.RichTextSectionTextElement)
+	if caption.Text != "Facturas" {
+		t.Fatalf("unexpected caption %q", caption.Text)
+	}
+}
+
+func TestIndentedCellsAreTrimmed(t *testing.T) {
+	blocks := parseBlocks(t, "<table>\n  <tr>\n    <th>\n      Nombre\n    </th>\n  </tr>\n  <tr><td> <b>x</b> </td></tr>\n</table>")
+	table := blocks[0].(*slack.TableBlock)
+	for _, row := range table.Rows {
+		elems := row[0].(*slack.TableRichTextCell).Elements[0].(*slack.RichTextSection).Elements
+		if len(elems) != 1 {
+			t.Fatalf("expected one trimmed text element, got %#v", elems)
+		}
+		if text := elems[0].(*slack.RichTextSectionTextElement).Text; text != "Nombre" && text != "x" {
+			t.Fatalf("cell not trimmed: %q", text)
+		}
+	}
+}
+
 func TestParseKeepsTablesAsCodeBlocks(t *testing.T) {
 	block := New2(nil, nil).Parse(context.Background(), `<table><thead><tr><th>Nombre</th><th>N</th></tr></thead><tbody><tr><td>uno</td><td>1</td></tr></tbody></table>`, nil, nil)
 	requireCodeBlock(t, []slack.Block{block}, "Nombre | N\n-------+--\nuno    | 1")

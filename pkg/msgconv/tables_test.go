@@ -80,7 +80,7 @@ func TestToSlackNativeTableWithFallback(t *testing.T) {
 	if got := strings.Join(blockTypesOf(t, fallback.Get("blocks")), ","); got != "rich_text" {
 		t.Fatalf("fallback should be a single rich_text block, got %s", got)
 	}
-	if !strings.Contains(fallback.Get("blocks"), `Cliente   | Importe\n----------+--------\nLana      | 120`) {
+	if !strings.Contains(fallback.Get("blocks"), `\nAstrokube (https://example.com) | 4.500`) {
 		t.Fatalf("fallback should have the aligned table, got %s", fallback.Get("blocks"))
 	}
 }

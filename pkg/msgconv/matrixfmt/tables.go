@@ -52,12 +52,14 @@ func (nativeTable) RichTextElementType() slack.RichTextElementType {
 }
 
 type tableCell struct {
-	header  bool
-	text    string
-	align   slack.ColumnAlignment
-	rich    bool
-	section []slack.RichTextSectionElement
-	elems   []slack.RichTextElement
+	header bool
+	// text is the plain text of the cell, codeText the same with link URLs for code blocks.
+	text     string
+	codeText string
+	align    slack.ColumnAlignment
+	rich     bool
+	section  []slack.RichTextSectionElement
+	elems    []slack.RichTextElement
 }
 
 // Ancestors under which a table can still be lifted out into its own block.
@@ -77,9 +79,13 @@ func isTopLevelTable(ctx Context) bool {
 // limits, or into an aligned code block otherwise.
 func (parser *HTMLParser) tableToElements(node *html.Node, ctx Context) []slack.RichTextElement {
 	canBeNative := ctx.Tables != nil && isTopLevelTable(ctx)
-	rows, headerRows, simple := parser.readTable(node, ctx, canBeNative)
+	rows, headerRows, caption, simple := parser.readTable(node, ctx, canBeNative)
 	if len(rows) == 0 {
 		return nil
+	}
+	var captionElems []slack.RichTextElement
+	if caption != "" {
+		captionElems = append(captionElems, slack.NewRichTextSection(slack.NewRichTextSectionTextElement(caption, ctx.StylePtr())))
 	}
 	columns := 0
 	chars := 0
@@ -92,27 +98,27 @@ func (parser *HTMLParser) tableToElements(node *html.Node, ctx Context) []slack.
 	if canBeNative && simple && len(rows) <= MaxTableRows && columns <= MaxTableColumns &&
 		ctx.Tables.Chars+chars <= MaxTableChars {
 		ctx.Tables.Chars += chars
-		return []slack.RichTextElement{&nativeTable{block: buildTableBlock(rows, headerRows, columns)}}
+		return append(captionElems, &nativeTable{block: buildTableBlock(rows, headerRows, columns)})
 	}
 	texts := make([][]string, len(rows))
 	for i, row := range rows {
 		texts[i] = make([]string, len(row))
 		for j, cell := range row {
-			texts[i][j] = cell.text
+			texts[i][j] = cell.codeText
 		}
 	}
 	border := 0
 	if ctx.TagStack.Has("blockquote") {
 		border = 1
 	}
-	return []slack.RichTextElement{slack.NewRichTextPreformatted(border, "",
-		slack.NewRichTextSectionTextElement(strings.TrimSuffix(AlignedTable(texts, headerRows), "\n"), nil))}
+	return append(captionElems, slack.NewRichTextPreformatted(border, "",
+		slack.NewRichTextSectionTextElement(strings.TrimSuffix(AlignedTable(texts, headerRows), "\n"), nil)))
 }
 
-// readTable collects the rows of a table. simple is false when the table can't be a native
-// Slack table (merged cells or nested tables). Rich text of the cells is only parsed when
-// parseCells is set.
-func (parser *HTMLParser) readTable(node *html.Node, ctx Context, parseCells bool) (rows [][]tableCell, headerRows int, simple bool) {
+// readTable collects the rows and the caption of a table. simple is false when the table
+// can't be a native Slack table (merged cells or nested tables). Rich text of the cells is
+// only parsed when parseCells is set.
+func (parser *HTMLParser) readTable(node *html.Node, ctx Context, parseCells bool) (rows [][]tableCell, headerRows int, caption string, simple bool) {
 	simple = true
 	theadRows := 0
 	readRow := func(tr *html.Node, inHead bool) {
@@ -125,9 +131,10 @@ func (parser *HTMLParser) readTable(node *html.Node, ctx Context, parseCells boo
 				simple = false
 			}
 			cell := tableCell{
-				header: td.Data == "th" || inHead,
-				text:   strings.Join(strings.Fields(nodeText(td)), " "),
-				align:  parser.cellAlignment(td),
+				header:   td.Data == "th" || inHead,
+				text:     collapseSpaces(nodeText(td, false)),
+				codeText: collapseSpaces(nodeText(td, true)),
+				align:    parser.cellAlignment(td),
 			}
 			if parseCells && simple {
 				cellCtx := ctx.WithTag(td.Data)
@@ -135,6 +142,7 @@ func (parser *HTMLParser) readTable(node *html.Node, ctx Context, parseCells boo
 					cellCtx = cellCtx.StyleBold()
 				}
 				cell.section, cell.elems = parser.nodeAndSiblingsToElement(td.FirstChild, cellCtx)
+				cell.section = trimSection(cell.section)
 				cell.rich = cell.header || len(cell.elems) > 0 || !isPlainText(cell.section)
 			}
 			row = append(row, cell)
@@ -159,6 +167,8 @@ func (parser *HTMLParser) readTable(node *html.Node, ctx Context, parseCells boo
 				readRows(child, false)
 			case "tr":
 				readRow(child, inHead)
+			case "caption":
+				caption = collapseSpaces(nodeText(child, true))
 			}
 		}
 	}
@@ -271,6 +281,31 @@ func isPlainText(elems []slack.RichTextSectionElement) bool {
 	return true
 }
 
+// trimSection removes the indentation of the source HTML from the edges of a cell.
+func trimSection(elems []slack.RichTextSectionElement) []slack.RichTextSectionElement {
+	if len(elems) > 0 {
+		if first, ok := elems[0].(*slack.RichTextSectionTextElement); ok {
+			first.Text = strings.TrimLeft(first.Text, " \t")
+			if first.Text == "" {
+				elems = elems[1:]
+			}
+		}
+	}
+	if len(elems) > 0 {
+		if last, ok := elems[len(elems)-1].(*slack.RichTextSectionTextElement); ok {
+			last.Text = strings.TrimRight(last.Text, " \t")
+			if last.Text == "" {
+				elems = elems[:len(elems)-1]
+			}
+		}
+	}
+	return elems
+}
+
+func collapseSpaces(text string) string {
+	return strings.Join(strings.Fields(text), " ")
+}
+
 func spanAttr(val string) int {
 	n, err := strconv.Atoi(strings.TrimSpace(val))
 	if err != nil {
@@ -294,32 +329,38 @@ func PlainText(htmlData string) string {
 	if err != nil {
 		return htmlData
 	}
-	return strings.Join(strings.Fields(nodeText(node)), " ")
+	return collapseSpaces(nodeText(node, false))
 }
 
-// nodeText is the visible text of a node: text nodes, image alt texts (emojis) and
-// line breaks as spaces.
-func nodeText(node *html.Node) string {
+// nodeText is the visible text of a node: text nodes, image alt texts (emojis) and line
+// breaks as spaces. With withLinks, web links are followed by their URL in parentheses
+// when it isn't already the text, for code blocks where links can't be clicked.
+func nodeText(node *html.Node, withLinks bool) string {
 	var buf strings.Builder
-	var walk func(*html.Node)
-	walk = func(n *html.Node) {
-		switch {
-		case n.Type == html.TextNode:
-			buf.WriteString(n.Data)
-		case n.Type == html.ElementNode && n.Data == "br":
-			buf.WriteByte(' ')
-		case n.Type == html.ElementNode && n.Data == "img":
-			for _, attr := range n.Attr {
-				if attr.Key == "alt" {
-					buf.WriteString(attr.Val)
-				}
+	switch {
+	case node.Type == html.TextNode:
+		return node.Data
+	case node.Type == html.ElementNode && node.Data == "br":
+		return " "
+	case node.Type == html.ElementNode && node.Data == "img":
+		for _, attr := range node.Attr {
+			if attr.Key == "alt" {
+				buf.WriteString(attr.Val)
 			}
 		}
-		for child := n.FirstChild; child != nil; child = child.NextSibling {
-			walk(child)
+	}
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		buf.WriteString(nodeText(child, withLinks))
+	}
+	if withLinks && node.Type == html.ElementNode && node.Data == "a" {
+		for _, attr := range node.Attr {
+			isWebLink := strings.HasPrefix(attr.Val, "https://") || strings.HasPrefix(attr.Val, "http://")
+			if attr.Key == "href" && isWebLink && !strings.HasPrefix(attr.Val, "https://matrix.to/") &&
+				collapseSpaces(buf.String()) != attr.Val {
+				buf.WriteString(" (" + attr.Val + ")")
+			}
 		}
 	}
-	walk(node)
 	return buf.String()
 }
 
