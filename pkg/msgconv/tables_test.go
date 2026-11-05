@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -177,5 +178,31 @@ func TestSlackSingleTableToMatrix(t *testing.T) {
 	}
 	if part.Content.FormattedBody != "<table><tr><td>solo</td></tr></table>" || !strings.Contains(part.Content.Body, "solo") {
 		t.Fatalf("unexpected content %q / %q", part.Content.FormattedBody, part.Content.Body)
+	}
+}
+
+// A valid Slack table (100 rows, under 10,000 characters) with one long cell must not blow
+// up the aligned body past the 64 KiB limit of a Matrix event.
+func TestSlackLongTableFitsInMatrixEvent(t *testing.T) {
+	table := slack.NewTableBlock("")
+	table.AddRow(slack.NewTableRawTextCell(strings.Repeat("x", 1000)), slack.NewTableRawTextCell("n"))
+	for i := range 99 {
+		table.AddRow(slack.NewTableRawTextCell("a"), slack.NewTableRawTextCell(strconv.Itoa(i)))
+	}
+	part, err := testMessageConverter().slackBlocksToMatrix(context.Background(), nil, nil, slack.Blocks{BlockSet: []slack.Block{table}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evt, err := json.Marshal(part.Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evt) > 16*1024 {
+		t.Fatalf("serialized event content is %d bytes", len(evt))
+	}
+	for _, want := range []string{strings.Repeat("x", 1000) + " | n\n---\na | 0\n", "a | 98"} {
+		if !strings.Contains(part.Content.Body, want) {
+			t.Fatalf("compact body lost content %q", want)
+		}
 	}
 }

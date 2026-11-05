@@ -143,7 +143,8 @@ func (parser *HTMLParser) readTable(node *html.Node, ctx Context, parseCells boo
 				}
 				cell.section, cell.elems = parser.nodeAndSiblingsToElement(td.FirstChild, cellCtx)
 				cell.section = trimSection(cell.section)
-				cell.rich = cell.header || len(cell.elems) > 0 || !isPlainText(cell.section)
+				// A raw_text cell can't keep explicit line breaks, a rich_text one can.
+				cell.rich = cell.header || len(cell.elems) > 0 || !isPlainText(cell.section) || hasDescendant(td, "br")
 			}
 			row = append(row, cell)
 		}
@@ -352,6 +353,10 @@ func nodeText(node *html.Node, withLinks bool) string {
 	for child := node.FirstChild; child != nil; child = child.NextSibling {
 		buf.WriteString(nodeText(child, withLinks))
 	}
+	if node.Type == html.ElementNode && textBlockTags[node.Data] {
+		// Keep adjacent paragraphs and list items apart.
+		buf.WriteByte(' ')
+	}
 	if withLinks && node.Type == html.ElementNode && node.Data == "a" {
 		for _, attr := range node.Attr {
 			isWebLink := strings.HasPrefix(attr.Val, "https://") || strings.HasPrefix(attr.Val, "http://")
@@ -364,9 +369,43 @@ func nodeText(node *html.Node, withLinks bool) string {
 	return buf.String()
 }
 
+var textBlockTags = map[string]bool{
+	"p": true, "div": true, "li": true, "blockquote": true, "pre": true,
+	"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true,
+}
+
+// MaxTablePadding is the most bytes of padding AlignedTable adds to a table. Past it, as with
+// one very long cell in a long table, the table is rendered compact so that the text stays
+// close to the size of its cells (a Matrix event can't exceed 64 KiB).
+const MaxTablePadding = 4096
+
 // AlignedTable renders rows as monospace text: cells padded to the column width and
-// joined with " | ", and a "-+-" separator line after the header rows.
+// joined with " | ", and a "-+-" separator line after the header rows. If the padding
+// would exceed MaxTablePadding, the cells are not padded and the separator is "---".
 func AlignedTable(rows [][]string, headerRows int) string {
+	aligned := alignedTable(rows, headerRows)
+	compact := compactTable(rows, headerRows)
+	if len(aligned)-len(compact) > MaxTablePadding {
+		return compact
+	}
+	return aligned
+}
+
+func compactTable(rows [][]string, headerRows int) string {
+	lines := make([]string, 0, len(rows)+1)
+	for i, row := range rows {
+		if i == headerRows && headerRows > 0 {
+			lines = append(lines, "---")
+		}
+		lines = append(lines, strings.TrimRight(strings.Join(row, " | "), " "))
+	}
+	if headerRows > 0 && headerRows >= len(rows) {
+		lines = append(lines, "---")
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func alignedTable(rows [][]string, headerRows int) string {
 	columns := 0
 	for _, row := range rows {
 		columns = max(columns, len(row))

@@ -208,3 +208,37 @@ func TestAlignedTableMatchesGateway(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
+
+func TestAlignedTableCompactsHugePadding(t *testing.T) {
+	rows := [][]string{{strings.Repeat("x", 1000), "n"}}
+	for range 99 {
+		rows = append(rows, []string{"a", "1"})
+	}
+	got := AlignedTable(rows, 1)
+	if len(got) > 2000 || !strings.HasPrefix(got, strings.Repeat("x", 1000)+" | n\n---\na | 1\n") {
+		t.Fatalf("expected a compact table, got %d bytes: %.80q", len(got), got)
+	}
+}
+
+func TestCellLineBreakIsKept(t *testing.T) {
+	blocks := parseBlocks(t, `<table><tr><th>A</th></tr><tr><td>primera<br>segunda</td></tr></table>`)
+	cell, ok := blocks[0].(*slack.TableBlock).Rows[1][0].(*slack.TableRichTextCell)
+	if !ok {
+		t.Fatalf("a cell with <br> should be rich_text, got %T", blocks[0].(*slack.TableBlock).Rows[1][0])
+	}
+	var text strings.Builder
+	for _, elem := range cell.Elements[0].(*slack.RichTextSection).Elements {
+		text.WriteString(elem.(*slack.RichTextSectionTextElement).Text)
+	}
+	if text.String() != "primera\nsegunda" {
+		t.Fatalf("line break lost: %q", text.String())
+	}
+}
+
+func TestCodeBlockSeparatesParagraphsAndItems(t *testing.T) {
+	requireCodeBlock(t, parseBlocks(t, `<blockquote><table><tr><th>A</th></tr><tr><td><p>uno</p><p>dos</p></td></tr>`+
+		`<tr><td><ul><li>tres</li><li>cuatro</li></ul></td></tr></table></blockquote>`), "uno dos\ntres cuatro")
+	if got := PlainText("<p>uno</p><p>dos</p>"); got != "uno dos" {
+		t.Fatalf("PlainText = %q", got)
+	}
+}
