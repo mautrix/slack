@@ -393,6 +393,9 @@ func (s *SlackClient) formatChannelName(info *slack.Channel) string {
 }
 
 func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, isNew bool) (*bridgev2.ChatInfo, error) {
+	if s.Client == nil {
+		return nil, bridgev2.ErrNotLoggedIn
+	}
 	info, err := s.fetchChatInfoWithCache(ctx, channelID, false)
 	if err != nil {
 		return nil, err
