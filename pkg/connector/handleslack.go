@@ -280,12 +280,19 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, sender, "")
 		meta.CreatePortal = true
 		meta.LogContext = func(c zerolog.Context) zerolog.Context {
-			return c.
+			c = c.
 				Str("message_ts", evt.Timestamp).
 				Str("message_id", string(meta.ID)).
 				Str("message_sender", sender).
 				Str("subtype", evt.SubType).
 				Bool("hidden", evt.Hidden)
+			if evt.SubMessage != nil {
+				c = c.
+					Str("sub_message_user", evt.SubMessage.User).
+					Str("sub_message_bot_id", evt.SubMessage.BotID).
+					Str("sub_message_subtype", evt.SubMessage.SubType)
+			}
+			return c
 		}
 		wrapped = &SlackMessage{
 			SlackEventMeta: &meta,
