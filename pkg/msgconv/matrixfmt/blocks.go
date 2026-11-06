@@ -46,6 +46,10 @@ type Context struct {
 	Link     string
 
 	PreserveWhitespace bool
+
+	// Tables is set when HTML tables may become native Slack table blocks (see ParseBlocks).
+	// When nil, every table is rendered as an aligned code block.
+	Tables *TableBudget
 }
 
 func (ctx Context) WithTag(tag string) Context {
@@ -255,6 +259,8 @@ func (parser *HTMLParser) tagToElement(node *html.Node, ctx Context) ([]slack.Ri
 		return []slack.RichTextSectionElement{slack.NewRichTextSectionTextElement("\n", ctx.StylePtr())}, nil
 	case "hr":
 		return nil, []slack.RichTextElement{slack.NewRichTextSection(slack.NewRichTextSectionTextElement("---", ctx.StylePtr()))}
+	case "table":
+		return nil, parser.tableToElements(node, ctx)
 	case "b", "strong", "i", "em", "s", "strike", "del", "u", "ins", "tt", "code", "a", "span", "font":
 		ctx = parser.applyBasicFormat(node, ctx)
 		return parser.nodeAndSiblingsToElement(node.FirstChild, ctx)
@@ -490,4 +496,20 @@ func (parser *HTMLParser) Parse(ctx context.Context, htmlData string, mentions *
 	}
 	node, _ := html.Parse(strings.NewReader(htmlData))
 	return parser.nodeToBlock(node, formatCtx)
+}
+
+// ParseBlocks converts Matrix HTML into Slack blocks. It works like Parse, but every
+// top-level table that fits Slack's limits becomes a native table block, placed between
+// the rich text blocks of the content around it. Tables that don't fit are rendered as
+// aligned code blocks inside the rich text, like Parse does.
+func (parser *HTMLParser) ParseBlocks(ctx context.Context, htmlData string, mentions *event.Mentions, portal *bridgev2.Portal) []slack.Block {
+	formatCtx := Context{
+		Ctx:      ctx,
+		TagStack: make(format.TagStack, 0, 4),
+		Portal:   portal,
+		Mentions: mentions,
+		Tables:   &TableBudget{},
+	}
+	node, _ := html.Parse(strings.NewReader(htmlData))
+	return splitTableBlocks(parser.nodeToBlock(node, formatCtx))
 }

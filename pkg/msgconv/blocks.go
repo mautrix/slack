@@ -384,6 +384,8 @@ func (mc *MessageConverter) renderSlackBlock(ctx context.Context, block slack.Bl
 		var buf strings.Builder
 		mc.renderSlackRichTextElements(ctx, b.Elements, mentions, 0, &buf)
 		return format.UnwrapSingleParagraph(buf.String()), false
+	case *slack.TableBlock:
+		return mc.renderSlackTable(ctx, b, mentions), false
 	case *slack.ContextBlock:
 		var htmlText strings.Builder
 		var unsupported bool = false
@@ -551,7 +553,10 @@ func (mc *MessageConverter) blocksToHTML(ctx context.Context, blocks slack.Block
 		var lastBlockWasUnsupported bool = false
 		for _, block := range blocks.BlockSet {
 			text, unsupported := mc.renderSlackBlock(ctx, block, mentions)
-			if !(unsupported && lastBlockWasUnsupported) {
+			if _, isTable := block.(*slack.TableBlock); isTable {
+				// A table can't go inside <p>.
+				htmlText.WriteString(text)
+			} else if !(unsupported && lastBlockWasUnsupported) {
 				htmlText.WriteString(fmt.Sprintf("<p>%s</p>", text))
 			}
 			lastBlockWasUnsupported = unsupported
@@ -650,6 +655,8 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 		return mc.renderImageBlock(ctx, portal, intent, imageBlock.ImageURL)
 	}
 
+	tables := &renderedTables{}
+	ctx = context.WithValue(ctx, contextKeyTables, tables)
 	mentions := &event.Mentions{}
 	urlPreviews := make([]*event.BeeperLinkPreview, 0)
 	var htmlText strings.Builder
@@ -724,6 +731,7 @@ func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bri
 	}
 
 	content := format.HTMLToContent(htmlText.String())
+	tables.withTableBody(&content, htmlText.String())
 	content.Mentions = mentions
 	content.BeeperLinkPreviews = urlPreviews
 	return &bridgev2.ConvertedMessagePart{
