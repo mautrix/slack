@@ -70,7 +70,7 @@ func (s *SlackClient) HandleSlackEvent(ctx context.Context, rawEvt any) {
 		if _, authErr := cli.AuthTestContext(ctx); authErr != nil {
 			err = fmt.Errorf("%w (auth check: %w)", err, authErr)
 		}
-		s.handleConnectError(ctx, err)
+		s.handleConnectError(ctx, err, evt.Attempt)
 	case *slack.ConnectedEvent:
 		log.Debug().Msg("Connected to websocket, waiting for hello event")
 	case *slack.DisconnectedEvent:

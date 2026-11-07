@@ -61,6 +61,8 @@ func init() {
 
 const slackMaxRetries = 5
 
+const maxServerErrorConnectAttempts = 10
+
 func makeSlackClient(log *zerolog.Logger, token, cookieToken, appToken string) *slack.Client {
 	options := []slack.Option{
 		slack.OptionLog(slackgoZerolog{Logger: log.With().Str("component", "slackgo").Logger()}),
@@ -188,7 +190,15 @@ func (s *SlackClient) GetClient() *slack.Client {
 	return s.Client
 }
 
-func (s *SlackClient) handleConnectError(ctx context.Context, err error) (retry bool) {
+func (s *SlackClient) sendConnectionErrorState(err error) {
+	s.UserLogin.BridgeState.Send(status.BridgeState{
+		StateEvent: status.StateTransientDisconnect,
+		Error:      "slack-connection-error",
+		Info:       map[string]any{"go_error": err.Error()},
+	})
+}
+
+func (s *SlackClient) handleConnectError(ctx context.Context, err error, attempt int) (retry bool) {
 	if ctx.Err() != nil {
 		return false
 	}
@@ -210,13 +220,15 @@ func (s *SlackClient) handleConnectError(ctx context.Context, err error) (retry 
 		s.disconnectUntilRestart("slack-team-disabled")
 	case "user_removed_from_team":
 		s.disconnectUntilRestart("slack-user-removed-from-team")
-	case "", "ratelimited", "internal_error", "fatal_error", "service_unavailable", "request_timeout":
-		s.UserLogin.BridgeState.Send(status.BridgeState{
-			StateEvent: status.StateTransientDisconnect,
-			Error:      "slack-connection-error",
-			Info:       map[string]any{"go_error": err.Error()},
-		})
+	case "", "ratelimited", "service_unavailable", "request_timeout":
+		s.sendConnectionErrorState(err)
 		return true
+	case "internal_error", "fatal_error":
+		if attempt < maxServerErrorConnectAttempts {
+			s.sendConnectionErrorState(err)
+			return true
+		}
+		fallthrough
 	default:
 		s.UserLogin.BridgeState.Send(status.BridgeState{
 			StateEvent: status.StateUnknownError,
@@ -253,7 +265,7 @@ func (s *SlackClient) Connect(ctx context.Context) {
 	bootResp, err := s.boot(bootCtx, s.Client)
 	if err == nil {
 		s.connectAfterBoot(ctx, &cancel, bootResp)
-	} else if s.handleConnectError(bootCtx, err) {
+	} else if s.handleConnectError(bootCtx, err, 0) {
 		go s.retryConnect(ctx, bootCtx, &cancel, s.Client, err)
 	} else {
 		cancel()
@@ -277,7 +289,7 @@ func (s *SlackClient) retryConnect(ctx, bootCtx context.Context, cancel *context
 		if err == nil {
 			s.connectAfterBoot(ctx, cancel, bootResp)
 			return
-		} else if !s.handleConnectError(bootCtx, err) {
+		} else if !s.handleConnectError(bootCtx, err, attempt+1) {
 			(*cancel)()
 			return
 		}
