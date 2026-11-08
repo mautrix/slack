@@ -91,7 +91,7 @@ func (mc *MessageConverter) renderImageBlock(ctx context.Context, portal *bridge
 	}, nil
 }
 
-var escapedSlackTagRegex = regexp.MustCompile(`&lt;([#@!][^|&]+(?:\|[^&]*)?)&gt;`)
+var escapedSlackTagRegex = regexp.MustCompile(`&lt;((?:@[UW]|#[CG]|!subteam\^S)[A-Z0-9]+(?:\|[^&]*)?)&gt;`)
 
 func (mc *MessageConverter) attachmentToURLPreview(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, attachment slack.Attachment) *event.BeeperLinkPreview {
 	var mxc id.ContentURIString
@@ -142,10 +142,18 @@ func (mc *MessageConverter) mrkdwnToMatrixHtml(ctx context.Context, inputMrkdwn 
 	return output
 }
 
+func plainTextConverter(text string, _ format.Context) string {
+	return text
+}
+
 var plainTextHTMLParser = &format.HTMLParser{
-	TabsToSpaces:   4,
-	Newline:        "\n",
-	HorizontalLine: "\n---\n",
+	TabsToSpaces:           4,
+	Newline:                "\n",
+	HorizontalLine:         "\n---\n",
+	BoldConverter:          plainTextConverter,
+	ItalicConverter:        plainTextConverter,
+	StrikethroughConverter: plainTextConverter,
+	MonospaceConverter:     plainTextConverter,
 	PillConverter: func(displayname, mxid, eventID string, ctx format.Context) string {
 		if eventID == "" && len(mxid) > 0 && displayname != "" && displayname != mxid {
 			switch mxid[0] {
