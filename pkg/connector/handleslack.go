@@ -293,6 +293,9 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		if evt.Room != nil && evt.Room.CreatedBy != "" {
 			sender = evt.Room.CreatedBy
 		}
+		if isTombstoneChange(evt) {
+			sender = ""
+		}
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, sender, "")
 		meta.CreatePortal = true
 		meta = meta.WithMoreLogContext(func(c zerolog.Context) zerolog.Context {
@@ -515,6 +518,9 @@ func (s *SlackClient) makeEventMeta(ctx context.Context, channelID string, chann
 
 func (s *SlackClient) wrapMessage(meta simplevent.EventMeta, evt *slack.MessageEvent) bridgev2.RemoteEvent {
 	meta.Type = getMessageEventType(&evt.Msg)
+	if isTombstoneChange(evt) {
+		meta.Type = bridgev2.RemoteEventMessageRemove
+	}
 	if evt.SubType == slack.MsgSubTypeMessageChanged {
 		meta.Timestamp = slackid.ParseSlackTimestamp(evt.EventTimestamp)
 	} else {
@@ -522,9 +528,13 @@ func (s *SlackClient) wrapMessage(meta simplevent.EventMeta, evt *slack.MessageE
 	}
 	meta.StreamOrder = meta.Timestamp.UnixMicro()
 	if meta.Type == bridgev2.RemoteEventMessageRemove {
+		deletedTimestamp := evt.DeletedTimestamp
+		if isTombstoneChange(evt) {
+			deletedTimestamp = evt.SubMessage.Timestamp
+		}
 		return &simplevent.MessageRemove{
 			EventMeta:     meta,
-			TargetMessage: slackid.MakeMessageID(s.TeamID, evt.Channel, evt.DeletedTimestamp),
+			TargetMessage: slackid.MakeMessageID(s.TeamID, evt.Channel, deletedTimestamp),
 		}
 	}
 	msg := &simplevent.Message[*slack.MessageEvent]{
@@ -581,6 +591,12 @@ func (s *SlackClient) wrapChatResync(meta simplevent.EventMeta, latestMessage st
 			return latestBridgedID < latestMessage, nil
 		},
 	}
+}
+
+// Slack replaces a deleted message that has thread replies with a Slackbot
+// tombstone via message_changed instead of sending message_deleted.
+func isTombstoneChange(evt *slack.MessageEvent) bool {
+	return evt.SubType == slack.MsgSubTypeMessageChanged && evt.SubMessage != nil && evt.SubMessage.SubType == "tombstone"
 }
 
 func getMessageEventType(msg *slack.Msg) bridgev2.RemoteEventType {
