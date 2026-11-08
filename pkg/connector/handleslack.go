@@ -124,7 +124,7 @@ func (s *SlackClient) HandleSlackEvent(ctx context.Context, rawEvt any) {
 		*slack.ChannelMarkedEvent, *slack.IMMarkedEvent, *slack.GroupMarkedEvent, *slack.ThreadMarkedEvent,
 		*slack.ChannelJoinedEvent, *slack.ChannelLeftEvent, *slack.GroupJoinedEvent, *slack.GroupLeftEvent,
 		*slack.MemberJoinedChannelEvent, *slack.MemberLeftChannelEvent,
-		*slack.ChannelUpdateEvent:
+		*slack.ChannelUpdateEvent, *slack.StarAddedEvent, *slack.StarRemovedEvent:
 		wrapped, err := s.wrapEvent(ctx, evt)
 		if err != nil {
 			log.Err(err).Msg("Failed to wrap Slack event")
@@ -367,8 +367,32 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 			Client:         s,
 			ShouldSyncInfo: true,
 		}
+
+	case *slack.StarAddedEvent:
+		if !isConversationStarItem(evt.Item) {
+			return nil, nil
+		}
+		s.starredChannels.Add(evt.Item.Channel)
+		meta, metaErr = s.makeEventMeta(ctx, evt.Item.Channel, nil, "", evt.EventTimestamp)
+		wrapped = wrapStarChange(&meta, true)
+	case *slack.StarRemovedEvent:
+		if !isConversationStarItem(evt.Item) {
+			return nil, nil
+		}
+		s.starredChannels.Remove(evt.Item.Channel)
+		meta, metaErr = s.makeEventMeta(ctx, evt.Item.Channel, nil, "", evt.EventTimestamp)
+		wrapped = wrapStarChange(&meta, false)
 	}
 	return wrapped, metaErr
+}
+
+func isConversationStarItem(item slack.StarredItem) bool {
+	switch item.Type {
+	case slack.TYPE_CHANNEL, slack.TYPE_IM, slack.TYPE_GROUP:
+		return true
+	default:
+		return false
+	}
 }
 
 func slackEventChannelID(rawEvt any) string {
@@ -401,6 +425,10 @@ func slackEventChannelID(rawEvt any) string {
 		return evt.Channel
 	case *slack.ChannelUpdateEvent:
 		return evt.Channel
+	case *slack.StarAddedEvent:
+		return evt.Item.Channel
+	case *slack.StarRemovedEvent:
+		return evt.Item.Channel
 	default:
 		return ""
 	}
@@ -459,6 +487,24 @@ func wrapTopicChange(meta *SlackEventMeta, topic string) *SlackChatInfoChange {
 		Change: &bridgev2.ChatInfoChange{
 			ChatInfo: &bridgev2.ChatInfo{
 				Topic: &topic,
+			},
+		},
+	}
+}
+
+func wrapStarChange(meta *SlackEventMeta, starred bool) *SlackChatInfoChange {
+	var tag event.RoomTag
+	if starred {
+		tag = event.RoomTagFavourite
+	}
+	meta.Type = bridgev2.RemoteEventChatInfoChange
+	return &SlackChatInfoChange{
+		SlackEventMeta: meta,
+		Change: &bridgev2.ChatInfoChange{
+			ChatInfo: &bridgev2.ChatInfo{
+				UserLocal: &bridgev2.UserLocalPortalInfo{
+					Tag: &tag,
+				},
 			},
 		},
 	}

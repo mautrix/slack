@@ -301,6 +301,12 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 	default:
 		return nil, fmt.Errorf("unrecognized channel type")
 	}
+	if s.starredChannels.Has(info.ID) {
+		if userLocal == nil {
+			userLocal = &bridgev2.UserLocalPortalInfo{}
+		}
+		userLocal.Tag = ptr.Ptr(event.RoomTagFavourite)
+	}
 	if s.Main.Config.WorkspaceAvatarInRooms && (roomType == database.RoomTypeDefault || roomType == database.RoomTypeGroupDM) {
 		avatar = &bridgev2.Avatar{
 			ID:     s.TeamPortal.AvatarID,

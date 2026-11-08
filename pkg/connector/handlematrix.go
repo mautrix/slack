@@ -42,6 +42,7 @@ var (
 	_ bridgev2.ReactionHandlingNetworkAPI    = (*SlackClient)(nil)
 	_ bridgev2.ReadReceiptHandlingNetworkAPI = (*SlackClient)(nil)
 	_ bridgev2.TypingHandlingNetworkAPI      = (*SlackClient)(nil)
+	_ bridgev2.TagHandlingNetworkAPI         = (*SlackClient)(nil)
 	_ bridgev2.RoomNameHandlingNetworkAPI    = (*SlackClient)(nil)
 	_ bridgev2.RoomTopicHandlingNetworkAPI   = (*SlackClient)(nil)
 	_ bridgev2.MembershipHandlingNetworkAPI  = (*SlackClient)(nil)
@@ -416,6 +417,35 @@ func (s *SlackClient) HandleMatrixReadReceipt(ctx context.Context, msg *bridgev2
 			return wrapSlackMatrixError(s.Client.MarkThreadContext(ctx, channelID, threadTS, messageTS))
 		}
 		return wrapSlackMatrixError(s.Client.MarkConversationContext(ctx, channelID, messageTS))
+	}
+	return nil
+}
+
+func (s *SlackClient) HandleRoomTag(ctx context.Context, msg *bridgev2.MatrixRoomTag) error {
+	if s.Client == nil {
+		return bridgev2.ErrNotLoggedIn
+	} else if !s.IsRealUser {
+		return nil
+	}
+	_, channelID := slackid.ParsePortalID(msg.Portal.ID)
+	if channelID == "" {
+		return errors.New("invalid channel ID")
+	}
+	_, favourite := msg.Content.Tags[event.RoomTagFavourite]
+	if favourite == s.starredChannels.Has(channelID) {
+		return nil
+	} else if favourite {
+		err := s.Client.AddStarContext(ctx, channelID, slack.ItemRef{})
+		if err != nil {
+			return wrapSlackMatrixError(err)
+		}
+		s.starredChannels.Add(channelID)
+	} else {
+		err := s.Client.RemoveStarContext(ctx, channelID, slack.ItemRef{})
+		if err != nil {
+			return wrapSlackMatrixError(err)
+		}
+		s.starredChannels.Remove(channelID)
 	}
 	return nil
 }
