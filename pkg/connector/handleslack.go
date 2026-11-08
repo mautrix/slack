@@ -677,6 +677,8 @@ var (
 	_ bridgev2.RemoteMessageRemove            = (*SlackMessage)(nil)
 	_ bridgev2.RemoteChatResync               = (*SlackMessage)(nil)
 	_ bridgev2.RemoteMessageWithTransactionID = (*SlackMessage)(nil)
+	_ bridgev2.RemotePreHandler               = (*SlackMessage)(nil)
+	_ bridgev2.RemotePostHandler              = (*SlackMessage)(nil)
 )
 
 type SlackChatResync struct {
@@ -736,6 +738,20 @@ func (s *SlackMessage) GetType() bridgev2.RemoteEventType {
 			return bridgev2.RemoteEventUnknown
 		}
 		return bridgev2.RemoteEventMessage
+	}
+}
+
+func (s *SlackMessage) PreHandle(ctx context.Context, portal *bridgev2.Portal) {
+	switch s.Data.SubType {
+	case slack.MsgSubTypeChannelUnarchive, slack.MsgSubTypeGroupUnarchive:
+		s.Client.resyncChatInfo(ctx, portal)
+	}
+}
+
+func (s *SlackMessage) PostHandle(ctx context.Context, portal *bridgev2.Portal) {
+	switch s.Data.SubType {
+	case slack.MsgSubTypeChannelArchive, slack.MsgSubTypeGroupArchive:
+		s.Client.resyncChatInfo(ctx, portal)
 	}
 }
 

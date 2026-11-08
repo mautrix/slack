@@ -321,7 +321,13 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 			topicLevel = 50
 		}
 	}
+	var eventsDefault int
+	if info.IsArchived {
+		eventsDefault = 100
+		topicLevel = 100
+	}
 	members.PowerLevels = &bridgev2.PowerLevelOverrides{
+		EventsDefault: &eventsDefault,
 		Events: map[event.Type]int{
 			event.StateTopic: topicLevel,
 		},
@@ -403,6 +409,17 @@ func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, isNew
 		return nil, fmt.Errorf("request cancelled due to user not being in channel")
 	}
 	return s.wrapChatInfo(ctx, info, isNew)
+}
+
+func (s *SlackClient) resyncChatInfo(ctx context.Context, portal *bridgev2.Portal) {
+	_, channelID := slackid.ParsePortalID(portal.ID)
+	s.invalidateChatInfoCache(channelID)
+	info, err := s.GetChatInfo(ctx, portal)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to resync chat info")
+		return
+	}
+	portal.UpdateInfo(ctx, info, s.UserLogin, nil, time.Time{})
 }
 
 func (s *SlackClient) getTeamInfo() *bridgev2.ChatInfo {
