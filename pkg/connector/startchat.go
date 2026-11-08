@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/slack-go/slack"
@@ -63,7 +64,19 @@ func (s *SlackClient) ResolveIdentifier(ctx context.Context, identifier string, 
 	if s.Client == nil {
 		return nil, bridgev2.ErrNotLoggedIn
 	}
-	if strings.ContainsRune(identifier, '-') {
+	if strings.ContainsRune(identifier, '@') {
+		resp, err := s.Client.SearchUsersCacheContext(ctx, s.TeamID, identifier)
+		if err != nil {
+			return nil, wrapSlackRespError(fmt.Errorf("failed to search users: %w", err))
+		}
+		idx := slices.IndexFunc(resp.Results, func(user *slack.User) bool {
+			return strings.EqualFold(user.Profile.Email, identifier)
+		})
+		if idx == -1 {
+			return nil, nil
+		}
+		identifier = resp.Results[idx].ID
+	} else if strings.ContainsRune(identifier, '-') {
 		var teamID string
 		teamID, identifier = slackid.ParseUserID(networkid.UserID(identifier))
 		if teamID != s.TeamID {
