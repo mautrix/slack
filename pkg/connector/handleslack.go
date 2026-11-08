@@ -317,8 +317,7 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 
 	case *slack.ChannelMarkedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
-		s.setLastReadCache(evt.Channel, evt.Timestamp)
-		wrapped = wrapReadReceipt(&meta)
+		wrapped = s.wrapMarked(&meta, evt.Channel, evt.Timestamp)
 	case *slack.ThreadMarkedEvent:
 		if evt.Subscription.LastRead == "" {
 			return nil, nil
@@ -330,12 +329,10 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		wrapped = wrappedReceipt
 	case *slack.IMMarkedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
-		s.setLastReadCache(evt.Channel, evt.Timestamp)
-		wrapped = wrapReadReceipt(&meta)
+		wrapped = s.wrapMarked(&meta, evt.Channel, evt.Timestamp)
 	case *slack.GroupMarkedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
-		s.setLastReadCache(evt.Channel, evt.Timestamp)
-		wrapped = wrapReadReceipt(&meta)
+		wrapped = s.wrapMarked(&meta, evt.Channel, evt.Timestamp)
 
 	case *slack.ChannelJoinedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel.ID, &evt.Channel, s.UserID, "")
@@ -450,6 +447,14 @@ func wrapTyping(meta *SlackEventMeta) *SlackTyping {
 func wrapReadReceipt(meta *SlackEventMeta) *SlackReadReceipt {
 	meta.Type = bridgev2.RemoteEventReadReceipt
 	return &SlackReadReceipt{SlackEventMeta: meta}
+}
+
+func (s *SlackClient) wrapMarked(meta *SlackEventMeta, channelID, ts string) bridgev2.RemoteEvent {
+	if prevLastRead := s.setLastReadCache(channelID, ts); ts < prevLastRead {
+		meta.Type = bridgev2.RemoteEventMarkUnread
+		return &SlackMarkUnread{SlackEventMeta: meta}
+	}
+	return wrapReadReceipt(meta)
 }
 
 func wrapTopicChange(meta *SlackEventMeta, topic string) *SlackChatInfoChange {
@@ -616,6 +621,16 @@ func (s *SlackReadReceipt) GetReadUpTo() time.Time {
 
 func (s *SlackReadReceipt) GetReadUpToStreamOrder() int64 {
 	return s.GetStreamOrder()
+}
+
+type SlackMarkUnread struct {
+	*SlackEventMeta
+}
+
+var _ bridgev2.RemoteMarkUnread = (*SlackMarkUnread)(nil)
+
+func (s *SlackMarkUnread) GetUnread() bool {
+	return true
 }
 
 type SlackTyping struct {

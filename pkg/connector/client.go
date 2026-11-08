@@ -503,10 +503,12 @@ func (s *SlackClient) syncTeamPortal(ctx context.Context) error {
 	return nil
 }
 
-func (s *SlackClient) setLastReadCache(channelID, ts string) {
+func (s *SlackClient) setLastReadCache(channelID, ts string) (prev string) {
 	s.lastReadCacheLock.Lock()
+	prev = s.lastReadCache[channelID]
 	s.lastReadCache[channelID] = ts
 	s.lastReadCacheLock.Unlock()
+	return
 }
 
 func (s *SlackClient) getLastReadCache(channelID string) string {
