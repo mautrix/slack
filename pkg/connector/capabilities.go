@@ -56,6 +56,7 @@ func (s *SlackConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities 
 		// GetUserInfo has an internal rate limit of 1 fetch per 24 hours,
 		// so we're fine to tell the bridge to fetch user info all the time.
 		AggressiveUpdateInfo: true,
+		TypingRepeatInterval: 5 * time.Second,
 		Provisioning: bridgev2.ProvisioningCapabilities{
 			ImagePackImport: true,
 			ResolveIdentifier: bridgev2.ResolveIdentifierCapabilities{
