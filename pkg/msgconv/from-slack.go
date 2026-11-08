@@ -215,6 +215,7 @@ func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, po
 		}
 	}
 	var textPart *bridgev2.ConvertedMessagePart
+	ctx = context.WithValue(ctx, contextKeyMessageFiles, msg.Files)
 	if len(msg.Blocks.BlockSet) != 0 || len(msg.Attachments) != 0 {
 		textPart = mc.trySlackBlocksToMatrix(ctx, portal, intent, msg.Blocks, msg.Attachments)
 	} else if text != "" {
