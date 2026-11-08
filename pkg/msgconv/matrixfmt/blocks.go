@@ -155,14 +155,23 @@ func (parser *HTMLParser) GetMentionedEventLink(roomID id.RoomID, eventID id.Eve
 	if parser.br.Config.SplitPortals {
 		teamPortalKey.Receiver = ctx.Portal.Receiver
 	}
-	teamPortal, err := parser.br.GetPortalByKey(ctx.Ctx, teamPortalKey)
+	teamPortal, err := parser.br.GetExistingPortalByKey(ctx.Ctx, teamPortalKey)
 	if err != nil {
 		zerolog.Ctx(ctx.Ctx).Err(err).Msg("Failed to get team portal to convert message link")
 		return ""
+	} else if teamPortal == nil {
+		return ""
 	}
 	teamDomain := teamPortal.Metadata.(*slackid.PortalMetadata).TeamDomain
+	if teamDomain == "" {
+		return ""
+	}
 	timestampWithoutDot := strings.ReplaceAll(timestamp, ".", "")
-	return fmt.Sprintf("https://%s.slack.com/archives/%s/p%s", teamDomain, channelID, timestampWithoutDot)
+	link := fmt.Sprintf("https://%s.slack.com/archives/%s/p%s", teamDomain, channelID, timestampWithoutDot)
+	if _, _, threadTS, ok := slackid.ParseMessageID(message.ThreadRoot); ok {
+		link += fmt.Sprintf("?thread_ts=%s&cid=%s", threadTS, channelID)
+	}
+	return link
 }
 
 func (parser *HTMLParser) maybeGetAttribute(node *html.Node, attribute string) (string, bool) {
@@ -337,7 +346,7 @@ func (parser *HTMLParser) textToElement(text string, ctx Context) slack.RichText
 			} else if parsedMatrix.Sigil1 == '!' && parsedMatrix.Sigil2 == '$' {
 				eventLink := parser.GetMentionedEventLink(parsedMatrix.RoomID(), parsedMatrix.EventID(), ctx)
 				if eventLink != "" {
-					return slack.NewRichTextSectionLinkElement(ctx.Link, text, ctx.StylePtr())
+					return slack.NewRichTextSectionLinkElement(eventLink, text, ctx.StylePtr())
 				}
 			}
 			// TODO add aliases for rooms so they can be mentioned easily

@@ -70,7 +70,7 @@ func (s *SlackConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities 
 }
 
 func (s *SlackConnector) GetBridgeInfoVersion() (info, caps int) {
-	return 3, 4
+	return 3, 5
 }
 
 func supportedIfFFmpeg() event.CapabilitySupportLevel {
@@ -81,7 +81,7 @@ func supportedIfFFmpeg() event.CapabilitySupportLevel {
 }
 
 func capID() string {
-	base := "fi.mau.slack.capabilities.2026_05_28"
+	base := "fi.mau.slack.capabilities.2026_11_08"
 	if ffmpeg.Supported() {
 		return base + "+ffmpeg"
 	}
@@ -104,7 +104,7 @@ var roomCaps = &event.RoomFeatures{
 		event.FmtInlineLink:         event.CapLevelFullySupported,
 		event.FmtUserLink:           event.CapLevelFullySupported,
 		event.FmtRoomLink:           event.CapLevelFullySupported,
-		event.FmtEventLink:          event.CapLevelUnsupported,
+		event.FmtEventLink:          event.CapLevelFullySupported,
 		event.FmtAtRoomMention:      event.CapLevelFullySupported,
 		event.FmtUnorderedList:      event.CapLevelFullySupported,
 		event.FmtOrderedList:        event.CapLevelFullySupported,
