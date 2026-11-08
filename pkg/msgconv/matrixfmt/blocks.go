@@ -346,6 +346,9 @@ func (parser *HTMLParser) textToElement(text string, ctx Context) slack.RichText
 			} else if parsedMatrix.Sigil1 == '!' && parsedMatrix.Sigil2 == '$' {
 				eventLink := parser.GetMentionedEventLink(parsedMatrix.RoomID(), parsedMatrix.EventID(), ctx)
 				if eventLink != "" {
+					if text == ctx.Link {
+						text = eventLink
+					}
 					return slack.NewRichTextSectionLinkElement(eventLink, text, ctx.StylePtr())
 				}
 			}
