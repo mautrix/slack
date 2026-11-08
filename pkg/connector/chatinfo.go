@@ -480,10 +480,7 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 			Team:             &s.BootResp.Team.TeamInfo,
 			DisplayRealNames: s.displayRealNames(),
 		}))
-		avatarURL := info.Profile.ImageOriginal
-		if avatarURL == "" && info.Profile.Image512 != "" {
-			avatarURL = info.Profile.Image512
-		}
+		avatarURL := info.Profile.Image512
 		teamID := cmp.Or(info.TeamID, s.TeamID)
 		if avatarURL == "" && info.Profile.AvatarHash != "" {
 			avatarURL = (&url.URL{
@@ -491,6 +488,9 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 				Host:   "ca.slack-edge.com",
 				Path:   fmt.Sprintf("/%s-%s-%s-512", teamID, info.ID, info.Profile.AvatarHash),
 			}).String()
+		}
+		if avatarURL == "" {
+			avatarURL = info.Profile.ImageOriginal
 		}
 		avatarID := info.Profile.AvatarHash
 		if teamID != s.TeamID && avatarID != "" {
