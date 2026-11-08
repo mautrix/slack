@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -641,13 +642,26 @@ func (mc *MessageConverter) renderMessageUnfurlFallback(ctx context.Context, att
 	return htmlText.String()
 }
 
+func isGiphyBlocks(blocks slack.Blocks) bool {
+	return len(blocks.BlockSet) == 2 &&
+		blocks.BlockSet[0].BlockType() == slack.MBTImage &&
+		blocks.BlockSet[1].BlockType() == slack.MBTContext
+}
+
+func isImageBlockWithURL(block slack.Block) bool {
+	imageBlock, ok := block.(*slack.ImageBlock)
+	return ok && imageBlock.ImageURL != ""
+}
+
 func (mc *MessageConverter) slackBlocksToMatrix(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, blocks slack.Blocks, attachments []slack.Attachment) (*bridgev2.ConvertedMessagePart, error) {
 	// Special case for bots like the Giphy bot which send images in a specific format
-	if len(blocks.BlockSet) == 2 &&
-		blocks.BlockSet[0].BlockType() == slack.MBTImage &&
-		blocks.BlockSet[1].BlockType() == slack.MBTContext {
+	if isGiphyBlocks(blocks) {
 		imageBlock := blocks.BlockSet[0].(*slack.ImageBlock)
 		return mc.renderImageBlock(ctx, portal, intent, imageBlock.ImageURL)
+	}
+	blocks.BlockSet = slices.DeleteFunc(slices.Clone(blocks.BlockSet), isImageBlockWithURL)
+	if len(blocks.BlockSet) == 0 && len(attachments) == 0 {
+		return nil, nil
 	}
 
 	mentions := &event.Mentions{}

@@ -126,6 +126,7 @@ type PartType string
 const (
 	PartTypeFile       PartType = "file"
 	PartTypeAttachment PartType = "attachment"
+	PartTypeBlock      PartType = "block"
 )
 
 func MakePartID(partType PartType, index int, id string) networkid.PartID {

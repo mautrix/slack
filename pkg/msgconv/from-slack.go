@@ -92,6 +92,25 @@ func (mc *MessageConverter) ToMatrix(
 			CaptionMerged: true,
 		}
 	}
+	for i, block := range msg.Blocks.BlockSet {
+		if isGiphyBlocks(msg.Blocks) || !isImageBlockWithURL(block) {
+			continue
+		}
+		imageBlock := block.(*slack.ImageBlock)
+		partID := slackid.MakePartID(slackid.PartTypeBlock, i, imageBlock.BlockID)
+		part, err := mc.renderImageBlock(ctx, portal, intent, imageBlock.ImageURL)
+		if err != nil {
+			zerolog.Ctx(ctx).Err(err).Msg("Failed to render image block")
+			part = makeErrorMessage(partID, "Failed to bridge image")
+		} else {
+			part.ID = partID
+			if imageBlock.Title != nil && imageBlock.Title.Text != "" {
+				part.Content.FileName = part.Content.Body
+				part.Content.Body = imageBlock.Title.Text
+			}
+		}
+		output.Parts = append(output.Parts, part)
+	}
 	if msg.SubType == slack.MsgSubTypeThreadBroadcast {
 		for _, part := range output.Parts {
 			part.Content.BeeperBroadcastOutsideThread = true
