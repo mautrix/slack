@@ -335,6 +335,9 @@ func (mc *MessageConverter) renderRichTextSectionElements(
 			htmlText.WriteString(e.Timestamp.String())
 		case *slack.RichTextSectionMessageMentionElement:
 			htmlText.WriteString(mc.renderMessageMention(ctx, e))
+		case *slack.RichTextSectionCanvasElement:
+			client := ctx.Value(contextKeySource).(*bridgev2.UserLogin).Client.(SlackClientProvider).GetClient()
+			htmlText.WriteString(mc.renderCanvasLink(ctx, client, &slack.File{ID: e.FileID}))
 		case *slack.RichTextSectionAttachmentMentionElement:
 			linkText := e.Text
 			if linkText == "" {

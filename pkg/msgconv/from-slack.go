@@ -235,7 +235,7 @@ func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, po
 		if file.Mode == "tombstone" || !isCanvas(&file) {
 			continue
 		}
-		canvasHTML := mc.renderCanvasLink(ctx, client, &file)
+		canvasHTML := fmt.Sprintf("<p>%s</p>", mc.renderCanvasLink(ctx, client, &file))
 		if textPart == nil {
 			content := format.HTMLToContent(canvasHTML)
 			textPart = &bridgev2.ConvertedMessagePart{
@@ -269,9 +269,9 @@ func (mc *MessageConverter) renderCanvasLink(ctx context.Context, client *slack.
 	}
 	titleHTML := mc.mrkdwnToMatrixHtml(ctx, html.UnescapeString(cmp.Or(title, file.PrettyType, "Canvas")), &event.Mentions{})
 	if permalink == "" {
-		return fmt.Sprintf("<p><b>%s</b></p>", titleHTML)
+		return fmt.Sprintf("<b>%s</b>", titleHTML)
 	}
-	return fmt.Sprintf(`<p><b>%s</b><br><a href="%s">Open the canvas in Slack</a></p>`, titleHTML, html.EscapeString(permalink))
+	return fmt.Sprintf(`<b>%s</b><br><a href="%s">Open the canvas in Slack</a>`, titleHTML, html.EscapeString(permalink))
 }
 
 func (mc *MessageConverter) slackTextToMatrix(ctx context.Context, text string) *bridgev2.ConvertedMessagePart {
