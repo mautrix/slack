@@ -209,7 +209,7 @@ func compareStringFold(a, b string) int {
 		bLower := unicode.ToLower(bRune)
 		if aLower < bLower {
 			return -1
-		} else if bLower > aLower {
+		} else if aLower > bLower {
 			return 1
 		}
 		a = a[aSize:]
