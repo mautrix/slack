@@ -38,6 +38,7 @@ import (
 	"maunium.net/go/mautrix/format"
 	"maunium.net/go/mautrix/id"
 
+	"go.mau.fi/mautrix-slack/pkg/emoji"
 	"go.mau.fi/mautrix-slack/pkg/msgconv/mrkdwn"
 	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
@@ -93,6 +94,13 @@ func (mc *MessageConverter) renderImageBlock(ctx context.Context, portal *bridge
 
 var escapedSlackTagRegex = regexp.MustCompile(`&lt;((?:@[UW]|#[CG]|!subteam\^S)[A-Z0-9]+(?:\|[^&]*)?)&gt;`)
 
+func (mc *MessageConverter) convertLinkPreviewTitle(ctx context.Context, title string) string {
+	if escapedSlackTagRegex.MatchString(title) {
+		return mc.mrkdwnToPlainText(ctx, escapedSlackTagRegex.ReplaceAllString(title, "<$1>"))
+	}
+	return emoji.ReplaceShortcodesWithUnicode(html.UnescapeString(title))
+}
+
 func (mc *MessageConverter) attachmentToURLPreview(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, attachment slack.Attachment) *event.BeeperLinkPreview {
 	var mxc id.ContentURIString
 	var file *event.EncryptedFileInfo
@@ -122,7 +130,7 @@ func (mc *MessageConverter) attachmentToURLPreview(ctx context.Context, portal *
 	return &event.BeeperLinkPreview{
 		LinkPreview: event.LinkPreview{
 			CanonicalURL: attachment.FromURL,
-			Title:        mc.mrkdwnToPlainText(ctx, escapedSlackTagRegex.ReplaceAllString(attachment.Title, "<$1>")),
+			Title:        mc.convertLinkPreviewTitle(ctx, attachment.Title),
 			SiteName:     attachment.ServiceName,
 			Type:         "website",
 			Description:  mc.mrkdwnToPlainText(ctx, attachment.Text),
@@ -160,7 +168,7 @@ var plainTextHTMLParser = &format.HTMLParser{
 			case '@':
 				return "@" + displayname
 			case '!', '#':
-				return "#" + displayname
+				return displayname
 			}
 		}
 		return format.DefaultPillConverter(displayname, mxid, eventID, ctx)
