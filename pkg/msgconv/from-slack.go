@@ -231,8 +231,14 @@ func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, po
 			textPart.Content.FormattedBody += fmt.Sprintf(`<p><a href="https://app.slack.com/client/%s/%s">Click here to join via the Slack app</a></p>`, teamID, channelID)
 		}
 	}
+	renderedCanvases := make(map[string]struct{})
+	for _, block := range msg.Blocks.BlockSet {
+		if richText, ok := block.(*slack.RichTextBlock); ok {
+			collectCanvasElementIDs(richText.Elements, renderedCanvases)
+		}
+	}
 	for _, file := range msg.Files {
-		if file.Mode == "tombstone" || !isCanvas(&file) {
+		if _, alreadyRendered := renderedCanvases[file.ID]; alreadyRendered || file.Mode == "tombstone" || !isCanvas(&file) {
 			continue
 		}
 		canvasHTML := fmt.Sprintf("<p>%s</p>", mc.renderCanvasLink(ctx, client, &file))
@@ -250,6 +256,27 @@ func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, po
 		}
 	}
 	return textPart
+}
+
+func collectCanvasElementIDs(elements []slack.RichTextElement, into map[string]struct{}) {
+	for _, element := range elements {
+		var sectionElements []slack.RichTextSectionElement
+		switch typedElement := element.(type) {
+		case *slack.RichTextSection:
+			sectionElements = typedElement.Elements
+		case *slack.RichTextQuote:
+			sectionElements = typedElement.Elements
+		case *slack.RichTextPreformatted:
+			sectionElements = typedElement.Elements
+		case *slack.RichTextList:
+			collectCanvasElementIDs(typedElement.Elements, into)
+		}
+		for _, sectionElement := range sectionElements {
+			if canvas, ok := sectionElement.(*slack.RichTextSectionCanvasElement); ok {
+				into[canvas.FileID] = struct{}{}
+			}
+		}
+	}
 }
 
 func isCanvas(file *slack.File) bool {
