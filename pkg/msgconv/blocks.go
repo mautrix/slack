@@ -31,6 +31,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
+	"go.mau.fi/util/ptr"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/event"
@@ -332,7 +333,7 @@ func (mc *MessageConverter) renderRichTextSectionElements(
 		case *slack.RichTextSectionColorElement:
 			htmlText.WriteString(e.Value)
 		case *slack.RichTextSectionDateElement:
-			htmlText.WriteString(e.Timestamp.String())
+			mrkdwn.DateToHTML(&htmlText, e.Timestamp.Time(), e.Format, ptr.Val(e.URL))
 		case *slack.RichTextSectionMessageMentionElement:
 			htmlText.WriteString(mc.renderMessageMention(ctx, e))
 		case *slack.RichTextSectionAttachmentMentionElement:
