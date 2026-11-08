@@ -310,7 +310,7 @@ func (mc *MessageConverter) renderRichTextSectionElements(
 			closingTags(&htmlText, e.Style)
 		case *slack.RichTextSectionBroadcastElement:
 			mentions.Room = true
-			htmlText.WriteString("@room")
+			htmlText.WriteString("@" + html.EscapeString(string(e.Range)))
 		case *slack.RichTextSectionEmojiElement:
 			openingTags(&htmlText, e.Style)
 			if e.Unicode != "" {
