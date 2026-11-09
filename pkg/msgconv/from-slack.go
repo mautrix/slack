@@ -138,6 +138,9 @@ func (mc *MessageConverter) EditToMatrix(
 	existing []*database.Message,
 ) (*bridgev2.ConvertedEdit, error) {
 	editTargetPart := existing[0]
+	if textPartIdx := slices.IndexFunc(existing, func(part *database.Message) bool { return part.PartID == "" }); textPartIdx >= 0 {
+		editTargetPart = existing[textPartIdx]
+	}
 	meta := editTargetPart.Metadata.(*slackid.MessageMetadata)
 	if msg.Edited != nil && meta.LastEditTS >= msg.Edited.Timestamp {
 		return nil, fmt.Errorf(
@@ -203,6 +206,17 @@ func (mc *MessageConverter) EditToMatrix(
 		}
 		if msg.SubType == slack.MsgSubTypeThreadBroadcast {
 			modifiedPart.Content.BeeperBroadcastOutsideThread = true
+		}
+		if editTargetPart.PartID != "" && !captionMerged {
+			if msg.Edited != nil {
+				modifiedPart.DBMetadata = &slackid.MessageMetadata{LastEditTS: msg.Edited.Timestamp}
+			}
+			output.AddedParts = &bridgev2.ConvertedMessage{Parts: []*bridgev2.ConvertedMessagePart{modifiedPart}}
+			if msg.ThreadTimestamp != "" && msg.ThreadTimestamp != msg.Timestamp {
+				teamID, channelID := slackid.ParsePortalID(portal.ID)
+				output.AddedParts.ThreadRoot = ptr.Ptr(slackid.MakeMessageID(teamID, channelID, msg.ThreadTimestamp))
+			}
+			return output, nil
 		}
 		editPart := modifiedPart.ToEditPart(editTargetPart)
 		if msg.Edited != nil {
