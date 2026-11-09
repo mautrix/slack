@@ -715,11 +715,15 @@ var (
 )
 
 func (s *SlackMessage) GetType() bridgev2.RemoteEventType {
-	if isChannelInfoChangeSubtype(s.Data.SubType) {
+	return getMessageEventType(&s.Data.Msg)
+}
+
+func getMessageEventType(msg *slack.Msg) bridgev2.RemoteEventType {
+	if isChannelInfoChangeSubtype(msg.SubType) {
 		// These shouldn't end up as SlackMessage events
 		return bridgev2.RemoteEventUnknown
 	}
-	switch s.Data.SubType {
+	switch msg.SubType {
 	case slack.MsgSubTypeMessageChanged:
 		return bridgev2.RemoteEventEdit
 	case slack.MsgSubTypeMessageDeleted:
@@ -732,7 +736,7 @@ func (s *SlackMessage) GetType() bridgev2.RemoteEventType {
 		return bridgev2.RemoteEventMessage
 	default:
 		// For unknown types with the hidden flag, don't bridge
-		if s.Data.Hidden {
+		if msg.Hidden {
 			return bridgev2.RemoteEventUnknown
 		}
 		return bridgev2.RemoteEventMessage
