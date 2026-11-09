@@ -637,6 +637,8 @@ func (s *SlackClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*
 	_, userID := slackid.ParseUserID(ghost.ID)
 	if userID == "" {
 		return nil, nil
+	} else if s.Client == nil {
+		return nil, bridgev2.ErrNotLoggedIn
 	}
 	// Don't batch-queue B-prefix bot IDs: GetUsersCacheContext is a users-only API
 	// that silently ignores them, so they must go through fetchUserInfo → GetBotInfoContext.
