@@ -153,7 +153,8 @@ func (s *SlackClient) HandleSlackEvent(ctx context.Context, rawEvt any) {
 		}
 	case *slack.FileSharedEvent, *slack.FilePublicEvent, *slack.FilePrivateEvent,
 		*slack.FileChangeEvent, *slack.FileDeletedEvent,
-		*slack.DesktopNotificationEvent, *slack.ReconnectUrlEvent, *slack.LatencyReport:
+		*slack.DesktopNotificationEvent, *slack.ReconnectUrlEvent, *slack.LatencyReport,
+		*slack.ChannelArchiveEvent, *slack.ChannelUnarchiveEvent, *slack.GroupArchiveEvent, *slack.GroupUnarchiveEvent:
 		// ignored intentionally, these are duplicates or do not contain useful information
 	case *slack.UserChangeEvent:
 		go s.handleUserChange(ctx, &evt.User)
