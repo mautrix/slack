@@ -435,27 +435,32 @@ func (s *SlackClient) HandleMarkedUnread(ctx context.Context, msg *bridgev2.Matr
 	if channelID == "" {
 		return errors.New("invalid channel ID")
 	}
+	lastRead := s.getLastReadCache(channelID)
+	if !msg.Content.Unread {
+		lastMessage, err := s.UserLogin.Bridge.DB.Message.GetLastPartAtOrBeforeTime(ctx, msg.Portal.PortalKey, time.Now())
+		if err != nil {
+			return err
+		} else if lastMessage == nil {
+			return nil
+		}
+		_, _, messageTS, ok := slackid.ParseMessageID(lastMessage.ID)
+		if !ok || messageTS <= lastRead {
+			return nil
+		}
+		return wrapSlackMatrixError(s.Client.MarkConversationContext(ctx, channelID, messageTS))
+	}
 	resp, err := s.Client.GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
 		ChannelID: channelID,
 		Limit:     2,
 	})
 	if err != nil {
 		return wrapSlackMatrixError(err)
-	} else if len(resp.Messages) == 0 {
+	} else if len(resp.Messages) == 0 || (lastRead != "" && lastRead < resp.Messages[0].Timestamp) {
 		return nil
 	}
-	markTS := resp.Messages[0].Timestamp
-	lastRead := s.getLastReadCache(channelID)
-	if msg.Content.Unread {
-		if lastRead != "" && lastRead < markTS {
-			return nil
-		}
-		markTS = "0"
-		if len(resp.Messages) > 1 {
-			markTS = resp.Messages[1].Timestamp
-		}
-	} else if lastRead >= markTS {
-		return nil
+	markTS := "0"
+	if len(resp.Messages) > 1 {
+		markTS = resp.Messages[1].Timestamp
 	}
 	return wrapSlackMatrixError(s.Client.MarkConversationContext(ctx, channelID, markTS))
 }
