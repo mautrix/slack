@@ -225,10 +225,14 @@ func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, po
 		case slack.MsgSubTypeMeMessage:
 			textPart.Content.MsgType = event.MsgEmote
 		case "huddle_thread":
-			teamID, channelID := slackid.ParsePortalID(portal.ID)
-			textPart.Content.EnsureHasHTML()
-			textPart.Content.Body += fmt.Sprintf("\n\nJoin via the Slack app: https://app.slack.com/client/%s/%s", teamID, channelID)
-			textPart.Content.FormattedBody += fmt.Sprintf(`<p><a href="https://app.slack.com/client/%s/%s">Click here to join via the Slack app</a></p>`, teamID, channelID)
+			textPart.Content.MsgType = event.MsgNotice
+			textPart.Content.BeeperActionMessage = &event.BeeperActionMessage{Type: event.BeeperActionMessageCall}
+			if msg.Room == nil || !msg.Room.HasEnded {
+				teamID, channelID := slackid.ParsePortalID(portal.ID)
+				textPart.Content.EnsureHasHTML()
+				textPart.Content.Body += fmt.Sprintf("\n\nJoin via the Slack app: https://app.slack.com/client/%s/%s", teamID, channelID)
+				textPart.Content.FormattedBody += fmt.Sprintf(`<p><a href="https://app.slack.com/client/%s/%s">Click here to join via the Slack app</a></p>`, teamID, channelID)
+			}
 		}
 	}
 	for _, file := range msg.Files {

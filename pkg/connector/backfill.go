@@ -138,6 +138,9 @@ func (s *SlackClient) wrapBackfillMessage(ctx context.Context, portal *bridgev2.
 	if senderID == "" {
 		senderID = msg.BotID
 	}
+	if msg.Room != nil && msg.Room.CreatedBy != "" {
+		senderID = msg.Room.CreatedBy
+	}
 	sender := s.makeEventSender(senderID)
 	ghost, err := s.Main.br.GetGhostByID(ctx, sender.Sender)
 	if err != nil {
