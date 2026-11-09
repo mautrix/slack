@@ -340,13 +340,17 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 	if selfPL := s.selfPowerLevel(info); selfPL > 0 {
 		bumpMemberPL(s.UserID, selfPL)
 	}
+	topic := info.Topic.Value
+	if topic == "" && roomType == database.RoomTypeDefault {
+		topic = info.Purpose.Value
+	}
 	var name *string
 	if roomType != database.RoomTypeDM || len(members.MemberMap) == 1 {
 		name = ptr.Ptr(s.formatChannelName(info))
 	}
 	return &bridgev2.ChatInfo{
 		Name:         name,
-		Topic:        ptr.Ptr(info.Topic.Value),
+		Topic:        &topic,
 		Avatar:       avatar,
 		Members:      &members,
 		Type:         &roomType,
