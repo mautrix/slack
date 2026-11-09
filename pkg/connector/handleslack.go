@@ -153,7 +153,8 @@ func (s *SlackClient) HandleSlackEvent(ctx context.Context, rawEvt any) {
 		}
 	case *slack.FileSharedEvent, *slack.FilePublicEvent, *slack.FilePrivateEvent,
 		*slack.FileChangeEvent, *slack.FileDeletedEvent,
-		*slack.DesktopNotificationEvent, *slack.ReconnectUrlEvent, *slack.LatencyReport:
+		*slack.DesktopNotificationEvent, *slack.ReconnectUrlEvent, *slack.LatencyReport,
+		*slack.SHRoomJoinEvent, *slack.SHRoomLeaveEvent, *slack.SHRoomUpdateEvent, *slack.UserHuddleChangedEvent:
 		// ignored intentionally, these are duplicates or do not contain useful information
 	case *slack.UserChangeEvent:
 		go s.handleUserChange(ctx, &evt.User)
@@ -248,7 +249,13 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 	switch evt := rawEvt.(type) {
 	case *slack.MessageEvent:
 		if evt.SubType == slack.MsgSubTypeMessageChanged && evt.SubMessage.SubType == "huddle_thread" {
-			return nil, nil
+			room := evt.SubMessage.Room
+			if room == nil || !room.HasEnded || room.DateEnd == 0 || time.Since(time.Unix(room.DateEnd, 0)) > huddleEndMaxAge {
+				return nil, nil
+			}
+			meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, room.CreatedBy, fmt.Sprintf("%d.000000", room.DateEnd))
+			meta.Type = bridgev2.RemoteEventMessage
+			return &SlackHuddleEnd{SlackEventMeta: &meta}, metaErr
 		}
 		switch evt.SubType {
 		case slack.MsgSubTypeChannelName, slack.MsgSubTypeGroupName,
@@ -275,6 +282,9 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 			if sender == "" {
 				sender = evt.SubMessage.BotID
 			}
+		}
+		if evt.Room != nil && evt.Room.CreatedBy != "" {
+			sender = evt.Room.CreatedBy
 		}
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, sender, "")
 		meta.CreatePortal = true
@@ -665,6 +675,26 @@ var (
 	_ bridgev2.RemoteChatResync               = (*SlackMessage)(nil)
 	_ bridgev2.RemoteMessageWithTransactionID = (*SlackMessage)(nil)
 )
+
+const huddleEndMaxAge = 15 * time.Minute
+
+type SlackHuddleEnd struct {
+	*SlackEventMeta
+}
+
+var _ bridgev2.RemoteMessage = (*SlackHuddleEnd)(nil)
+
+func (s *SlackHuddleEnd) ConvertMessage(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI) (*bridgev2.ConvertedMessage, error) {
+	return &bridgev2.ConvertedMessage{
+		Parts: []*bridgev2.ConvertedMessagePart{{
+			Type: event.EventMessage,
+			Content: &event.MessageEventContent{
+				MsgType: event.MsgNotice,
+				Body:    "Huddle ended",
+			},
+		}},
+	}, nil
+}
 
 type SlackChatResync struct {
 	*SlackEventMeta
