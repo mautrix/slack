@@ -209,7 +209,7 @@ func compareStringFold(a, b string) int {
 		bLower := unicode.ToLower(bRune)
 		if aLower < bLower {
 			return -1
-		} else if bLower > aLower {
+		} else if aLower > bLower {
 			return 1
 		}
 		a = a[aSize:]
@@ -346,13 +346,17 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 	if selfPL := s.selfPowerLevel(info); selfPL > 0 {
 		bumpMemberPL(s.UserID, selfPL)
 	}
+	topic := info.Topic.Value
+	if topic == "" && roomType == database.RoomTypeDefault {
+		topic = info.Purpose.Value
+	}
 	var name *string
 	if roomType != database.RoomTypeDM || len(members.MemberMap) == 1 {
 		name = ptr.Ptr(s.formatChannelName(info))
 	}
 	return &bridgev2.ChatInfo{
 		Name:         name,
-		Topic:        ptr.Ptr(info.Topic.Value),
+		Topic:        &topic,
 		Avatar:       avatar,
 		Members:      &members,
 		Type:         &roomType,
@@ -486,9 +490,9 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 			Team:             &s.BootResp.Team.TeamInfo,
 			DisplayRealNames: s.displayRealNames(),
 		}))
-		avatarURL := info.Profile.ImageOriginal
-		if avatarURL == "" && info.Profile.Image512 != "" {
-			avatarURL = info.Profile.Image512
+		avatarURL := info.Profile.Image512
+		if avatarURL == "" && (info.Enterprise.EnterpriseID != "" || strings.HasPrefix(info.ID, "W")) {
+			avatarURL = info.Profile.ImageOriginal
 		}
 		teamID := cmp.Or(info.TeamID, s.TeamID)
 		if avatarURL == "" && info.Profile.AvatarHash != "" {
@@ -497,6 +501,9 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 				Host:   "ca.slack-edge.com",
 				Path:   fmt.Sprintf("/%s-%s-%s-512", teamID, info.ID, info.Profile.AvatarHash),
 			}).String()
+		}
+		if avatarURL == "" {
+			avatarURL = info.Profile.ImageOriginal
 		}
 		avatarID := info.Profile.AvatarHash
 		if teamID != s.TeamID && avatarID != "" {
@@ -636,6 +643,8 @@ func (s *SlackClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*
 	_, userID := slackid.ParseUserID(ghost.ID)
 	if userID == "" {
 		return nil, nil
+	} else if s.Client == nil {
+		return nil, bridgev2.ErrNotLoggedIn
 	}
 	// Don't batch-queue B-prefix bot IDs: GetUsersCacheContext is a users-only API
 	// that silently ignores them, so they must go through fetchUserInfo → GetBotInfoContext.
