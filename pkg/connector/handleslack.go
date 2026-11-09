@@ -250,7 +250,7 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 	case *slack.MessageEvent:
 		if evt.SubType == slack.MsgSubTypeMessageChanged && evt.SubMessage.SubType == "huddle_thread" {
 			room := evt.SubMessage.Room
-			if room == nil || !room.HasEnded || room.DateEnd == 0 {
+			if room == nil || !room.HasEnded || room.DateEnd == 0 || time.Since(time.Unix(room.DateEnd, 0)) > huddleEndMaxAge {
 				return nil, nil
 			}
 			meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, room.CreatedBy, fmt.Sprintf("%d.000000", room.DateEnd))
@@ -688,6 +688,8 @@ var (
 	_ bridgev2.RemoteChatResync               = (*SlackMessage)(nil)
 	_ bridgev2.RemoteMessageWithTransactionID = (*SlackMessage)(nil)
 )
+
+const huddleEndMaxAge = 15 * time.Minute
 
 type SlackHuddleEnd struct {
 	*SlackEventMeta
