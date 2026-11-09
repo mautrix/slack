@@ -25,6 +25,7 @@ import (
 
 	"github.com/slack-go/slack"
 	"golang.org/x/net/html"
+	"maunium.net/go/mautrix/id"
 )
 
 // Limits of the Slack table block (https://docs.slack.dev/reference/block-kit/blocks/table-block/).
@@ -111,8 +112,39 @@ func (parser *HTMLParser) tableToElements(node *html.Node, ctx Context) []slack.
 	if ctx.TagStack.Has("blockquote") {
 		border = 1
 	}
-	return append(captionElems, slack.NewRichTextPreformatted(border, "",
+	elems := append(captionElems, slack.NewRichTextPreformatted(border, "",
 		slack.NewRichTextSectionTextElement(strings.TrimSuffix(AlignedTable(texts, headerRows), "\n"), nil)))
+	if mentions := parser.tableMentions(node, ctx); len(mentions) > 0 {
+		elems = append(elems, slack.NewRichTextSection(mentions...))
+	}
+	return elems
+}
+
+func (parser *HTMLParser) tableMentions(node *html.Node, ctx Context) []slack.RichTextSectionElement {
+	var userIDs []string
+	var walk func(node *html.Node)
+	walk = func(node *html.Node) {
+		if node.Type == html.ElementNode && node.Data == "a" {
+			parsed, _ := id.ParseMatrixURIOrMatrixToURL(parser.getAttribute(node, "href"))
+			if parsed != nil && parsed.Sigil1 == '@' {
+				if userID := parser.GetMentionedUserID(parsed.UserID(), ctx); userID != "" && !slices.Contains(userIDs, userID) {
+					userIDs = append(userIDs, userID)
+				}
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(node)
+	var elems []slack.RichTextSectionElement
+	for i, userID := range userIDs {
+		if i > 0 {
+			elems = append(elems, slack.NewRichTextSectionTextElement(" ", nil))
+		}
+		elems = append(elems, slack.NewRichTextSectionUserElement(userID, nil))
+	}
+	return elems
 }
 
 // readTable collects the rows and the caption of a table. simple is false when the table
