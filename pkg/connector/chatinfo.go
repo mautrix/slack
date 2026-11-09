@@ -481,6 +481,9 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 			DisplayRealNames: s.displayRealNames(),
 		}))
 		avatarURL := info.Profile.Image512
+		if avatarURL == "" && info.Enterprise.EnterpriseID != "" {
+			avatarURL = info.Profile.ImageOriginal
+		}
 		teamID := cmp.Or(info.TeamID, s.TeamID)
 		if avatarURL == "" && info.Profile.AvatarHash != "" {
 			avatarURL = (&url.URL{
