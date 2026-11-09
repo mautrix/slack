@@ -61,7 +61,7 @@ func (s *SlackConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities 
 			ImagePackImport: true,
 			ResolveIdentifier: bridgev2.ResolveIdentifierCapabilities{
 				CreateDM:    true,
-				LookupEmail: true,
+				LookupEmail: false,
 				ContactList: false, // TODO allow fetching all users in a workspace? (requires pagination)
 				Search:      true,
 			},
