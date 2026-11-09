@@ -111,6 +111,8 @@ func (s *SlackClient) FetchMessages(ctx context.Context, params bridgev2.FetchMe
 			continue
 		} else if threadTS == "" && msg.ThreadTimestamp != "" && msg.ThreadTimestamp != msg.Timestamp {
 			continue
+		} else if getMessageEventType(&msg.Msg) != bridgev2.RemoteEventMessage && msg.ReplyCount == 0 {
+			continue
 		}
 		convertedMessages = append(convertedMessages, s.wrapBackfillMessage(ctx, params.Portal, &msg.Msg, threadTS != ""))
 		if maxMsgID < msg.Timestamp {
@@ -137,6 +139,9 @@ func (s *SlackClient) wrapBackfillMessage(ctx context.Context, portal *bridgev2.
 	senderID := msg.User
 	if senderID == "" {
 		senderID = msg.BotID
+	}
+	if msg.Room != nil && msg.Room.CreatedBy != "" {
+		senderID = msg.Room.CreatedBy
 	}
 	sender := s.makeEventSender(senderID)
 	ghost, err := s.Main.br.GetGhostByID(ctx, sender.Sender)

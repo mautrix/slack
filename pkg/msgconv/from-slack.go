@@ -89,12 +89,19 @@ func (mc *MessageConverter) ToMatrix(
 			output.Parts = append(output.Parts, part)
 		}
 	}
-	if output.MergeCaption() {
+	imageBlockParts := mc.imageBlocksToMatrix(ctx, portal, intent, msg.Blocks, nil)
+	if len(output.Parts) == 0 && len(imageBlockParts) == 0 {
+		output.Parts = append(output.Parts, &bridgev2.ConvertedMessagePart{
+			Type:       event.EventMessage,
+			Content:    &event.MessageEventContent{MsgType: event.MsgText},
+			DontBridge: true,
+		})
+	} else if output.MergeCaption() {
 		output.Parts[0].DBMetadata = &slackid.MessageMetadata{
 			CaptionMerged: true,
 		}
 	}
-	output.Parts = append(output.Parts, mc.imageBlocksToMatrix(ctx, portal, intent, msg.Blocks, nil)...)
+	output.Parts = append(output.Parts, imageBlockParts...)
 	if msg.SubType == slack.MsgSubTypeThreadBroadcast {
 		for _, part := range output.Parts {
 			part.Content.BeeperBroadcastOutsideThread = true
@@ -197,6 +204,14 @@ func (mc *MessageConverter) EditToMatrix(
 		if msg.SubType == slack.MsgSubTypeThreadBroadcast {
 			modifiedPart.Content.BeeperBroadcastOutsideThread = true
 		}
+		if editTargetPart.HasFakeMXID() && editTargetPart.ThreadRoot != "" {
+			threadRoot, err := portal.Bridge.DB.Message.GetFirstPartByID(ctx, portal.Receiver, editTargetPart.ThreadRoot)
+			if err != nil {
+				zerolog.Ctx(ctx).Err(err).Msg("Failed to get thread root for first content of empty message")
+			} else if threadRoot != nil && !threadRoot.HasFakeMXID() {
+				modifiedPart.Content.GetRelatesTo().SetThread(threadRoot.MXID, threadRoot.MXID)
+			}
+		}
 		if editTargetPart.PartID != "" && !captionMerged {
 			if msg.Edited != nil {
 				modifiedPart.DBMetadata = &slackid.MessageMetadata{LastEditTS: msg.Edited.Timestamp}
@@ -214,7 +229,7 @@ func (mc *MessageConverter) EditToMatrix(
 			}
 			output.ModifiedParts = append(output.ModifiedParts, editPart)
 		}
-	} else if editTargetPart.PartID == "" && !meta.CaptionMerged {
+	} else if editTargetPart.PartID == "" && !meta.CaptionMerged && !editTargetPart.HasFakeMXID() {
 		output.DeletedParts = append(output.DeletedParts, editTargetPart)
 	}
 	for _, part := range mc.imageBlocksToMatrix(ctx, portal, intent, msg.Blocks, existingMap) {
@@ -312,10 +327,13 @@ func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, po
 		case slack.MsgSubTypeMeMessage:
 			textPart.Content.MsgType = event.MsgEmote
 		case "huddle_thread":
-			teamID, channelID := slackid.ParsePortalID(portal.ID)
-			textPart.Content.EnsureHasHTML()
-			textPart.Content.Body += fmt.Sprintf("\n\nJoin via the Slack app: https://app.slack.com/client/%s/%s", teamID, channelID)
-			textPart.Content.FormattedBody += fmt.Sprintf(`<p><a href="https://app.slack.com/client/%s/%s">Click here to join via the Slack app</a></p>`, teamID, channelID)
+			textPart.Content.MsgType = event.MsgNotice
+			if msg.Room == nil || !msg.Room.HasEnded {
+				teamID, channelID := slackid.ParsePortalID(portal.ID)
+				textPart.Content.EnsureHasHTML()
+				textPart.Content.Body += fmt.Sprintf("\n\nJoin via the Slack app: https://app.slack.com/client/%s/%s", teamID, channelID)
+				textPart.Content.FormattedBody += fmt.Sprintf(`<p><a href="https://app.slack.com/client/%s/%s">Click here to join via the Slack app</a></p>`, teamID, channelID)
+			}
 		}
 	}
 	for _, file := range msg.Files {
