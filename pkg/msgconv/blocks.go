@@ -399,6 +399,9 @@ func (mc *MessageConverter) renderSlackBlock(ctx context.Context, block slack.Bl
 				unsupported = true
 			}
 		}
+		if htmlText.Len() == 0 && len(b.ContextElements.Elements) > 0 {
+			return "<i>Slack message contains unsupported elements.</i>", true
+		}
 		return htmlText.String(), unsupported
 	default:
 		zerolog.Ctx(ctx).Debug().
