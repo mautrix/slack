@@ -214,6 +214,8 @@ func (mc *MessageConverter) EditToMatrix(
 			}
 			output.ModifiedParts = append(output.ModifiedParts, editPart)
 		}
+	} else if editTargetPart.PartID == "" && !meta.CaptionMerged {
+		output.DeletedParts = append(output.DeletedParts, editTargetPart)
 	}
 	for _, part := range mc.imageBlocksToMatrix(ctx, portal, intent, msg.Blocks, existingMap) {
 		if msg.Username != "" {
