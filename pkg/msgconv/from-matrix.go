@@ -145,6 +145,7 @@ func (mc *MessageConverter) ToSlack(
 		}
 		converted := &ConvertedSlackMessage{SendReq: slack.MsgOptionCompose(append([]slack.MsgOption{slack.MsgOptionBlocks(blocks...)}, options...)...)}
 		if fallbackBlock != nil {
+			converted.SendReq = slack.MsgOptionCompose(converted.SendReq, slack.MsgOptionText(content.Body, true))
 			converted.FallbackSendReq = slack.MsgOptionCompose(append([]slack.MsgOption{slack.MsgOptionBlocks(fallbackBlock)}, options...)...)
 		}
 		return converted, nil
