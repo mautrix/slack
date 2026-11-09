@@ -702,9 +702,8 @@ func (s *SlackHuddleEnd) ConvertMessage(ctx context.Context, portal *bridgev2.Po
 		Parts: []*bridgev2.ConvertedMessagePart{{
 			Type: event.EventMessage,
 			Content: &event.MessageEventContent{
-				MsgType:             event.MsgNotice,
-				Body:                "Huddle ended",
-				BeeperActionMessage: &event.BeeperActionMessage{Type: event.BeeperActionMessageCall},
+				MsgType: event.MsgNotice,
+				Body:    "Huddle ended",
 			},
 		}},
 	}, nil

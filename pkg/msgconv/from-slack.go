@@ -226,7 +226,6 @@ func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, po
 			textPart.Content.MsgType = event.MsgEmote
 		case "huddle_thread":
 			textPart.Content.MsgType = event.MsgNotice
-			textPart.Content.BeeperActionMessage = &event.BeeperActionMessage{Type: event.BeeperActionMessageCall}
 			if msg.Room == nil || !msg.Room.HasEnded {
 				teamID, channelID := slackid.ParsePortalID(portal.ID)
 				textPart.Content.EnsureHasHTML()
