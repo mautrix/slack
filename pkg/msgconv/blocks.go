@@ -448,11 +448,8 @@ func (mc *MessageConverter) renderSlackActionBlock(ctx context.Context, block *s
 		return "<i>Slack message contains unsupported elements.</i>", true
 	}
 	htmlText := strings.Join(buttons, " - ")
-	if addButtonText {
+	if addButtonText || unsupported {
 		htmlText += "<br>Use the Slack app to click buttons"
-	}
-	if unsupported {
-		htmlText += "<br><i>Slack message contains unsupported elements.</i>"
 	}
 	return htmlText, false
 }
