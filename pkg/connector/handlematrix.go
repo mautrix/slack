@@ -432,20 +432,20 @@ func (s *SlackClient) HandleRoomTag(ctx context.Context, msg *bridgev2.MatrixRoo
 		return errors.New("invalid channel ID")
 	}
 	_, favourite := msg.Content.Tags[event.RoomTagFavourite]
-	if favourite == s.starredChannels.Has(channelID) {
-		return nil
-	} else if favourite {
-		err := s.Client.AddStarContext(ctx, channelID, slack.ItemRef{})
-		if err != nil {
+	if favourite {
+		if !s.starredChannels.Add(channelID) {
+			return nil
+		} else if err := s.Client.AddStarContext(ctx, channelID, slack.ItemRef{}); err != nil {
+			s.starredChannels.Remove(channelID)
 			return wrapSlackMatrixError(err)
 		}
-		s.starredChannels.Add(channelID)
 	} else {
-		err := s.Client.RemoveStarContext(ctx, channelID, slack.ItemRef{})
-		if err != nil {
+		if !s.starredChannels.Pop(channelID) {
+			return nil
+		} else if err := s.Client.RemoveStarContext(ctx, channelID, slack.ItemRef{}); err != nil {
+			s.starredChannels.Add(channelID)
 			return wrapSlackMatrixError(err)
 		}
-		s.starredChannels.Remove(channelID)
 	}
 	return nil
 }

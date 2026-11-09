@@ -369,17 +369,15 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		}
 
 	case *slack.StarAddedEvent:
-		if !isConversationStarItem(evt.Item) {
+		if !isConversationStarItem(evt.Item) || !s.starredChannels.Add(evt.Item.Channel) {
 			return nil, nil
 		}
-		s.starredChannels.Add(evt.Item.Channel)
 		meta, metaErr = s.makeEventMeta(ctx, evt.Item.Channel, nil, "", evt.EventTimestamp)
 		wrapped = wrapStarChange(&meta, true)
 	case *slack.StarRemovedEvent:
-		if !isConversationStarItem(evt.Item) {
+		if !isConversationStarItem(evt.Item) || !s.starredChannels.Pop(evt.Item.Channel) {
 			return nil, nil
 		}
-		s.starredChannels.Remove(evt.Item.Channel)
 		meta, metaErr = s.makeEventMeta(ctx, evt.Item.Channel, nil, "", evt.EventTimestamp)
 		wrapped = wrapStarChange(&meta, false)
 	}
