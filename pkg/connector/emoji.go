@@ -184,6 +184,9 @@ func (s *SlackConnector) downloadPlainFile(ctx context.Context, url, thing strin
 	getResp, err := s.MsgConv.HTTP.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download %s: %w", thing, err)
+	} else if getResp.StatusCode != http.StatusOK {
+		_ = getResp.Body.Close()
+		return nil, fmt.Errorf("failed to download %s: unexpected status code %d", thing, getResp.StatusCode)
 	}
 
 	data, err := io.ReadAll(getResp.Body)

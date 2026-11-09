@@ -153,7 +153,8 @@ func (s *SlackClient) HandleSlackEvent(ctx context.Context, rawEvt any) {
 		}
 	case *slack.FileSharedEvent, *slack.FilePublicEvent, *slack.FilePrivateEvent,
 		*slack.FileChangeEvent, *slack.FileDeletedEvent,
-		*slack.DesktopNotificationEvent, *slack.ReconnectUrlEvent, *slack.LatencyReport:
+		*slack.DesktopNotificationEvent, *slack.ReconnectUrlEvent, *slack.LatencyReport,
+		*slack.SHRoomJoinEvent, *slack.SHRoomLeaveEvent, *slack.SHRoomUpdateEvent, *slack.UserHuddleChangedEvent:
 		// ignored intentionally, these are duplicates or do not contain useful information
 	case *slack.UserChangeEvent:
 		go s.handleUserChange(ctx, &evt.User)
@@ -248,10 +249,18 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 	switch evt := rawEvt.(type) {
 	case *slack.MessageEvent:
 		if evt.SubType == slack.MsgSubTypeMessageChanged && evt.SubMessage.SubType == "huddle_thread" {
-			return nil, nil
+			room := evt.SubMessage.Room
+			if room == nil || !room.HasEnded || room.DateEnd == 0 || time.Since(time.Unix(room.DateEnd, 0)) > huddleEndMaxAge {
+				return nil, nil
+			}
+			meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, room.CreatedBy, fmt.Sprintf("%d.000000", room.DateEnd))
+			meta.Type = bridgev2.RemoteEventMessage
+			return &SlackHuddleEnd{SlackEventMeta: &meta}, metaErr
 		}
 		switch evt.SubType {
-		case slack.MsgSubTypeChannelName, slack.MsgSubTypeGroupName:
+		case slack.MsgSubTypeChannelName, slack.MsgSubTypeGroupName,
+			slack.MsgSubTypeChannelTopic, slack.MsgSubTypeGroupTopic,
+			slack.MsgSubTypeChannelPurpose, slack.MsgSubTypeGroupPurpose:
 			// The room name is formatted from the channel type/privacy, which
 			// the rename message doesn't include, so resync the full info.
 			// Drop the cache first so GetChatInfo fetches the new name.
@@ -263,9 +272,6 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 				Client:         s,
 				ShouldSyncInfo: true,
 			}, metaErr
-		case slack.MsgSubTypeChannelTopic, slack.MsgSubTypeGroupTopic:
-			meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, "", evt.Timestamp)
-			return wrapTopicChange(&meta, evt.Topic), metaErr
 		}
 		sender := evt.User
 		if sender == "" {
@@ -276,6 +282,9 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 			if sender == "" {
 				sender = evt.SubMessage.BotID
 			}
+		}
+		if evt.Room != nil && evt.Room.CreatedBy != "" {
+			sender = evt.Room.CreatedBy
 		}
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, sender, "")
 		meta.CreatePortal = true
@@ -450,18 +459,6 @@ func wrapTyping(meta *SlackEventMeta) *SlackTyping {
 func wrapReadReceipt(meta *SlackEventMeta) *SlackReadReceipt {
 	meta.Type = bridgev2.RemoteEventReadReceipt
 	return &SlackReadReceipt{SlackEventMeta: meta}
-}
-
-func wrapTopicChange(meta *SlackEventMeta, topic string) *SlackChatInfoChange {
-	meta.Type = bridgev2.RemoteEventChatInfoChange
-	return &SlackChatInfoChange{
-		SlackEventMeta: meta,
-		Change: &bridgev2.ChatInfoChange{
-			ChatInfo: &bridgev2.ChatInfo{
-				Topic: &topic,
-			},
-		},
-	}
 }
 
 func wrapMemberChange(meta *SlackEventMeta, sender bridgev2.EventSender, newMembership, prevMembership event.Membership) *SlackChatInfoChange {
@@ -679,6 +676,26 @@ var (
 	_ bridgev2.RemoteMessageWithTransactionID = (*SlackMessage)(nil)
 )
 
+const huddleEndMaxAge = 15 * time.Minute
+
+type SlackHuddleEnd struct {
+	*SlackEventMeta
+}
+
+var _ bridgev2.RemoteMessage = (*SlackHuddleEnd)(nil)
+
+func (s *SlackHuddleEnd) ConvertMessage(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI) (*bridgev2.ConvertedMessage, error) {
+	return &bridgev2.ConvertedMessage{
+		Parts: []*bridgev2.ConvertedMessagePart{{
+			Type: event.EventMessage,
+			Content: &event.MessageEventContent{
+				MsgType: event.MsgNotice,
+				Body:    "Huddle ended",
+			},
+		}},
+	}, nil
+}
+
 type SlackChatResync struct {
 	*SlackEventMeta
 	Client         *SlackClient
@@ -715,11 +732,15 @@ var (
 )
 
 func (s *SlackMessage) GetType() bridgev2.RemoteEventType {
-	if isChannelInfoChangeSubtype(s.Data.SubType) {
+	return getMessageEventType(&s.Data.Msg)
+}
+
+func getMessageEventType(msg *slack.Msg) bridgev2.RemoteEventType {
+	if isChannelInfoChangeSubtype(msg.SubType) {
 		// These shouldn't end up as SlackMessage events
 		return bridgev2.RemoteEventUnknown
 	}
-	switch s.Data.SubType {
+	switch msg.SubType {
 	case slack.MsgSubTypeMessageChanged:
 		return bridgev2.RemoteEventEdit
 	case slack.MsgSubTypeMessageDeleted:
@@ -732,7 +753,7 @@ func (s *SlackMessage) GetType() bridgev2.RemoteEventType {
 		return bridgev2.RemoteEventMessage
 	default:
 		// For unknown types with the hidden flag, don't bridge
-		if s.Data.Hidden {
+		if msg.Hidden {
 			return bridgev2.RemoteEventUnknown
 		}
 		return bridgev2.RemoteEventMessage
