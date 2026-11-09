@@ -36,10 +36,11 @@ const (
 	MaxTableChars = 10000
 )
 
-// TableBudget tracks the native tables of a single message, so that all of them together
-// stay within MaxTableChars.
+// TableBudget tracks the native table of a single message: Slack allows only one per
+// message, within MaxTableChars.
 type TableBudget struct {
-	Chars int
+	Chars  int
+	Native bool
 }
 
 // nativeTable carries a Slack table block through the rich text element tree until
@@ -96,9 +97,10 @@ func (parser *HTMLParser) tableToElements(node *html.Node, ctx Context) []slack.
 			chars += utf8.RuneCountInString(cell.text)
 		}
 	}
-	if canBeNative && simple && len(rows) <= MaxTableRows && columns <= MaxTableColumns &&
+	if canBeNative && simple && !ctx.Tables.Native && len(rows) <= MaxTableRows && columns <= MaxTableColumns &&
 		ctx.Tables.Chars+chars <= MaxTableChars {
 		ctx.Tables.Chars += chars
+		ctx.Tables.Native = true
 		return append(captionElems, &nativeTable{block: buildTableBlock(rows, headerRows, columns)})
 	}
 	texts := make([][]string, len(rows))

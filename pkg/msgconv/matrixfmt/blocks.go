@@ -498,10 +498,10 @@ func (parser *HTMLParser) Parse(ctx context.Context, htmlData string, mentions *
 	return parser.nodeToBlock(node, formatCtx)
 }
 
-// ParseBlocks converts Matrix HTML into Slack blocks. It works like Parse, but every
+// ParseBlocks converts Matrix HTML into Slack blocks. It works like Parse, but the first
 // top-level table that fits Slack's limits becomes a native table block, placed between
-// the rich text blocks of the content around it. Tables that don't fit are rendered as
-// aligned code blocks inside the rich text, like Parse does.
+// the rich text blocks of the content around it. Other tables are rendered as aligned
+// code blocks inside the rich text, like Parse does.
 func (parser *HTMLParser) ParseBlocks(ctx context.Context, htmlData string, mentions *event.Mentions, portal *bridgev2.Portal) []slack.Block {
 	formatCtx := Context{
 		Ctx:      ctx,
