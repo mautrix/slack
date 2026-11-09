@@ -31,6 +31,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
+	"go.mau.fi/util/ptr"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/event"
@@ -332,7 +333,7 @@ func (mc *MessageConverter) renderRichTextSectionElements(
 		case *slack.RichTextSectionColorElement:
 			htmlText.WriteString(e.Value)
 		case *slack.RichTextSectionDateElement:
-			htmlText.WriteString(e.Timestamp.String())
+			mrkdwn.DateToHTML(&htmlText, e.Timestamp.Time(), e.Format, ptr.Val(e.URL))
 		case *slack.RichTextSectionMessageMentionElement:
 			htmlText.WriteString(mc.renderMessageMention(ctx, e))
 		case *slack.RichTextSectionAttachmentMentionElement:
@@ -402,13 +403,58 @@ func (mc *MessageConverter) renderSlackBlock(ctx context.Context, block slack.Bl
 			}
 		}
 		return htmlText.String(), unsupported
+	case *slack.ActionBlock:
+		return mc.renderSlackActionBlock(ctx, b, mentions)
 	default:
 		zerolog.Ctx(ctx).Debug().
 			Type("block_type", b).
-			Type("block_type_name", b.BlockType()).
+			Str("block_type_name", string(b.BlockType())).
 			Msg("Unsupported Slack block")
 		return "<i>Slack message contains unsupported elements.</i>", true
 	}
+}
+
+func (mc *MessageConverter) renderSlackActionBlock(ctx context.Context, block *slack.ActionBlock, mentions *event.Mentions) (string, bool) {
+	var buttons []string
+	addButtonText := false
+	unsupported := false
+	if block.Elements != nil {
+		for _, element := range block.Elements.ElementSet {
+			var label *slack.TextBlockObject
+			var url string
+			switch e := element.(type) {
+			case *slack.ButtonBlockElement:
+				label, url = e.Text, e.URL
+			case *slack.WorkflowButtonBlockElement:
+				label = e.Text
+			default:
+				zerolog.Ctx(ctx).Debug().
+					Type("element_type", e).
+					Str("element_type_name", string(e.ElementType())).
+					Msg("Unsupported Slack action element")
+				unsupported = true
+				continue
+			}
+			if label == nil {
+				continue
+			}
+			labelHTML := mc.renderSlackTextBlock(ctx, *label, mentions)
+			if url != "" {
+				buttons = append(buttons, fmt.Sprintf(`<a href="%s">%s</a>`, html.EscapeString(url), labelHTML))
+			} else {
+				buttons = append(buttons, fmt.Sprintf("&lt;%s&gt;", labelHTML))
+				addButtonText = true
+			}
+		}
+	}
+	if len(buttons) == 0 {
+		return "<i>Slack message contains unsupported elements.</i>", true
+	}
+	htmlText := strings.Join(buttons, " - ")
+	if addButtonText || unsupported {
+		htmlText += "<br>Use the Slack app to click buttons"
+	}
+	return htmlText, false
 }
 
 func getBlockquoteDepth(rawElem slack.RichTextElement) int {

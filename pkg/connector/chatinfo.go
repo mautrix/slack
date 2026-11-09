@@ -43,6 +43,8 @@ import (
 
 const ChatInfoCacheExpiry = 1 * time.Hour
 
+var errChatInfoAlreadyAttempted = errors.New("chat info fetch already attempted")
+
 func (s *SlackClient) invalidateChatInfoCache(channelID string) {
 	s.chatInfoCacheLock.Lock()
 	defer s.chatInfoCacheLock.Unlock()
@@ -58,7 +60,7 @@ func (s *SlackClient) fetchChatInfoWithCache(ctx context.Context, channelID stri
 		if ok {
 			return cached.data, nil
 		}
-		return nil, fmt.Errorf("chat info fetch already attempted for channel %s", channelID)
+		return nil, fmt.Errorf("%w for channel %s", errChatInfoAlreadyAttempted, channelID)
 	}
 	zerolog.Ctx(ctx).Debug().Str("channel_id", channelID).Msg("Fetching channel info")
 	info, err := s.Client.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
@@ -80,7 +82,9 @@ func (s *SlackClient) fetchChatInfoWithCache(ctx context.Context, channelID stri
 
 func (s *SlackClient) GetChannelInfoForMention(ctx context.Context, channelID string) (string, *bridgev2.Portal, error) {
 	info, err := s.fetchChatInfoWithCache(ctx, channelID, true)
-	if err != nil {
+	if errors.Is(err, errChatInfoAlreadyAttempted) {
+		return "", nil, nil
+	} else if err != nil {
 		return "", nil, err
 	}
 	portal, err := s.UserLogin.Bridge.GetPortalByKey(ctx, s.makePortalKey(info))
@@ -205,7 +209,7 @@ func compareStringFold(a, b string) int {
 		bLower := unicode.ToLower(bRune)
 		if aLower < bLower {
 			return -1
-		} else if bLower > aLower {
+		} else if aLower > bLower {
 			return 1
 		}
 		a = a[aSize:]
@@ -336,13 +340,17 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 	if selfPL := s.selfPowerLevel(info); selfPL > 0 {
 		bumpMemberPL(s.UserID, selfPL)
 	}
+	topic := info.Topic.Value
+	if topic == "" && roomType == database.RoomTypeDefault {
+		topic = info.Purpose.Value
+	}
 	var name *string
 	if roomType != database.RoomTypeDM || len(members.MemberMap) == 1 {
 		name = ptr.Ptr(s.formatChannelName(info))
 	}
 	return &bridgev2.ChatInfo{
 		Name:         name,
-		Topic:        ptr.Ptr(info.Topic.Value),
+		Topic:        &topic,
 		Avatar:       avatar,
 		Members:      &members,
 		Type:         &roomType,
@@ -389,6 +397,9 @@ func (s *SlackClient) formatChannelName(info *slack.Channel) string {
 }
 
 func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, isNew bool) (*bridgev2.ChatInfo, error) {
+	if s.Client == nil {
+		return nil, bridgev2.ErrNotLoggedIn
+	}
 	info, err := s.fetchChatInfoWithCache(ctx, channelID, false)
 	if err != nil {
 		return nil, err
@@ -473,9 +484,9 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 			Team:             &s.BootResp.Team.TeamInfo,
 			DisplayRealNames: s.displayRealNames(),
 		}))
-		avatarURL := info.Profile.ImageOriginal
-		if avatarURL == "" && info.Profile.Image512 != "" {
-			avatarURL = info.Profile.Image512
+		avatarURL := info.Profile.Image512
+		if avatarURL == "" && (info.Enterprise.EnterpriseID != "" || strings.HasPrefix(info.ID, "W")) {
+			avatarURL = info.Profile.ImageOriginal
 		}
 		teamID := cmp.Or(info.TeamID, s.TeamID)
 		if avatarURL == "" && info.Profile.AvatarHash != "" {
@@ -484,6 +495,9 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 				Host:   "ca.slack-edge.com",
 				Path:   fmt.Sprintf("/%s-%s-%s-512", teamID, info.ID, info.Profile.AvatarHash),
 			}).String()
+		}
+		if avatarURL == "" {
+			avatarURL = info.Profile.ImageOriginal
 		}
 		avatarID := info.Profile.AvatarHash
 		if teamID != s.TeamID && avatarID != "" {
@@ -623,6 +637,8 @@ func (s *SlackClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*
 	_, userID := slackid.ParseUserID(ghost.ID)
 	if userID == "" {
 		return nil, nil
+	} else if s.Client == nil {
+		return nil, bridgev2.ErrNotLoggedIn
 	}
 	// Don't batch-queue B-prefix bot IDs: GetUsersCacheContext is a users-only API
 	// that silently ignores them, so they must go through fetchUserInfo → GetBotInfoContext.

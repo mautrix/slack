@@ -228,6 +228,29 @@ func UserGroupMentionToHTML(out io.Writer, userGroupID, name string) {
 	}
 }
 
+func DateToHTML(out io.Writer, t time.Time, format, link string) {
+	t = t.Local()
+	mapping := map[string]string{
+		"{date_num}":          t.Format("2006-01-02"),
+		"{date}":              t.Format("January 2, 2006"),
+		"{date_pretty}":       t.Format("January 2, 2006"),
+		"{date_short}":        t.Format("Jan 2, 2006"),
+		"{date_short_pretty}": t.Format("Jan 2, 2006"),
+		"{date_long}":         t.Format("Monday, January 2, 2006"),
+		"{date_long_pretty}":  t.Format("Monday, January 2, 2006"),
+		"{time}":              t.Format("15:04 MST"),
+		"{time_secs}":         t.Format("15:04:05 MST"),
+	}
+	for k, v := range mapping {
+		format = strings.ReplaceAll(format, k, v)
+	}
+	if link != "" {
+		_, _ = fmt.Fprintf(out, `<a href="%s">%s</a>`, html.EscapeString(link), html.EscapeString(format))
+	} else {
+		_, _ = io.WriteString(out, html.EscapeString(format))
+	}
+}
+
 func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source []byte, n ast.Node, entering bool) (status ast.WalkStatus, err error) {
 	status = ast.WalkContinue
 	if !entering {
@@ -244,33 +267,18 @@ func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source [
 		parts := strings.Split(node.content, "^")
 		switch parts[0] {
 		case "date":
+			if len(parts) < 3 {
+				return
+			}
 			timestamp, converr := strconv.ParseInt(parts[1], 10, 64)
 			if converr != nil {
 				return
 			}
-			t := time.Unix(timestamp, 0)
-
-			mapping := map[string]string{
-				"{date_num}":          t.Local().Format("2006-01-02"),
-				"{date}":              t.Local().Format("January 2, 2006"),
-				"{date_pretty}":       t.Local().Format("January 2, 2006"),
-				"{date_short}":        t.Local().Format("Jan 2, 2006"),
-				"{date_short_pretty}": t.Local().Format("Jan 2, 2006"),
-				"{date_long}":         t.Local().Format("Monday, January 2, 2006"),
-				"{date_long_pretty}":  t.Local().Format("Monday, January 2, 2006"),
-				"{time}":              t.Local().Format("15:04 MST"),
-				"{time_secs}":         t.Local().Format("15:04:05 MST"),
-			}
-
-			for k, v := range mapping {
-				parts[2] = strings.ReplaceAll(parts[2], k, v)
-			}
-
+			var link string
 			if len(parts) > 3 {
-				_, _ = fmt.Fprintf(w, `<a href="%s">%s</a>`, html.EscapeString(parts[3]), html.EscapeString(parts[2]))
-			} else {
-				_, _ = w.WriteString(html.EscapeString(parts[2]))
+				link = parts[3]
 			}
+			DateToHTML(w, time.Unix(timestamp, 0), parts[2], link)
 			return
 		case "channel", "everyone", "here":
 			// do @room mentions?
