@@ -322,7 +322,7 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 		}
 	}
 	var eventsDefault int
-	if info.IsArchived {
+	if info.IsArchived && s.Main.br.Matrix.GetCapabilities().BatchSending {
 		eventsDefault = 100
 		topicLevel = 100
 	}
