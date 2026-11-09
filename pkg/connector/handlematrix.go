@@ -492,7 +492,12 @@ func (s *SlackClient) HandleMatrixRoomName(ctx context.Context, msg *bridgev2.Ma
 	}
 	resp, err := s.Client.RenameConversationContext(ctx, channelID, strings.TrimPrefix(msg.Content.Name, "#"))
 	zerolog.Ctx(ctx).Trace().Any("resp_data", resp).Msg("Renamed conversation")
-	return err == nil, wrapSlackMatrixError(err)
+	if err != nil {
+		return false, wrapSlackMatrixError(err)
+	}
+	msg.Portal.Name = msg.Content.Name
+	msg.Portal.NameSet = true
+	return true, nil
 }
 
 func (s *SlackClient) HandleMatrixMembership(ctx context.Context, msg *bridgev2.MatrixMembershipChange) (*bridgev2.MatrixMembershipResult, error) {
@@ -557,5 +562,10 @@ func (s *SlackClient) HandleMatrixRoomTopic(ctx context.Context, msg *bridgev2.M
 	}
 	resp, err := s.Client.SetTopicOfConversationContext(ctx, channelID, msg.Content.Topic)
 	zerolog.Ctx(ctx).Trace().Any("resp_data", resp).Msg("Changed conversation topic")
-	return err == nil, wrapSlackMatrixError(err)
+	if err != nil {
+		return false, wrapSlackMatrixError(err)
+	}
+	msg.Portal.Topic = msg.Content.Topic
+	msg.Portal.TopicSet = true
+	return true, nil
 }

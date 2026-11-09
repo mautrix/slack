@@ -56,11 +56,12 @@ func (s *SlackConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities 
 		// GetUserInfo has an internal rate limit of 1 fetch per 24 hours,
 		// so we're fine to tell the bridge to fetch user info all the time.
 		AggressiveUpdateInfo: true,
+		TypingRepeatInterval: 5 * time.Second,
 		Provisioning: bridgev2.ProvisioningCapabilities{
 			ImagePackImport: true,
 			ResolveIdentifier: bridgev2.ResolveIdentifierCapabilities{
 				CreateDM:    true,
-				LookupEmail: true,
+				LookupEmail: false,
 				ContactList: false, // TODO allow fetching all users in a workspace? (requires pagination)
 				Search:      true,
 			},
@@ -70,7 +71,7 @@ func (s *SlackConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities 
 }
 
 func (s *SlackConnector) GetBridgeInfoVersion() (info, caps int) {
-	return 3, 5
+	return 3, 6
 }
 
 func supportedIfFFmpeg() event.CapabilitySupportLevel {
@@ -81,7 +82,7 @@ func supportedIfFFmpeg() event.CapabilitySupportLevel {
 }
 
 func capID() string {
-	base := "fi.mau.slack.capabilities.2026_11_08"
+	base := "fi.mau.slack.capabilities.2026_11_09"
 	if ffmpeg.Supported() {
 		return base + "+ffmpeg"
 	}
@@ -104,7 +105,7 @@ var roomCaps = &event.RoomFeatures{
 		event.FmtInlineLink:         event.CapLevelFullySupported,
 		event.FmtUserLink:           event.CapLevelFullySupported,
 		event.FmtRoomLink:           event.CapLevelFullySupported,
-		event.FmtEventLink:          event.CapLevelUnsupported,
+		event.FmtEventLink:          event.CapLevelFullySupported,
 		event.FmtAtRoomMention:      event.CapLevelFullySupported,
 		event.FmtUnorderedList:      event.CapLevelFullySupported,
 		event.FmtOrderedList:        event.CapLevelFullySupported,
