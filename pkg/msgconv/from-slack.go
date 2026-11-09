@@ -87,7 +87,13 @@ func (mc *MessageConverter) ToMatrix(
 			output.Parts = append(output.Parts, part)
 		}
 	}
-	if output.MergeCaption() {
+	if len(output.Parts) == 0 {
+		output.Parts = append(output.Parts, &bridgev2.ConvertedMessagePart{
+			Type:       event.EventMessage,
+			Content:    &event.MessageEventContent{MsgType: event.MsgText},
+			DontBridge: true,
+		})
+	} else if output.MergeCaption() {
 		output.Parts[0].DBMetadata = &slackid.MessageMetadata{
 			CaptionMerged: true,
 		}
@@ -184,6 +190,14 @@ func (mc *MessageConverter) EditToMatrix(
 		}
 		if msg.SubType == slack.MsgSubTypeThreadBroadcast {
 			modifiedPart.Content.BeeperBroadcastOutsideThread = true
+		}
+		if editTargetPart.HasFakeMXID() && editTargetPart.ThreadRoot != "" {
+			threadRoot, err := portal.Bridge.DB.Message.GetFirstPartByID(ctx, portal.Receiver, editTargetPart.ThreadRoot)
+			if err != nil {
+				zerolog.Ctx(ctx).Err(err).Msg("Failed to get thread root for first content of empty message")
+			} else if threadRoot != nil && !threadRoot.HasFakeMXID() {
+				modifiedPart.Content.GetRelatesTo().SetThread(threadRoot.MXID, threadRoot.MXID)
+			}
 		}
 		editPart := modifiedPart.ToEditPart(editTargetPart)
 		if msg.Edited != nil {
