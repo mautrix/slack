@@ -432,6 +432,11 @@ func (s *SlackClient) HandleRoomTag(ctx context.Context, msg *bridgev2.MatrixRoo
 		return errors.New("invalid channel ID")
 	}
 	_, favourite := msg.Content.Tags[event.RoomTagFavourite]
+	if msg.PrevContent != nil {
+		if _, wasFavourite := msg.PrevContent.Tags[event.RoomTagFavourite]; wasFavourite == favourite {
+			return nil
+		}
+	}
 	if favourite {
 		if !s.starredChannels.Add(channelID) {
 			return nil
