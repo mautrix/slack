@@ -73,7 +73,7 @@ func (s *SlackClient) ResolveIdentifier(ctx context.Context, identifier string, 
 			return strings.EqualFold(user.Profile.Email, identifier)
 		})
 		if idx == -1 {
-			return nil, nil
+			return nil, fmt.Errorf("%w: %w", bridgev2.ErrResolveIdentifierTryNext, bridgev2.RespError(mautrix.MNotFound.WithMessage("User not found on Slack")))
 		}
 		identifier = resp.Results[idx].ID
 	} else if strings.ContainsRune(identifier, '-') {
