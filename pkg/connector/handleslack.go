@@ -539,7 +539,7 @@ func (s *SlackClient) wrapMessage(meta simplevent.EventMeta, evt *slack.MessageE
 	}
 	if meta.Type == bridgev2.RemoteEventEdit {
 		msg.TargetMessage = msg.ID
-		if evt.EventTimestamp == evt.Timestamp {
+		if evt.SubMessage != nil && evt.SubMessage.Timestamp != "" {
 			msg.TargetMessage = slackid.MakeMessageID(s.TeamID, evt.Channel, evt.SubMessage.Timestamp)
 		}
 	}
