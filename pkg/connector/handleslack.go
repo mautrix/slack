@@ -31,6 +31,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
+	"maunium.net/go/mautrix/bridgev2/simplevent"
 	"maunium.net/go/mautrix/bridgev2/status"
 	"maunium.net/go/mautrix/event"
 
@@ -456,9 +457,21 @@ func wrapTyping(meta *SlackEventMeta) *SlackTyping {
 	return &SlackTyping{SlackEventMeta: meta}
 }
 
-func wrapReadReceipt(meta *SlackEventMeta) *SlackReadReceipt {
-	meta.Type = bridgev2.RemoteEventReadReceipt
-	return &SlackReadReceipt{SlackEventMeta: meta}
+func wrapReadReceipt(meta *SlackEventMeta) *simplevent.Receipt {
+	return &simplevent.Receipt{
+		EventMeta: simplevent.EventMeta{
+			Type:         bridgev2.RemoteEventReadReceipt,
+			PortalKey:    meta.PortalKey,
+			Sender:       meta.Sender,
+			Timestamp:    meta.Timestamp,
+			StreamOrder:  meta.GetStreamOrder(),
+			LogContext:   meta.AddLogContext,
+			CreatePortal: meta.CreatePortal,
+		},
+		LastTarget:          meta.ID,
+		ReadUpTo:            meta.Timestamp,
+		ReadUpToStreamOrder: meta.GetStreamOrder(),
+	}
 }
 
 func wrapMemberChange(meta *SlackEventMeta, sender bridgev2.EventSender, newMembership, prevMembership event.Membership) *SlackChatInfoChange {
@@ -584,35 +597,6 @@ var _ bridgev2.RemoteChatInfoChange = (*SlackChatInfoChange)(nil)
 
 func (s *SlackChatInfoChange) GetChatInfoChange(ctx context.Context, portal *bridgev2.Portal) (*bridgev2.ChatInfoChange, error) {
 	return s.Change, nil
-}
-
-type SlackReadReceipt struct {
-	*SlackEventMeta
-	ThreadRoot networkid.MessageID
-}
-
-var _ bridgev2.RemoteReadReceipt = (*SlackReadReceipt)(nil)
-
-var _ bridgev2.RemoteReadReceiptWithStreamOrder = (*SlackReadReceipt)(nil)
-
-func (s *SlackReadReceipt) GetLastReceiptTarget() networkid.MessageID {
-	return s.ID
-}
-
-func (s *SlackReadReceipt) GetReceiptTargets() []networkid.MessageID {
-	return nil
-}
-
-func (s *SlackReadReceipt) GetReceiptThread() networkid.MessageID {
-	return s.ThreadRoot
-}
-
-func (s *SlackReadReceipt) GetReadUpTo() time.Time {
-	return s.Timestamp
-}
-
-func (s *SlackReadReceipt) GetReadUpToStreamOrder() int64 {
-	return s.GetStreamOrder()
 }
 
 type SlackTyping struct {
