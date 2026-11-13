@@ -167,6 +167,8 @@ type SlackClient struct {
 	userGroupInfoCacheLock sync.Mutex
 	lastReadCache          map[string]string
 	lastReadCacheLock      sync.Mutex
+	missingEmojis          map[string]struct{}
+	missingEmojisReset     time.Time
 }
 
 var (
