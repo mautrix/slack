@@ -105,6 +105,10 @@ func (s *SlackClient) sendToSlack(
 	if conv.SendReq != nil {
 		log.Debug().Msg("Sending message to Slack")
 		_, timestamp, err := s.Client.PostMessageContext(ctx, channelID, conv.SendReq)
+		if err != nil && conv.FallbackSendReq != nil && isBlocksError(err) {
+			log.Warn().Err(err).Msg("Slack rejected the message with native tables, retrying with the tables as code blocks")
+			_, timestamp, err = s.Client.PostMessageContext(ctx, channelID, conv.FallbackSendReq)
+		}
 		return timestamp, err
 	} else if conv.FileUpload != nil {
 		log.Debug().Msg("Uploading attachment to Slack")
@@ -147,6 +151,15 @@ func (s *SlackClient) sendToSlack(
 			WithErrorReason(event.MessageStatusUnsupported).
 			WithStatus(event.MessageStatusFail)
 	}
+}
+
+// isBlocksError reports whether Slack rejected a message because of its blocks.
+func isBlocksError(err error) bool {
+	var slackErr slack.SlackErrorResponse
+	if !errors.As(err, &slackErr) {
+		return false
+	}
+	return strings.HasPrefix(slackErr.Err, "invalid_blocks") || strings.Contains(slackErr.Err, "blocks_too_long") || slackErr.Err == "too_many_blocks"
 }
 
 func (s *SlackClient) HandleMatrixEdit(ctx context.Context, msg *bridgev2.MatrixEdit) error {
