@@ -31,6 +31,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
+	"maunium.net/go/mautrix/bridgev2/simplevent"
 	"maunium.net/go/mautrix/bridgev2/status"
 	"maunium.net/go/mautrix/event"
 
@@ -243,7 +244,7 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 			return nil, nil
 		}
 	}
-	var meta SlackEventMeta
+	var meta simplevent.EventMeta
 	var metaErr error
 	var wrapped bridgev2.RemoteEvent
 	switch evt := rawEvt.(type) {
@@ -254,8 +255,19 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 				return nil, nil
 			}
 			meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, room.CreatedBy, fmt.Sprintf("%d.000000", room.DateEnd))
-			meta.Type = bridgev2.RemoteEventMessage
-			return &SlackHuddleEnd{SlackEventMeta: &meta}, metaErr
+			return &simplevent.PreConvertedMessage{
+				EventMeta: meta.WithType(bridgev2.RemoteEventMessage),
+				ID:        slackid.MakeMessageID(s.TeamID, evt.Channel, fmt.Sprintf("%d.000000", room.DateEnd)),
+				Data: &bridgev2.ConvertedMessage{
+					Parts: []*bridgev2.ConvertedMessagePart{{
+						Type: event.EventMessage,
+						Content: &event.MessageEventContent{
+							MsgType: event.MsgNotice,
+							Body:    "Huddle ended",
+						},
+					}},
+				},
+			}, metaErr
 		}
 		switch evt.SubType {
 		case slack.MsgSubTypeChannelName, slack.MsgSubTypeGroupName,
@@ -266,12 +278,7 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 			// Drop the cache first so GetChatInfo fetches the new name.
 			s.invalidateChatInfoCache(evt.Channel)
 			meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, "", evt.Timestamp)
-			meta.Type = bridgev2.RemoteEventChatResync
-			return &SlackChatResync{
-				SlackEventMeta: &meta,
-				Client:         s,
-				ShouldSyncInfo: true,
-			}, metaErr
+			return s.wrapChatResync(meta, "", nil, true), metaErr
 		}
 		sender := evt.User
 		if sender == "" {
@@ -288,10 +295,10 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		}
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, sender, "")
 		meta.CreatePortal = true
-		meta.LogContext = func(c zerolog.Context) zerolog.Context {
+		meta = meta.WithMoreLogContext(func(c zerolog.Context) zerolog.Context {
 			c = c.
 				Str("message_ts", evt.Timestamp).
-				Str("message_id", string(meta.ID)).
+				Str("message_id", string(slackid.MakeMessageID(s.TeamID, evt.Channel, evt.Timestamp))).
 				Str("message_sender", sender).
 				Str("subtype", evt.SubType).
 				Bool("hidden", evt.Hidden)
@@ -302,77 +309,66 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 					Str("sub_message_subtype", evt.SubMessage.SubType)
 			}
 			return c
-		}
-		wrapped = &SlackMessage{
-			SlackEventMeta: &meta,
-			Data:           evt,
-			Client:         s,
-		}
+		})
+		wrapped = s.wrapMessage(meta, evt)
 
 	case *slack.ReactionAddedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Item.Channel, nil, evt.User, evt.EventTimestamp)
-		var err error
-		wrapped, err = s.wrapReaction(ctx, &meta, evt.Reaction, true, evt.Item)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get reaction info: %w", err)
-		}
+		wrapped = s.wrapReaction(ctx, meta, evt.Reaction, true, evt.Item)
 	case *slack.ReactionRemovedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Item.Channel, nil, evt.User, evt.EventTimestamp)
-		wrapped, _ = s.wrapReaction(ctx, &meta, evt.Reaction, false, evt.Item)
+		wrapped = s.wrapReaction(ctx, meta, evt.Reaction, false, evt.Item)
 
 	case *slack.UserTypingEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, evt.User, "")
-		wrapped = wrapTyping(&meta)
+		wrapped = &simplevent.Typing{
+			EventMeta: meta.WithType(bridgev2.RemoteEventTyping),
+			Timeout:   5 * time.Second,
+		}
 
 	case *slack.ChannelMarkedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
-		wrapped = s.wrapMarked(&meta, evt.Channel, evt.Timestamp)
+		wrapped = s.wrapMarked(meta, evt.Channel, evt.Timestamp)
 	case *slack.ThreadMarkedEvent:
 		if evt.Subscription.LastRead == "" {
 			return nil, nil
 		}
 		meta, metaErr = s.makeEventMeta(ctx, evt.Subscription.Channel, nil, s.UserID, evt.EventTimestamp)
-		meta.ID = slackid.MakeMessageID(s.TeamID, evt.Subscription.Channel, evt.Subscription.LastRead)
-		wrappedReceipt := wrapReadReceipt(&meta)
+		wrappedReceipt := s.wrapReadReceipt(meta, evt.Subscription.Channel, evt.Subscription.LastRead)
 		wrappedReceipt.ThreadRoot = slackid.MakeMessageID(s.TeamID, evt.Subscription.Channel, evt.Subscription.ThreadTimestamp)
 		wrapped = wrappedReceipt
 	case *slack.IMMarkedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
-		wrapped = s.wrapMarked(&meta, evt.Channel, evt.Timestamp)
+		wrapped = s.wrapMarked(meta, evt.Channel, evt.Timestamp)
 	case *slack.GroupMarkedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
-		wrapped = s.wrapMarked(&meta, evt.Channel, evt.Timestamp)
+		wrapped = s.wrapMarked(meta, evt.Channel, evt.Timestamp)
 
 	case *slack.ChannelJoinedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel.ID, &evt.Channel, s.UserID, "")
 		meta.CreatePortal = true
-		wrapped = wrapMemberChange(&meta, meta.Sender, event.MembershipJoin, "")
+		wrapped = wrapMemberChange(meta, meta.Sender, event.MembershipJoin, "")
 	case *slack.ChannelLeftEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
-		wrapped = wrapMemberChange(&meta, meta.Sender, event.MembershipLeave, event.MembershipJoin)
+		wrapped = wrapMemberChange(meta, meta.Sender, event.MembershipLeave, event.MembershipJoin)
 	case *slack.GroupJoinedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel.ID, &evt.Channel, s.UserID, "")
 		meta.CreatePortal = true
-		wrapped = wrapMemberChange(&meta, meta.Sender, event.MembershipJoin, "")
+		wrapped = wrapMemberChange(meta, meta.Sender, event.MembershipJoin, "")
 	case *slack.GroupLeftEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
-		wrapped = wrapMemberChange(&meta, meta.Sender, event.MembershipLeave, event.MembershipJoin)
+		wrapped = wrapMemberChange(meta, meta.Sender, event.MembershipLeave, event.MembershipJoin)
 	case *slack.MemberJoinedChannelEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, evt.User, evt.EventTimestamp)
-		wrapped = wrapMemberChange(&meta, meta.Sender, event.MembershipJoin, "")
+		wrapped = wrapMemberChange(meta, meta.Sender, event.MembershipJoin, "")
 	case *slack.MemberLeftChannelEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, evt.User, evt.EventTimestamp)
-		wrapped = wrapMemberChange(&meta, meta.Sender, event.MembershipLeave, event.MembershipJoin)
+		wrapped = wrapMemberChange(meta, meta.Sender, event.MembershipLeave, event.MembershipJoin)
 
 	case *slack.ChannelUpdateEvent:
 		s.invalidateChatInfoCache(evt.Channel)
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, "", evt.Timestamp)
-		meta.Type = bridgev2.RemoteEventChatResync
-		wrapped = &SlackChatResync{
-			SlackEventMeta: &meta,
-			Client:         s,
-			ShouldSyncInfo: true,
-		}
+		wrapped = s.wrapChatResync(meta, "", nil, true)
 	}
 	return wrapped, metaErr
 }
@@ -432,51 +428,56 @@ func (s *SlackClient) getReactionInfo(ctx context.Context, reaction string) (emo
 	return
 }
 
-func (s *SlackClient) wrapReaction(ctx context.Context, meta *SlackEventMeta, reaction string, add bool, target slack.ReactionItem) (*SlackReaction, error) {
+func (s *SlackClient) wrapReaction(ctx context.Context, meta simplevent.EventMeta, reaction string, add bool, target slack.ReactionItem) *simplevent.Reaction {
 	if add {
 		meta.Type = bridgev2.RemoteEventReaction
 	} else {
 		meta.Type = bridgev2.RemoteEventReactionRemove
 	}
 	emoji, extraContent := s.getReactionInfo(ctx, reaction)
-	return &SlackReaction{
-		SlackEventMeta: meta,
-		Emoji:          emoji,
-		EmojiID:        networkid.EmojiID(reaction),
-		Meta:           extraContent,
-		TargetID:       slackid.MakeMessageID(s.TeamID, target.Channel, target.Timestamp),
-	}, nil
-}
-
-func wrapTyping(meta *SlackEventMeta) *SlackTyping {
-	meta.Type = bridgev2.RemoteEventTyping
-	return &SlackTyping{SlackEventMeta: meta}
-}
-
-func wrapReadReceipt(meta *SlackEventMeta) *SlackReadReceipt {
-	meta.Type = bridgev2.RemoteEventReadReceipt
-	return &SlackReadReceipt{SlackEventMeta: meta}
-}
-
-func (s *SlackClient) wrapMarked(meta *SlackEventMeta, channelID, ts string) bridgev2.RemoteEvent {
-	if prevLastRead := s.setLastReadCache(channelID, ts); ts < prevLastRead {
-		meta.Type = bridgev2.RemoteEventMarkUnread
-		return &SlackMarkUnread{SlackEventMeta: meta}
+	return &simplevent.Reaction{
+		EventMeta:     meta,
+		Emoji:         emoji,
+		EmojiID:       networkid.EmojiID(reaction),
+		ExtraContent:  extraContent,
+		TargetMessage: slackid.MakeMessageID(s.TeamID, target.Channel, target.Timestamp),
 	}
-	return wrapReadReceipt(meta)
 }
 
-func wrapMemberChange(meta *SlackEventMeta, sender bridgev2.EventSender, newMembership, prevMembership event.Membership) *SlackChatInfoChange {
+func (s *SlackClient) wrapReadReceipt(meta simplevent.EventMeta, channelID, timestamp string) *simplevent.Receipt {
+	var target networkid.MessageID
+	if timestamp != "" {
+		target = slackid.MakeMessageID(s.TeamID, channelID, timestamp)
+	}
+	return &simplevent.Receipt{
+		EventMeta:           meta.WithType(bridgev2.RemoteEventReadReceipt),
+		LastTarget:          target,
+		ReadUpTo:            meta.Timestamp,
+		ReadUpToStreamOrder: meta.StreamOrder,
+	}
+}
+
+func (s *SlackClient) wrapMarked(meta simplevent.EventMeta, channelID, ts string) bridgev2.RemoteEvent {
+	if prevLastRead := s.setLastReadCache(channelID, ts); ts < prevLastRead {
+		return &simplevent.MarkUnread{
+			EventMeta: meta.WithType(bridgev2.RemoteEventMarkUnread),
+			Unread:    true,
+		}
+	}
+	return s.wrapReadReceipt(meta, channelID, ts)
+}
+
+func wrapMemberChange(meta simplevent.EventMeta, sender bridgev2.EventSender, newMembership, prevMembership event.Membership) *simplevent.ChatInfoChange {
 	meta.Type = bridgev2.RemoteEventChatInfoChange
-	meta.LogContext = func(c zerolog.Context) zerolog.Context {
+	meta = meta.WithMoreLogContext(func(c zerolog.Context) zerolog.Context {
 		return c.
 			Any("member_change_target", sender).
 			Str("prev_membership", string(prevMembership)).
 			Str("new_membership", string(newMembership))
-	}
-	return &SlackChatInfoChange{
-		SlackEventMeta: meta,
-		Change: &bridgev2.ChatInfoChange{
+	})
+	return &simplevent.ChatInfoChange{
+		EventMeta: meta,
+		ChatInfoChange: &bridgev2.ChatInfoChange{
 			MemberChanges: &bridgev2.ChatMemberList{
 				MemberMap: bridgev2.ChatMemberMap{}.Set(bridgev2.ChatMember{
 					EventSender:    sender,
@@ -488,7 +489,7 @@ func wrapMemberChange(meta *SlackEventMeta, sender bridgev2.EventSender, newMemb
 	}
 }
 
-func (s *SlackClient) makeEventMeta(ctx context.Context, channelID string, channel *slack.Channel, senderID, timestamp string) (meta SlackEventMeta, err error) {
+func (s *SlackClient) makeEventMeta(ctx context.Context, channelID string, channel *slack.Channel, senderID, timestamp string) (meta simplevent.EventMeta, err error) {
 	if channel != nil {
 		meta.PortalKey = s.makePortalKey(channel)
 	} else if s.Main.br.Config.SplitPortals {
@@ -512,247 +513,85 @@ func (s *SlackClient) makeEventMeta(ctx context.Context, channelID string, chann
 		meta.Sender = s.makeEventSender(senderID)
 	}
 	if timestamp != "" {
-		meta.RawTimestamp = timestamp
-		meta.ID = slackid.MakeMessageID(s.TeamID, channelID, timestamp)
 		meta.Timestamp = slackid.ParseSlackTimestamp(timestamp)
+		meta.StreamOrder = meta.Timestamp.UnixMicro()
 	}
-	meta.LogContext = func(c zerolog.Context) zerolog.Context { return c }
+	meta.LogContext = func(c zerolog.Context) zerolog.Context { return c.Str("event_ts", timestamp) }
 	return
 }
 
-type SlackEventMeta struct {
-	Type         bridgev2.RemoteEventType
-	PortalKey    networkid.PortalKey
-	Sender       bridgev2.EventSender
-	Timestamp    time.Time
-	ID           networkid.MessageID
-	LogContext   func(zerolog.Context) zerolog.Context
-	CreatePortal bool
-	RawTimestamp string
-}
-
-func (s *SlackEventMeta) GetType() bridgev2.RemoteEventType {
-	return s.Type
-}
-
-func (s *SlackEventMeta) GetPortalKey() networkid.PortalKey {
-	return s.PortalKey
-}
-
-func (s *SlackEventMeta) AddLogContext(c zerolog.Context) zerolog.Context {
-	c = c.Str("event_ts", s.RawTimestamp)
-	if s.LogContext == nil {
-		return c
+func (s *SlackClient) wrapMessage(meta simplevent.EventMeta, evt *slack.MessageEvent) bridgev2.RemoteEvent {
+	meta.Type = getMessageEventType(&evt.Msg)
+	if evt.SubType == slack.MsgSubTypeMessageChanged {
+		meta.Timestamp = slackid.ParseSlackTimestamp(evt.EventTimestamp)
+	} else {
+		meta.Timestamp = slackid.ParseSlackTimestamp(evt.Timestamp)
 	}
-	return s.LogContext(c)
-}
-
-func (s *SlackEventMeta) GetSender() bridgev2.EventSender {
-	return s.Sender
-}
-
-func (s *SlackEventMeta) ShouldCreatePortal() bool {
-	return s.CreatePortal
-}
-
-func (s *SlackEventMeta) GetTimestamp() time.Time {
-	if s.Timestamp.IsZero() {
-		return time.Now()
+	meta.StreamOrder = meta.Timestamp.UnixMicro()
+	if meta.Type == bridgev2.RemoteEventMessageRemove {
+		return &simplevent.MessageRemove{
+			EventMeta:     meta,
+			TargetMessage: slackid.MakeMessageID(s.TeamID, evt.Channel, evt.DeletedTimestamp),
+		}
 	}
-	return s.Timestamp
-}
-
-func (s *SlackEventMeta) GetStreamOrder() int64 {
-	if s.Timestamp.IsZero() {
-		return 0
+	msg := &simplevent.Message[*slack.MessageEvent]{
+		EventMeta:          meta,
+		Data:               evt,
+		ID:                 slackid.MakeMessageID(s.TeamID, evt.Channel, evt.Timestamp),
+		ConvertMessageFunc: s.convertMessage,
+		ConvertEditFunc:    s.convertEdit,
 	}
-	return s.Timestamp.UnixMicro()
-}
-
-func (s *SlackEventMeta) GetID() networkid.MessageID {
-	return s.ID
-}
-
-var (
-	_ bridgev2.RemoteEvent                    = (*SlackEventMeta)(nil)
-	_ bridgev2.RemoteEventWithTimestamp       = (*SlackEventMeta)(nil)
-	_ bridgev2.RemoteEventWithStreamOrder     = (*SlackEventMeta)(nil)
-	_ bridgev2.RemoteEventThatMayCreatePortal = (*SlackEventMeta)(nil)
-)
-
-type SlackChatInfoChange struct {
-	*SlackEventMeta
-	Change *bridgev2.ChatInfoChange
-}
-
-var _ bridgev2.RemoteChatInfoChange = (*SlackChatInfoChange)(nil)
-
-func (s *SlackChatInfoChange) GetChatInfoChange(ctx context.Context, portal *bridgev2.Portal) (*bridgev2.ChatInfoChange, error) {
-	return s.Change, nil
-}
-
-type SlackReadReceipt struct {
-	*SlackEventMeta
-	ThreadRoot networkid.MessageID
-}
-
-var _ bridgev2.RemoteReadReceipt = (*SlackReadReceipt)(nil)
-
-var _ bridgev2.RemoteReadReceiptWithStreamOrder = (*SlackReadReceipt)(nil)
-
-func (s *SlackReadReceipt) GetLastReceiptTarget() networkid.MessageID {
-	return s.ID
-}
-
-func (s *SlackReadReceipt) GetReceiptTargets() []networkid.MessageID {
-	return nil
-}
-
-func (s *SlackReadReceipt) GetReceiptThread() networkid.MessageID {
-	return s.ThreadRoot
-}
-
-func (s *SlackReadReceipt) GetReadUpTo() time.Time {
-	return s.Timestamp
-}
-
-func (s *SlackReadReceipt) GetReadUpToStreamOrder() int64 {
-	return s.GetStreamOrder()
-}
-
-type SlackMarkUnread struct {
-	*SlackEventMeta
-}
-
-var _ bridgev2.RemoteMarkUnread = (*SlackMarkUnread)(nil)
-
-func (s *SlackMarkUnread) GetUnread() bool {
-	return true
-}
-
-type SlackTyping struct {
-	*SlackEventMeta
-}
-
-var _ bridgev2.RemoteTyping = (*SlackTyping)(nil)
-
-func (s *SlackTyping) GetTimeout() time.Duration {
-	return 5 * time.Second
-}
-
-type SlackReaction struct {
-	*SlackEventMeta
-	TargetID networkid.MessageID
-	EmojiID  networkid.EmojiID
-	Emoji    string
-	Meta     map[string]any
-}
-
-func (s *SlackReaction) GetTargetMessage() networkid.MessageID {
-	return s.TargetID
-}
-
-func (s *SlackReaction) GetReactionEmoji() (string, networkid.EmojiID) {
-	return s.Emoji, s.EmojiID
-}
-
-func (s *SlackReaction) GetRemovedEmojiID() networkid.EmojiID {
-	return s.EmojiID
-}
-
-func (s *SlackReaction) GetReactionExtraContent() map[string]any {
-	return s.Meta
-}
-
-var (
-	_ bridgev2.RemoteReaction                 = (*SlackReaction)(nil)
-	_ bridgev2.RemoteReactionRemove           = (*SlackReaction)(nil)
-	_ bridgev2.RemoteReactionWithExtraContent = (*SlackReaction)(nil)
-)
-
-type SlackMessage struct {
-	*SlackEventMeta
-	Data   *slack.MessageEvent
-	Client *SlackClient
-}
-
-func (s *SlackMessage) GetTransactionID() networkid.TransactionID {
-	if len(s.Data.Files) != 1 {
-		return ""
+	if len(evt.Files) == 1 {
+		msg.TransactionID = networkid.TransactionID(fmt.Sprintf("%s:%s", evt.User, evt.Files[0].ID))
 	}
-	return networkid.TransactionID(fmt.Sprintf("%s:%s", s.Data.User, s.Data.Files[0].ID))
+	if meta.Type == bridgev2.RemoteEventEdit {
+		msg.TargetMessage = msg.ID
+		if evt.SubMessage != nil && evt.SubMessage.Timestamp != "" {
+			msg.TargetMessage = slackid.MakeMessageID(s.TeamID, evt.Channel, evt.SubMessage.Timestamp)
+		}
+	}
+	return msg
 }
 
-var (
-	_ bridgev2.RemoteMessage                  = (*SlackMessage)(nil)
-	_ bridgev2.RemoteEdit                     = (*SlackMessage)(nil)
-	_ bridgev2.RemoteMessageRemove            = (*SlackMessage)(nil)
-	_ bridgev2.RemoteChatResync               = (*SlackMessage)(nil)
-	_ bridgev2.RemoteMessageWithTransactionID = (*SlackMessage)(nil)
-)
+func (s *SlackClient) convertMessage(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, evt *slack.MessageEvent) (*bridgev2.ConvertedMessage, error) {
+	return s.Main.MsgConv.ToMatrix(ctx, portal, intent, s.UserLogin, &evt.Msg), nil
+}
+
+func (s *SlackClient) convertEdit(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, existing []*database.Message, evt *slack.MessageEvent) (*bridgev2.ConvertedEdit, error) {
+	return s.Main.MsgConv.EditToMatrix(ctx, portal, intent, s.UserLogin, evt.SubMessage, evt.PreviousMessage, existing)
+}
 
 const huddleEndMaxAge = 15 * time.Minute
 
-type SlackHuddleEnd struct {
-	*SlackEventMeta
-}
-
-var _ bridgev2.RemoteMessage = (*SlackHuddleEnd)(nil)
-
-func (s *SlackHuddleEnd) ConvertMessage(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI) (*bridgev2.ConvertedMessage, error) {
-	return &bridgev2.ConvertedMessage{
-		Parts: []*bridgev2.ConvertedMessagePart{{
-			Type: event.EventMessage,
-			Content: &event.MessageEventContent{
-				MsgType: event.MsgNotice,
-				Body:    "Huddle ended",
-			},
-		}},
-	}, nil
-}
-
-type SlackChatResync struct {
-	*SlackEventMeta
-	Client         *SlackClient
-	LatestMessage  string
-	PreFetchedInfo *slack.Channel
-	ShouldSyncInfo bool
-}
-
-func (s *SlackChatResync) GetChatInfo(ctx context.Context, portal *bridgev2.Portal) (*bridgev2.ChatInfo, error) {
-	if s.Client.Client == nil {
-		return nil, bridgev2.ErrNotLoggedIn
-	} else if s.PreFetchedInfo != nil {
-		wrappedInfo, err := s.Client.wrapChatInfo(ctx, s.PreFetchedInfo, portal.MXID == "")
-		if err != nil {
-			return nil, fmt.Errorf("failed to wrap chat info: %w", err)
-		}
-		return wrappedInfo, nil
-	} else if !s.ShouldSyncInfo {
-		return nil, nil
+func (s *SlackClient) wrapChatResync(meta simplevent.EventMeta, latestMessage string, preFetchedInfo *slack.Channel, shouldSyncInfo bool) *simplevent.ChatResync {
+	return &simplevent.ChatResync{
+		EventMeta: meta.WithType(bridgev2.RemoteEventChatResync),
+		GetChatInfoFunc: func(ctx context.Context, portal *bridgev2.Portal) (*bridgev2.ChatInfo, error) {
+			if s.Client == nil {
+				return nil, bridgev2.ErrNotLoggedIn
+			} else if preFetchedInfo != nil {
+				wrappedInfo, err := s.wrapChatInfo(ctx, preFetchedInfo, portal.MXID == "")
+				if err != nil {
+					return nil, fmt.Errorf("failed to wrap chat info: %w", err)
+				}
+				return wrappedInfo, nil
+			} else if !shouldSyncInfo {
+				return nil, nil
+			}
+			return s.GetChatInfo(ctx, portal)
+		},
+		CheckNeedsBackfillFunc: func(ctx context.Context, latestBridgedMessage *database.Message) (bool, error) {
+			if latestBridgedMessage == nil {
+				return latestMessage != "" && latestMessage != "0000000000.000000", nil
+			}
+			_, _, latestBridgedID, _ := slackid.ParseMessageID(latestBridgedMessage.ID)
+			return latestBridgedID < latestMessage, nil
+		},
 	}
-	return s.Client.GetChatInfo(ctx, portal)
-}
-
-func (s *SlackChatResync) CheckNeedsBackfill(ctx context.Context, latestBridgedMessage *database.Message) (bool, error) {
-	if latestBridgedMessage == nil {
-		return s.LatestMessage != "" && s.LatestMessage != "0000000000.000000", nil
-	}
-	_, _, latestBridgedID, _ := slackid.ParseMessageID(latestBridgedMessage.ID)
-	return latestBridgedID < s.LatestMessage, nil
-}
-
-var (
-	_ bridgev2.RemoteChatResyncBackfill = (*SlackChatResync)(nil)
-)
-
-func (s *SlackMessage) GetType() bridgev2.RemoteEventType {
-	return getMessageEventType(&s.Data.Msg)
 }
 
 func getMessageEventType(msg *slack.Msg) bridgev2.RemoteEventType {
 	if isChannelInfoChangeSubtype(msg.SubType) {
-		// These shouldn't end up as SlackMessage events
 		return bridgev2.RemoteEventUnknown
 	}
 	switch msg.SubType {
@@ -772,46 +611,5 @@ func getMessageEventType(msg *slack.Msg) bridgev2.RemoteEventType {
 			return bridgev2.RemoteEventUnknown
 		}
 		return bridgev2.RemoteEventMessage
-	}
-}
-
-func (s *SlackMessage) ConvertMessage(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI) (*bridgev2.ConvertedMessage, error) {
-	return s.Client.Main.MsgConv.ToMatrix(ctx, portal, intent, s.Client.UserLogin, &s.Data.Msg), nil
-}
-
-func (s *SlackMessage) ConvertEdit(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, existing []*database.Message) (*bridgev2.ConvertedEdit, error) {
-	return s.Client.Main.MsgConv.EditToMatrix(ctx, portal, intent, s.Client.UserLogin, s.Data.SubMessage, s.Data.PreviousMessage, existing)
-}
-
-func (s *SlackMessage) GetTimestamp() time.Time {
-	switch s.Data.SubType {
-	case slack.MsgSubTypeMessageChanged:
-		return slackid.ParseSlackTimestamp(s.Data.EventTimestamp)
-	default:
-		return slackid.ParseSlackTimestamp(s.Data.Timestamp)
-	}
-}
-
-func (s *SlackMessage) GetStreamOrder() int64 {
-	return s.GetTimestamp().UnixMicro()
-}
-
-func (s *SlackMessage) GetID() networkid.MessageID {
-	return slackid.MakeMessageID(s.Client.TeamID, s.Data.Channel, s.Data.Timestamp)
-}
-
-func (s *SlackMessage) GetTargetMessage() networkid.MessageID {
-	switch s.Data.SubType {
-	case slack.MsgSubTypeMessageDeleted:
-		return slackid.MakeMessageID(s.Client.TeamID, s.Data.Channel, s.Data.DeletedTimestamp)
-	case slack.MsgSubTypeMessageChanged:
-		// Socket mode events don't have the target timestamp at the top level
-		// TODO always just use the submessage timestamp?
-		if s.Data.EventTimestamp == s.Data.Timestamp {
-			return slackid.MakeMessageID(s.Client.TeamID, s.Data.Channel, s.Data.SubMessage.Timestamp)
-		}
-		return s.GetID()
-	default:
-		return ""
 	}
 }
