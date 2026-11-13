@@ -521,6 +521,7 @@ func (mc *MessageConverter) directMediaFilePart(ctx context.Context, partID netw
 		return nil
 	}
 	content.URL = mxc
+	content.File = nil
 	return &bridgev2.ConvertedMessagePart{
 		ID:      partID,
 		Type:    event.EventMessage,
