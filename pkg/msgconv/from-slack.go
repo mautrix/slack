@@ -483,6 +483,11 @@ RetryLoop:
 	}
 	if uploadErr != nil {
 		if retErr != nil {
+			if mc.DirectMedia && !convertAudio {
+				if part := mc.directMediaFilePart(ctx, partID, file.ID, &content); part != nil {
+					return part
+				}
+			}
 			return retErr
 		}
 		if errors.Is(uploadErr, mautrix.MTooLarge) {
