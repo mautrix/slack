@@ -125,7 +125,7 @@ func (s *SlackClient) HandleSlackEvent(ctx context.Context, rawEvt any) {
 		*slack.ChannelMarkedEvent, *slack.IMMarkedEvent, *slack.GroupMarkedEvent, *slack.ThreadMarkedEvent,
 		*slack.ChannelJoinedEvent, *slack.ChannelLeftEvent, *slack.GroupJoinedEvent, *slack.GroupLeftEvent,
 		*slack.MemberJoinedChannelEvent, *slack.MemberLeftChannelEvent,
-		*slack.ChannelUpdateEvent:
+		*slack.ChannelUpdateEvent, *slack.StarAddedEvent, *slack.StarRemovedEvent:
 		wrapped, err := s.wrapEvent(ctx, evt)
 		if err != nil {
 			log.Err(err).Msg("Failed to wrap Slack event")
@@ -372,8 +372,30 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		s.invalidateChatInfoCache(evt.Channel)
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, "", evt.Timestamp)
 		wrapped = s.wrapChatResync(meta, "", nil, true)
+
+	case *slack.StarAddedEvent:
+		if !isConversationStarItem(evt.Item) || !s.starredChannels.Add(evt.Item.Channel) {
+			return nil, nil
+		}
+		meta, metaErr = s.makeEventMeta(ctx, evt.Item.Channel, nil, "", evt.EventTimestamp)
+		wrapped = wrapStarChange(meta, true)
+	case *slack.StarRemovedEvent:
+		if !isConversationStarItem(evt.Item) || !s.starredChannels.Pop(evt.Item.Channel) {
+			return nil, nil
+		}
+		meta, metaErr = s.makeEventMeta(ctx, evt.Item.Channel, nil, "", evt.EventTimestamp)
+		wrapped = wrapStarChange(meta, false)
 	}
 	return wrapped, metaErr
+}
+
+func isConversationStarItem(item slack.StarredItem) bool {
+	switch item.Type {
+	case slack.TYPE_CHANNEL, slack.TYPE_IM, slack.TYPE_GROUP:
+		return true
+	default:
+		return false
+	}
 }
 
 func slackEventChannelID(rawEvt any) string {
@@ -406,6 +428,10 @@ func slackEventChannelID(rawEvt any) string {
 		return evt.Channel
 	case *slack.ChannelUpdateEvent:
 		return evt.Channel
+	case *slack.StarAddedEvent:
+		return evt.Item.Channel
+	case *slack.StarRemovedEvent:
+		return evt.Item.Channel
 	default:
 		return ""
 	}
@@ -457,6 +483,23 @@ func (s *SlackClient) wrapReadReceipt(meta simplevent.EventMeta, channelID, time
 		LastTarget:          target,
 		ReadUpTo:            meta.Timestamp,
 		ReadUpToStreamOrder: meta.StreamOrder,
+	}
+}
+
+func wrapStarChange(meta simplevent.EventMeta, starred bool) *simplevent.ChatInfoChange {
+	var tag event.RoomTag
+	if starred {
+		tag = event.RoomTagFavourite
+	}
+	return &simplevent.ChatInfoChange{
+		EventMeta: meta.WithType(bridgev2.RemoteEventChatInfoChange),
+		ChatInfoChange: &bridgev2.ChatInfoChange{
+			ChatInfo: &bridgev2.ChatInfo{
+				UserLocal: &bridgev2.UserLocalPortalInfo{
+					Tag: &tag,
+				},
+			},
+		},
 	}
 }
 

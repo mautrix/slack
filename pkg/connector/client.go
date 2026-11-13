@@ -84,11 +84,12 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 	var sc *SlackClient
 	if meta.Token == "" {
 		sc = &SlackClient{
-			Main:         s,
-			UserLogin:    login,
-			UserID:       userID,
-			TeamID:       teamID,
-			dmChannelIDs: exsync.NewSet[string](),
+			Main:            s,
+			UserLogin:       login,
+			UserID:          userID,
+			TeamID:          teamID,
+			dmChannelIDs:    exsync.NewSet[string](),
+			starredChannels: exsync.NewSet[string](),
 		}
 	} else {
 		client := makeSlackClient(&login.Log, meta.Token, meta.CookieToken, meta.AppToken)
@@ -103,6 +104,7 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 			chatInfoCache:          make(map[string]chatInfoCacheEntry),
 			chatInfoFetchAttempted: make(map[string]bool),
 			dmChannelIDs:           exsync.NewSet[string](),
+			starredChannels:        exsync.NewSet[string](),
 			lastReadCache:          make(map[string]string),
 			userResyncQueue:        make(chan *bridgev2.Ghost, 16),
 			fileCreatedListeners:   exsync.NewMap[string, chan struct{}](),
@@ -162,6 +164,7 @@ type SlackClient struct {
 	chatInfoFetchAttempted map[string]bool
 	chatInfoCacheLock      sync.Mutex
 	dmChannelIDs           *exsync.Set[string]
+	starredChannels        *exsync.Set[string]
 	userGroupInfoCache     map[string]*userGroupCacheEntry
 	userGroupInfoCacheTS   time.Time
 	userGroupInfoCacheLock sync.Mutex
@@ -339,6 +342,7 @@ func (s *SlackClient) connect(ctx context.Context, bootCancel *context.CancelFun
 	s.initialConnect = time.Now()
 	s.rtmHelloReceived.Store(false)
 	s.BootResp = bootResp
+	s.starredChannels.ReplaceAll(exsync.NewSetWithItems(bootResp.Starred))
 	if s.Main.Config.DMOnly {
 		for idx := range bootResp.IMs {
 			s.addDMChannel(&bootResp.IMs[idx].Channel)
