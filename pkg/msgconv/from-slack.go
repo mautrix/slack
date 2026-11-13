@@ -20,6 +20,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"html"
@@ -87,7 +89,8 @@ func (mc *MessageConverter) ToMatrix(
 			output.Parts = append(output.Parts, part)
 		}
 	}
-	if len(output.Parts) == 0 {
+	imageBlockParts := mc.imageBlocksToMatrix(ctx, portal, intent, msg.Blocks, nil)
+	if len(output.Parts) == 0 && len(imageBlockParts) == 0 {
 		output.Parts = append(output.Parts, &bridgev2.ConvertedMessagePart{
 			Type:       event.EventMessage,
 			Content:    &event.MessageEventContent{MsgType: event.MsgText},
@@ -98,6 +101,7 @@ func (mc *MessageConverter) ToMatrix(
 			CaptionMerged: true,
 		}
 	}
+	output.Parts = append(output.Parts, imageBlockParts...)
 	if msg.SubType == slack.MsgSubTypeThreadBroadcast {
 		for _, part := range output.Parts {
 			part.Content.BeeperBroadcastOutsideThread = true
@@ -125,6 +129,9 @@ func (mc *MessageConverter) EditToMatrix(
 	existing []*database.Message,
 ) (*bridgev2.ConvertedEdit, error) {
 	editTargetPart := existing[0]
+	if textPartIdx := slices.IndexFunc(existing, func(part *database.Message) bool { return part.PartID == "" }); textPartIdx >= 0 {
+		editTargetPart = existing[textPartIdx]
+	}
 	meta := editTargetPart.Metadata.(*slackid.MessageMetadata)
 	if msg.Edited != nil && meta.LastEditTS >= msg.Edited.Timestamp {
 		return nil, fmt.Errorf(
@@ -137,10 +144,15 @@ func (mc *MessageConverter) EditToMatrix(
 	client := source.Client.(SlackClientProvider).GetClient()
 	output := &bridgev2.ConvertedEdit{}
 	existingMap := make(map[networkid.PartID]*database.Message, len(existing))
+	blockPartIDs := imageBlockPartIDs(msg.Blocks)
 	for _, part := range existing {
 		existingMap[part.PartID] = part
 		partType, _, innerPartID, ok := slackid.ParsePartID(part.PartID)
-		if ok && partType == slackid.PartTypeAttachment {
+		if ok && partType == slackid.PartTypeBlock {
+			if !slices.Contains(blockPartIDs, part.PartID) {
+				output.DeletedParts = append(output.DeletedParts, part)
+			}
+		} else if ok && partType == slackid.PartTypeAttachment {
 			attachmentStillExists := slices.ContainsFunc(msg.Attachments, func(attachment slack.Attachment) bool {
 				return attachment.IDString() == innerPartID
 			})
@@ -150,6 +162,7 @@ func (mc *MessageConverter) EditToMatrix(
 		}
 	}
 	modifiedPart := mc.makeTextPart(ctx, msg, portal, intent, client)
+	var addedParts []*bridgev2.ConvertedMessagePart
 	captionMerged := false
 	for i, file := range msg.Files {
 		if isCanvas(&file) {
@@ -199,18 +212,93 @@ func (mc *MessageConverter) EditToMatrix(
 				modifiedPart.Content.GetRelatesTo().SetThread(threadRoot.MXID, threadRoot.MXID)
 			}
 		}
-		editPart := modifiedPart.ToEditPart(editTargetPart)
-		if msg.Edited != nil {
-			meta.LastEditTS = msg.Edited.Timestamp
-		} else {
-			if editPart.TopLevelExtra == nil {
-				editPart.TopLevelExtra = make(map[string]any)
+		if editTargetPart.PartID != "" && !captionMerged {
+			if msg.Edited != nil {
+				modifiedPart.DBMetadata = &slackid.MessageMetadata{LastEditTS: msg.Edited.Timestamp}
 			}
-			editPart.TopLevelExtra["com.beeper.dont_render_edited"] = true
+			addedParts = append(addedParts, modifiedPart)
+		} else {
+			editPart := modifiedPart.ToEditPart(editTargetPart)
+			if msg.Edited != nil {
+				meta.LastEditTS = msg.Edited.Timestamp
+			} else {
+				if editPart.TopLevelExtra == nil {
+					editPart.TopLevelExtra = make(map[string]any)
+				}
+				editPart.TopLevelExtra["com.beeper.dont_render_edited"] = true
+			}
+			output.ModifiedParts = append(output.ModifiedParts, editPart)
 		}
-		output.ModifiedParts = append(output.ModifiedParts, editPart)
+	} else if editTargetPart.PartID == "" && !meta.CaptionMerged && !editTargetPart.HasFakeMXID() {
+		output.DeletedParts = append(output.DeletedParts, editTargetPart)
+	}
+	for _, part := range mc.imageBlocksToMatrix(ctx, portal, intent, msg.Blocks, existingMap) {
+		if msg.Username != "" {
+			part.Content.BeeperPerMessageProfile = &event.BeeperPerMessageProfile{
+				ID:          msg.Username,
+				Displayname: msg.Username,
+			}
+		}
+		if msg.SubType == slack.MsgSubTypeThreadBroadcast {
+			part.Content.BeeperBroadcastOutsideThread = true
+		}
+		addedParts = append(addedParts, part)
+	}
+	if len(addedParts) > 0 {
+		output.AddedParts = &bridgev2.ConvertedMessage{Parts: addedParts}
+		if msg.ThreadTimestamp != "" && msg.ThreadTimestamp != msg.Timestamp {
+			teamID, channelID := slackid.ParsePortalID(portal.ID)
+			output.AddedParts.ThreadRoot = ptr.Ptr(slackid.MakeMessageID(teamID, channelID, msg.ThreadTimestamp))
+		}
 	}
 	return output, nil
+}
+
+func imageBlockPartIDs(blocks slack.Blocks) []networkid.PartID {
+	if isGiphyBlocks(blocks) {
+		return nil
+	}
+	partIDs := make([]networkid.PartID, len(blocks.BlockSet))
+	urlCounts := make(map[string]int)
+	for i, block := range blocks.BlockSet {
+		if !isImageBlockWithURL(block) {
+			continue
+		}
+		imageURL := block.(*slack.ImageBlock).ImageURL
+		urlHash := sha256.Sum256([]byte(imageURL))
+		partIDs[i] = slackid.MakePartID(slackid.PartTypeBlock, urlCounts[imageURL], hex.EncodeToString(urlHash[:8]))
+		urlCounts[imageURL]++
+	}
+	return partIDs
+}
+
+func (mc *MessageConverter) imageBlocksToMatrix(
+	ctx context.Context,
+	portal *bridgev2.Portal,
+	intent bridgev2.MatrixAPI,
+	blocks slack.Blocks,
+	existing map[networkid.PartID]*database.Message,
+) []*bridgev2.ConvertedMessagePart {
+	var parts []*bridgev2.ConvertedMessagePart
+	for i, partID := range imageBlockPartIDs(blocks) {
+		if partID == "" || existing[partID] != nil {
+			continue
+		}
+		imageBlock := blocks.BlockSet[i].(*slack.ImageBlock)
+		part, err := mc.renderImageBlock(ctx, portal, intent, imageBlock.ImageURL)
+		if err != nil {
+			zerolog.Ctx(ctx).Err(err).Msg("Failed to render image block")
+			part = makeErrorMessage(partID, "Failed to bridge image")
+		} else {
+			part.ID = partID
+			if imageBlock.Title != nil && imageBlock.Title.Text != "" {
+				part.Content.FileName = part.Content.Body
+				part.Content.Body = imageBlock.Title.Text
+			}
+		}
+		parts = append(parts, part)
+	}
+	return parts
 }
 
 func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, client *slack.Client) *bridgev2.ConvertedMessagePart {
