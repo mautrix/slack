@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +39,7 @@ import (
 	"maunium.net/go/mautrix/format"
 	"maunium.net/go/mautrix/id"
 
+	"go.mau.fi/mautrix-slack/pkg/emoji"
 	"go.mau.fi/mautrix-slack/pkg/msgconv/mrkdwn"
 	"go.mau.fi/mautrix-slack/pkg/slackid"
 )
@@ -91,6 +93,15 @@ func (mc *MessageConverter) renderImageBlock(ctx context.Context, portal *bridge
 	}, nil
 }
 
+var escapedSlackTagRegex = regexp.MustCompile(`&lt;((?:@[UW]|#[CG]|!subteam\^S)[A-Z0-9]+(?:\|[^&]*)?)&gt;`)
+
+func (mc *MessageConverter) convertLinkPreviewTitle(ctx context.Context, title string) string {
+	if escapedSlackTagRegex.MatchString(title) {
+		return mc.mrkdwnToPlainText(ctx, escapedSlackTagRegex.ReplaceAllString(title, "<$1>"))
+	}
+	return emoji.ReplaceShortcodesWithUnicode(html.UnescapeString(title))
+}
+
 func (mc *MessageConverter) attachmentToURLPreview(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, attachment slack.Attachment) *event.BeeperLinkPreview {
 	var mxc id.ContentURIString
 	var file *event.EncryptedFileInfo
@@ -120,10 +131,10 @@ func (mc *MessageConverter) attachmentToURLPreview(ctx context.Context, portal *
 	return &event.BeeperLinkPreview{
 		LinkPreview: event.LinkPreview{
 			CanonicalURL: attachment.FromURL,
-			Title:        attachment.Title,
+			Title:        mc.convertLinkPreviewTitle(ctx, attachment.Title),
 			SiteName:     attachment.ServiceName,
 			Type:         "website",
-			Description:  format.HTMLToText(mc.mrkdwnToMatrixHtml(ctx, attachment.Text, &event.Mentions{})),
+			Description:  mc.mrkdwnToPlainText(ctx, attachment.Text),
 			ImageURL:     mxc,
 			ImageSize:    event.IntOrString(imageSize),
 			ImageWidth:   event.IntOrString(imageWidth),
@@ -138,6 +149,35 @@ func (mc *MessageConverter) attachmentToURLPreview(ctx context.Context, portal *
 func (mc *MessageConverter) mrkdwnToMatrixHtml(ctx context.Context, inputMrkdwn string, mentions *event.Mentions) string {
 	output, _ := mc.SlackMrkdwnParser.Parse(ctx, inputMrkdwn, mentions)
 	return output
+}
+
+func plainTextConverter(text string, _ format.Context) string {
+	return text
+}
+
+var plainTextHTMLParser = &format.HTMLParser{
+	TabsToSpaces:           4,
+	Newline:                "\n",
+	HorizontalLine:         "\n---\n",
+	BoldConverter:          plainTextConverter,
+	ItalicConverter:        plainTextConverter,
+	StrikethroughConverter: plainTextConverter,
+	MonospaceConverter:     plainTextConverter,
+	PillConverter: func(displayname, mxid, eventID string, ctx format.Context) string {
+		if eventID == "" && len(mxid) > 0 && displayname != "" && displayname != mxid {
+			switch mxid[0] {
+			case '@':
+				return "@" + displayname
+			case '!', '#':
+				return displayname
+			}
+		}
+		return format.DefaultPillConverter(displayname, mxid, eventID, ctx)
+	},
+}
+
+func (mc *MessageConverter) mrkdwnToPlainText(ctx context.Context, inputMrkdwn string) string {
+	return plainTextHTMLParser.Parse(mc.mrkdwnToMatrixHtml(ctx, inputMrkdwn, &event.Mentions{}), format.NewContext(ctx))
 }
 
 func (mc *MessageConverter) renderSlackTextBlock(ctx context.Context, block slack.TextBlockObject, mentions *event.Mentions) string {
