@@ -521,6 +521,10 @@ func (s *SlackClient) wrapMessage(meta simplevent.EventMeta, evt *slack.MessageE
 		meta.Timestamp = slackid.ParseSlackTimestamp(evt.Timestamp)
 	}
 	meta.StreamOrder = meta.Timestamp.UnixMicro()
+	if isTombstoneChange(evt) {
+		// The tombstone is sent as Slackbot, but it replaces the original author's message.
+		meta.Sender = bridgev2.EventSender{ForceEditOrigSender: true}
+	}
 	if meta.Type == bridgev2.RemoteEventMessageRemove {
 		return &simplevent.MessageRemove{
 			EventMeta:     meta,
@@ -581,6 +585,12 @@ func (s *SlackClient) wrapChatResync(meta simplevent.EventMeta, latestMessage st
 			return latestBridgedID < latestMessage, nil
 		},
 	}
+}
+
+// Slack replaces a deleted message that has thread replies with a Slackbot
+// tombstone via message_changed instead of sending message_deleted.
+func isTombstoneChange(evt *slack.MessageEvent) bool {
+	return evt.SubType == slack.MsgSubTypeMessageChanged && evt.SubMessage != nil && evt.SubMessage.SubType == "tombstone"
 }
 
 func getMessageEventType(msg *slack.Msg) bridgev2.RemoteEventType {
