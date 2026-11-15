@@ -437,6 +437,14 @@ func (mc *MessageConverter) slackFileToMatrix(ctx context.Context, portal *bridg
 				retErr = makeErrorMessage(partID, "Failed to convert voice message")
 				return
 			}
+			var info os.FileInfo
+			info, err = os.Stat(res.ReplacementFile)
+			if err != nil {
+				log.Err(err).Msg("Failed to get info of converted voice message")
+				retErr = makeErrorMessage(partID, "Failed to convert voice message")
+				return
+			}
+			content.Info.Size = int(info.Size())
 			content.Info.MimeType = "audio/ogg"
 			content.Body += ".ogg"
 			content.MsgType = event.MsgAudio
