@@ -266,7 +266,34 @@ func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, po
 			textPart.Content.FormattedBody += canvasHTML
 		}
 	}
+	if textPart != nil {
+		cutOffLongMessage(textPart.Content)
+	}
 	return textPart
+}
+
+const maxTextSize = 40000
+
+func cutOffLongMessage(content *event.MessageEventContent) {
+	if len(content.Body)+len(content.FormattedBody) <= maxTextSize {
+		return
+	}
+	if content.FormattedBody != "" && len(content.FormattedBody) <= maxTextSize-1000 {
+		content.Body = truncateUTF8(content.Body, 500) + "[...]"
+		return
+	}
+	content.Format = ""
+	content.FormattedBody = ""
+	if len(content.Body) > maxTextSize {
+		content.Body = truncateUTF8(content.Body, maxTextSize) + "\n\n[long message cut off]"
+	}
+}
+
+func truncateUTF8(str string, maxLen int) string {
+	if len(str) <= maxLen {
+		return str
+	}
+	return strings.ToValidUTF8(str[:maxLen], "")
 }
 
 func isCanvas(file *slack.File) bool {
