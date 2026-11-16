@@ -94,7 +94,6 @@ func (mc *MessageConverter) ToMatrix(
 			DontBridge: true,
 		})
 	} else if output.MergeCaption() {
-		cutOffLongMessage(output.Parts[0].Content)
 		output.Parts[0].DBMetadata = &slackid.MessageMetadata{
 			CaptionMerged: true,
 		}
@@ -174,7 +173,6 @@ func (mc *MessageConverter) EditToMatrix(
 				}
 				filePart := mc.slackFileToMatrix(ctx, portal, intent, client, partID, &file)
 				modifiedPart = bridgev2.MergeCaption(modifiedPart, filePart)
-				cutOffLongMessage(modifiedPart.Content)
 				modifiedPart.DBMetadata = &slackid.MessageMetadata{
 					CaptionMerged: true,
 				}
@@ -268,53 +266,7 @@ func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, po
 			textPart.Content.FormattedBody += canvasHTML
 		}
 	}
-	if textPart != nil {
-		cutOffLongMessage(textPart.Content)
-	}
 	return textPart
-}
-
-const maxTextSize = 40000
-
-func jsonStringSize(str string) int {
-	size := len(str)
-	for i := 0; i < len(str); i++ {
-		switch c := str[i]; {
-		case c == '"' || c == '\\' || c == '\n' || c == '\r' || c == '\t' || c == '\b' || c == '\f':
-			size++
-		case c < 0x20:
-			size += 5
-		}
-	}
-	return size
-}
-
-func cutOffLongMessage(content *event.MessageEventContent) {
-	bodySize := jsonStringSize(content.Body)
-	htmlSize := jsonStringSize(content.FormattedBody)
-	if bodySize+htmlSize <= maxTextSize {
-		return
-	}
-	if content.FormattedBody != "" && htmlSize <= maxTextSize-1000 {
-		content.Body = truncateJSONSize(content.Body, 500) + "[...]"
-		return
-	}
-	content.Format = ""
-	content.FormattedBody = ""
-	if bodySize > maxTextSize {
-		content.Body = truncateJSONSize(content.Body, maxTextSize) + "\n\n[long message cut off]"
-	}
-}
-
-func truncateJSONSize(str string, maxSize int) string {
-	size := 0
-	for i := 0; i < len(str); i++ {
-		size += jsonStringSize(str[i : i+1])
-		if size > maxSize {
-			return strings.ToValidUTF8(str[:i], "")
-		}
-	}
-	return str
 }
 
 func isCanvas(file *slack.File) bool {
