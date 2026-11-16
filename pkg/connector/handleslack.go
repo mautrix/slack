@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"time"
 
@@ -555,7 +556,20 @@ func (s *SlackClient) convertMessage(ctx context.Context, portal *bridgev2.Porta
 }
 
 func (s *SlackClient) convertEdit(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, existing []*database.Message, evt *slack.MessageEvent) (*bridgev2.ConvertedEdit, error) {
-	return s.Main.MsgConv.EditToMatrix(ctx, portal, intent, s.UserLogin, evt.SubMessage, evt.PreviousMessage, existing)
+	converted, err := s.Main.MsgConv.EditToMatrix(ctx, portal, intent, s.UserLogin, evt.SubMessage, evt.PreviousMessage, existing)
+	if err != nil || converted == nil || !isTombstoneChange(evt) {
+		return converted, err
+	}
+	// The tombstone replaces the whole message, but it carries no files, so remove
+	// every other part. The edited part keeps its row so later thread replies still resolve it.
+	for _, part := range existing {
+		if slices.ContainsFunc(converted.ModifiedParts, func(m *bridgev2.ConvertedEditPart) bool { return m.Part == part }) ||
+			slices.Contains(converted.DeletedParts, part) {
+			continue
+		}
+		converted.DeletedParts = append(converted.DeletedParts, part)
+	}
+	return converted, nil
 }
 
 const huddleEndMaxAge = 15 * time.Minute
