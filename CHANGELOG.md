@@ -2,7 +2,7 @@
 
 * Added support for custom group DM names.
 * Added support for bridging thread read receipts.
-* Added better formatting for rick text date elements from Slack.
+* Added better formatting for rich text date elements from Slack.
 * Added minimal support for rendering action buttons from Slack messages
   (clicking non-link buttons still requires using Slack).
 * Added notices for huddles ending.
