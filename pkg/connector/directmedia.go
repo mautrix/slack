@@ -106,6 +106,8 @@ func wrapSlackDownloadError(err error) error {
 		return err
 	case "file_not_found", "file_deleted":
 		mapped = mautrix.MNotFound.WithMessage("File not found on Slack")
+	case "hidden_by_limit":
+		mapped = mautrix.MNotFound.WithMessage("File is hidden by the Slack workspace's history limit")
 	case "invalid_auth", "not_authed", "token_revoked", "token_expired", "account_inactive",
 		"no_permission", "not_authorized", "access_denied", "missing_scope", "not_allowed_token_type",
 		"team_access_not_granted", "ekm_access_denied":
