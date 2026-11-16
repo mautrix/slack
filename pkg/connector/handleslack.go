@@ -560,8 +560,7 @@ func (s *SlackClient) convertEdit(ctx context.Context, portal *bridgev2.Portal, 
 	if err != nil || converted == nil || !isTombstoneChange(evt) {
 		return converted, err
 	}
-	// The tombstone replaces the whole message, but it carries no files, so remove
-	// every other part. The edited part keeps its row so later thread replies still resolve it.
+	// Tombstones of thread roots don't include files, remove all parts other than the text
 	for _, part := range existing {
 		if slices.ContainsFunc(converted.ModifiedParts, func(m *bridgev2.ConvertedEditPart) bool { return m.Part == part }) ||
 			slices.Contains(converted.DeletedParts, part) {
