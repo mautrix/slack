@@ -32,6 +32,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 	"go.mau.fi/util/exsync"
+	"go.mau.fi/util/ptr"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/bridgev2/simplevent"
@@ -155,6 +156,7 @@ type SlackClient struct {
 	userResyncQueue  chan *bridgev2.Ghost
 	initialConnect   time.Time
 	rtmHelloReceived atomic.Bool
+	canAtChannel     atomic.Pointer[bool]
 
 	fileCreatedListeners *exsync.Map[string, chan struct{}]
 
@@ -339,6 +341,17 @@ func (s *SlackClient) connect(ctx context.Context, bootCancel *context.CancelFun
 	s.initialConnect = time.Now()
 	s.rtmHelloReceived.Store(false)
 	s.BootResp = bootResp
+	if s.IsRealUser {
+		perms, err := s.Client.GetPermissionsContext(ctx, s.TeamID, slack.GetPermissionsParameters{
+			UserID:      s.UserID,
+			Permissions: []string{slack.PermissionCanAtChannel},
+		})
+		if err != nil {
+			zerolog.Ctx(ctx).Err(err).Msg("Failed to fetch @channel permission")
+		} else {
+			s.canAtChannel.Store(ptr.Ptr(slices.Contains(perms.Allowed, slack.PermissionCanAtChannel)))
+		}
+	}
 	if s.Main.Config.DMOnly {
 		for idx := range bootResp.IMs {
 			s.addDMChannel(&bootResp.IMs[idx].Channel)
