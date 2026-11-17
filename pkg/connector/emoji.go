@@ -243,7 +243,11 @@ func (s *SlackClient) SyncEmojis(ctx context.Context) {
 
 func (s *SlackClient) syncEmojis(ctx context.Context, onlyIfCountMismatch bool) ([]string, error) {
 	log := zerolog.Ctx(ctx).With().Str("action", "sync emojis").Logger()
-	resp, err := s.Client.GetEmojiContext(ctx)
+	client := s.Client
+	if client == nil {
+		return nil, bridgev2.ErrNotLoggedIn
+	}
+	resp, err := client.GetEmojiContext(ctx)
 	if err != nil {
 		log.Err(err).Msg("Failed to fetch emoji list")
 		return nil, err
