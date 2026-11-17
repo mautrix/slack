@@ -326,9 +326,9 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 			event.StateTopic: topicLevel,
 		},
 	}
-	if s.canAtChannel != nil && roomType != database.RoomTypeDM && s.makePortalKey(info).Receiver != "" {
+	if canAtChannel := s.canAtChannel.Load(); canAtChannel != nil && roomType != database.RoomTypeDM && s.makePortalKey(info).Receiver != "" {
 		roomMentionLevel := 0
-		if !*s.canAtChannel {
+		if !*canAtChannel {
 			roomMentionLevel = 100
 		}
 		members.PowerLevels.RoomMention = &roomMentionLevel

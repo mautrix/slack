@@ -156,7 +156,7 @@ type SlackClient struct {
 	userResyncQueue  chan *bridgev2.Ghost
 	initialConnect   time.Time
 	rtmHelloReceived atomic.Bool
-	canAtChannel     *bool
+	canAtChannel     atomic.Pointer[bool]
 
 	fileCreatedListeners *exsync.Map[string, chan struct{}]
 
@@ -349,7 +349,7 @@ func (s *SlackClient) connect(ctx context.Context, bootCancel *context.CancelFun
 		if err != nil {
 			zerolog.Ctx(ctx).Err(err).Msg("Failed to fetch @channel permission")
 		} else {
-			s.canAtChannel = ptr.Ptr(slices.Contains(perms.Allowed, slack.PermissionCanAtChannel))
+			s.canAtChannel.Store(ptr.Ptr(slices.Contains(perms.Allowed, slack.PermissionCanAtChannel)))
 		}
 	}
 	if s.Main.Config.DMOnly {
