@@ -269,15 +269,7 @@ func (parser *HTMLParser) tagToElement(node *html.Node, ctx Context) ([]slack.Ri
 		return parser.nodeAndSiblingsToElement(node.FirstChild, ctx)
 	case "img":
 		src := parser.getAttribute(node, "src")
-		var dbEmoji *slackdb.Emoji
-		var err error
-		if dme := slackid.ParseDirectMediaEmojiURI(id.ContentURIString(src)); dme != nil {
-			teamID, _ := slackid.ParsePortalID(ctx.Portal.ID)
-			dbEmoji, err = parser.db.Emoji.GetByValue(ctx.Ctx, teamID, dme.URL())
-		}
-		if err == nil && dbEmoji == nil {
-			dbEmoji, err = parser.db.Emoji.GetByMXC(ctx.Ctx, src)
-		}
+		dbEmoji, err := parser.db.Emoji.GetByMXC(ctx.Ctx, src)
 		if err != nil {
 			zerolog.Ctx(ctx.Ctx).Err(err).Msg("Failed to get emoji by MXC to convert image")
 		} else if dbEmoji != nil {

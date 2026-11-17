@@ -197,6 +197,10 @@ func (s *SlackConnector) downloadPlainFile(ctx context.Context, url, thing strin
 
 func (s *SlackConnector) reuploadEmoji(ctx context.Context, intent bridgev2.MatrixAPI, url string) (id.ContentURIString, error) {
 	if s.directMedia {
+		mediaID := slackid.DirectMediaEmojiFromURL(url).MediaID()
+		if mediaID != nil {
+			return s.br.Matrix.GenerateContentURI(ctx, mediaID)
+		}
 		zerolog.Ctx(ctx).Warn().
 			Str("url", url).
 			Msg("Unsupported custom emoji URL for direct media, falling back to upload")
@@ -323,22 +327,7 @@ func (s *SlackClient) tryGetEmoji(ctx context.Context, shortcode string, ensureU
 		return
 	}
 	found = true
-	var directMediaEmoji *slackid.DirectMediaEmoji
-	if s.Main.directMedia {
-		directMediaEmoji = slackid.DirectMediaEmojiFromURL(dbEmoji.Value)
-		if directMediaEmoji == nil {
-			directMediaEmoji = slackid.ParseDirectMediaEmojiURI(dbEmoji.ImageMXC)
-		}
-	}
-	if mediaID := directMediaEmoji.MediaID(); mediaID != nil {
-		mxc, err := s.Main.br.Matrix.GenerateContentURI(ctx, mediaID)
-		if err != nil {
-			zerolog.Ctx(ctx).Err(err).Str("shortcode", shortcode).Msg("Failed to generate direct media URI for emoji")
-			return
-		}
-		val = string(mxc)
-		isImage = true
-	} else if dbEmoji.ImageMXC != "" {
+	if dbEmoji.ImageMXC != "" {
 		val = string(dbEmoji.ImageMXC)
 		isImage = true
 	} else if strings.HasPrefix(dbEmoji.Value, "alias:") {
