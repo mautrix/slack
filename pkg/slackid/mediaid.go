@@ -17,12 +17,13 @@
 package slackid
 
 import (
-	"context"
+	"bytes"
+	"encoding/base64"
 	"fmt"
 	"slices"
 	"strings"
 
-	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/matrix"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/id"
 )
@@ -107,12 +108,22 @@ func DirectMediaEmojiFromURL(url string) *DirectMediaEmoji {
 	}
 }
 
-func ParseDirectMediaEmojiURI(ctx context.Context, matrix bridgev2.MatrixConnector, mxc id.ContentURIString) *DirectMediaEmoji {
-	mediaID, err := matrix.ParseContentURI(ctx, mxc)
+var directMediaIDMarker = base64.RawURLEncoding.EncodeToString([]byte(matrix.MediaIDPrefix))[:len(matrix.MediaIDPrefix)*4/3]
+
+func ParseDirectMediaEmojiURI(mxc id.ContentURIString) *DirectMediaEmoji {
+	parsedMXC, err := mxc.Parse()
 	if err != nil {
 		return nil
 	}
-	parsed, _ := ParseMediaID(mediaID)
+	idx := strings.Index(parsedMXC.FileID, directMediaIDMarker)
+	if idx < 0 {
+		return nil
+	}
+	data, err := base64.RawURLEncoding.DecodeString(parsedMXC.FileID[idx:])
+	if err != nil || !bytes.HasPrefix(data, []byte(matrix.MediaIDPrefix)) || len(data) <= len(matrix.MediaIDPrefix)+matrix.MediaIDTruncatedHashLength {
+		return nil
+	}
+	parsed, _ := ParseMediaID(data[len(matrix.MediaIDPrefix) : len(data)-matrix.MediaIDTruncatedHashLength])
 	dme, _ := parsed.(*DirectMediaEmoji)
 	return dme
 }

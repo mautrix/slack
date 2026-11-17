@@ -323,8 +323,14 @@ func (s *SlackClient) tryGetEmoji(ctx context.Context, shortcode string, ensureU
 		return
 	}
 	found = true
-	isAlias := strings.HasPrefix(dbEmoji.Value, "alias:")
-	if mediaID := slackid.DirectMediaEmojiFromURL(dbEmoji.Value).MediaID(); s.Main.directMedia && mediaID != nil {
+	var directMediaEmoji *slackid.DirectMediaEmoji
+	if s.Main.directMedia {
+		directMediaEmoji = slackid.DirectMediaEmojiFromURL(dbEmoji.Value)
+		if directMediaEmoji == nil {
+			directMediaEmoji = slackid.ParseDirectMediaEmojiURI(dbEmoji.ImageMXC)
+		}
+	}
+	if mediaID := directMediaEmoji.MediaID(); mediaID != nil {
 		mxc, err := s.Main.br.Matrix.GenerateContentURI(ctx, mediaID)
 		if err != nil {
 			zerolog.Ctx(ctx).Err(err).Str("shortcode", shortcode).Msg("Failed to generate direct media URI for emoji")
@@ -332,10 +338,10 @@ func (s *SlackClient) tryGetEmoji(ctx context.Context, shortcode string, ensureU
 		}
 		val = string(mxc)
 		isImage = true
-	} else if dbEmoji.ImageMXC != "" && !(s.Main.directMedia && isAlias) {
+	} else if dbEmoji.ImageMXC != "" {
 		val = string(dbEmoji.ImageMXC)
 		isImage = true
-	} else if isAlias {
+	} else if strings.HasPrefix(dbEmoji.Value, "alias:") {
 		if !allowRecurse {
 			zerolog.Ctx(ctx).Warn().Str("shortcode", shortcode).Msg("Not recursing into emoji alias")
 			return "", false, true

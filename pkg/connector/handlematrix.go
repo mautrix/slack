@@ -312,8 +312,8 @@ func (s *SlackClient) PreHandleMatrixReaction(ctx context.Context, msg *bridgev2
 	var emojiID string
 	if strings.ContainsRune(key, ':') {
 		var dbEmoji *slackdb.Emoji
-		if dme := slackid.ParseDirectMediaEmojiURI(ctx, s.Main.br.Matrix, id.ContentURIString(key)); dme != nil {
-			dbEmoji, err = s.Main.DB.Emoji.GetByValue(ctx, dme.URL())
+		if dme := slackid.ParseDirectMediaEmojiURI(id.ContentURIString(key)); dme != nil {
+			dbEmoji, err = s.Main.DB.Emoji.GetByValue(ctx, s.TeamID, dme.URL())
 		}
 		if err == nil && dbEmoji == nil {
 			dbEmoji, err = s.Main.DB.Emoji.GetByMXC(ctx, key)
