@@ -48,6 +48,9 @@ const (
 	getEmojiBySlackIDQuery = `
 		SELECT team_id, emoji_id, value, alias, image_mxc FROM emoji WHERE team_id=$1 AND emoji_id=$2
 	`
+	getEmojiByValueQuery = `
+		SELECT team_id, emoji_id, value, alias, image_mxc FROM emoji WHERE team_id=$1 AND value=$2
+	`
 	getEmojiByMXCQuery = `
 		SELECT team_id, emoji_id, value, alias, image_mxc FROM emoji WHERE image_mxc=$1 ORDER BY alias NULLS FIRST
 	`
@@ -92,6 +95,10 @@ func (eq *EmojiQuery) GetEmojiCount(ctx context.Context, teamID string) (count i
 
 func (eq *EmojiQuery) GetBySlackID(ctx context.Context, teamID, emojiID string) (*Emoji, error) {
 	return eq.QueryOne(ctx, getEmojiBySlackIDQuery, teamID, emojiID)
+}
+
+func (eq *EmojiQuery) GetByValue(ctx context.Context, teamID, value string) (*Emoji, error) {
+	return eq.QueryOne(ctx, getEmojiByValueQuery, teamID, value)
 }
 
 func (eq *EmojiQuery) GetByMXC(ctx context.Context, mxc string) (*Emoji, error) {

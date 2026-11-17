@@ -17,11 +17,14 @@
 package slackid
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
 
+	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
+	"maunium.net/go/mautrix/id"
 )
 
 type MediaIDType byte
@@ -102,6 +105,16 @@ func DirectMediaEmojiFromURL(url string) *DirectMediaEmoji {
 		EmojiID:  emojiID,
 		FileName: fileName,
 	}
+}
+
+func ParseDirectMediaEmojiURI(ctx context.Context, matrix bridgev2.MatrixConnector, mxc id.ContentURIString) *DirectMediaEmoji {
+	mediaID, err := matrix.ParseContentURI(ctx, mxc)
+	if err != nil {
+		return nil
+	}
+	parsed, _ := ParseMediaID(mediaID)
+	dme, _ := parsed.(*DirectMediaEmoji)
+	return dme
 }
 
 func (dme *DirectMediaEmoji) URL() string {

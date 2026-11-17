@@ -29,6 +29,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/event"
+	"maunium.net/go/mautrix/id"
 
 	"go.mau.fi/mautrix-slack/pkg/connector/slackdb"
 	"go.mau.fi/mautrix-slack/pkg/emoji"
@@ -311,7 +312,12 @@ func (s *SlackClient) PreHandleMatrixReaction(ctx context.Context, msg *bridgev2
 	var emojiID string
 	if strings.ContainsRune(key, ':') {
 		var dbEmoji *slackdb.Emoji
-		dbEmoji, err = s.Main.DB.Emoji.GetByMXC(ctx, key)
+		if dme := slackid.ParseDirectMediaEmojiURI(ctx, s.Main.br.Matrix, id.ContentURIString(key)); dme != nil {
+			dbEmoji, err = s.Main.DB.Emoji.GetByValue(ctx, dme.TeamID, dme.URL())
+		}
+		if err == nil && dbEmoji == nil {
+			dbEmoji, err = s.Main.DB.Emoji.GetByMXC(ctx, key)
+		}
 		if err != nil {
 			err = fmt.Errorf("failed to get emoji from db: %w", err)
 		} else if dbEmoji == nil {
