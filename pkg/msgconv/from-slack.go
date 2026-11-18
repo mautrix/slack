@@ -483,6 +483,11 @@ RetryLoop:
 	}
 	if uploadErr != nil {
 		if retErr != nil {
+			if mc.DirectMedia && !convertAudio {
+				if part := mc.directMediaFilePart(ctx, partID, file.ID, &content); part != nil {
+					return part
+				}
+			}
 			return retErr
 		}
 		if errors.Is(uploadErr, mautrix.MTooLarge) {
@@ -516,6 +521,7 @@ func (mc *MessageConverter) directMediaFilePart(ctx context.Context, partID netw
 		return nil
 	}
 	content.URL = mxc
+	content.File = nil
 	return &bridgev2.ConvertedMessagePart{
 		ID:      partID,
 		Type:    event.EventMessage,

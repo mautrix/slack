@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"time"
 
@@ -348,6 +349,7 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		wrapped = s.wrapReadReceipt(meta, evt.Channel, evt.Timestamp)
 
 	case *slack.ChannelJoinedEvent:
+		s.invalidateChatInfoCache(evt.Channel.ID)
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel.ID, &evt.Channel, s.UserID, "")
 		meta.CreatePortal = true
 		wrapped = wrapMemberChange(meta, meta.Sender, event.MembershipJoin, "")
@@ -355,6 +357,7 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
 		wrapped = wrapMemberChange(meta, meta.Sender, event.MembershipLeave, event.MembershipJoin)
 	case *slack.GroupJoinedEvent:
+		s.invalidateChatInfoCache(evt.Channel.ID)
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel.ID, &evt.Channel, s.UserID, "")
 		meta.CreatePortal = true
 		wrapped = wrapMemberChange(meta, meta.Sender, event.MembershipJoin, "")
@@ -362,6 +365,9 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
 		wrapped = wrapMemberChange(meta, meta.Sender, event.MembershipLeave, event.MembershipJoin)
 	case *slack.MemberJoinedChannelEvent:
+		if evt.User == s.UserID {
+			s.invalidateChatInfoCache(evt.Channel)
+		}
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, evt.User, evt.EventTimestamp)
 		wrapped = wrapMemberChange(meta, meta.Sender, event.MembershipJoin, "")
 	case *slack.MemberLeftChannelEvent:
@@ -564,6 +570,10 @@ func (s *SlackClient) wrapMessage(meta simplevent.EventMeta, evt *slack.MessageE
 		meta.Timestamp = slackid.ParseSlackTimestamp(evt.Timestamp)
 	}
 	meta.StreamOrder = meta.Timestamp.UnixMicro()
+	if isTombstoneChange(evt) {
+		// The tombstone is sent as Slackbot, but it replaces the original author's message.
+		meta.Sender = bridgev2.EventSender{ForceEditOrigSender: true}
+	}
 	if meta.Type == bridgev2.RemoteEventMessageRemove {
 		return &simplevent.MessageRemove{
 			EventMeta:     meta,
@@ -594,7 +604,19 @@ func (s *SlackClient) convertMessage(ctx context.Context, portal *bridgev2.Porta
 }
 
 func (s *SlackClient) convertEdit(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, existing []*database.Message, evt *slack.MessageEvent) (*bridgev2.ConvertedEdit, error) {
-	return s.Main.MsgConv.EditToMatrix(ctx, portal, intent, s.UserLogin, evt.SubMessage, evt.PreviousMessage, existing)
+	converted, err := s.Main.MsgConv.EditToMatrix(ctx, portal, intent, s.UserLogin, evt.SubMessage, evt.PreviousMessage, existing)
+	if err != nil || converted == nil || !isTombstoneChange(evt) {
+		return converted, err
+	}
+	// Tombstones of thread roots don't include files, remove all parts other than the text
+	for _, part := range existing {
+		if slices.ContainsFunc(converted.ModifiedParts, func(m *bridgev2.ConvertedEditPart) bool { return m.Part == part }) ||
+			slices.Contains(converted.DeletedParts, part) {
+			continue
+		}
+		converted.DeletedParts = append(converted.DeletedParts, part)
+	}
+	return converted, nil
 }
 
 const huddleEndMaxAge = 15 * time.Minute
@@ -624,6 +646,12 @@ func (s *SlackClient) wrapChatResync(meta simplevent.EventMeta, latestMessage st
 			return latestBridgedID < latestMessage, nil
 		},
 	}
+}
+
+// Slack replaces a deleted message that has thread replies with a Slackbot
+// tombstone via message_changed instead of sending message_deleted.
+func isTombstoneChange(evt *slack.MessageEvent) bool {
+	return evt.SubType == slack.MsgSubTypeMessageChanged && evt.SubMessage != nil && evt.SubMessage.SubType == "tombstone"
 }
 
 func getMessageEventType(msg *slack.Msg) bridgev2.RemoteEventType {
