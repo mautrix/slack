@@ -146,7 +146,7 @@ func (mc *MessageConverter) ToSlack(
 			caption = content.Body
 			captionHTML = content.FormattedBody
 		}
-		if content.MSC3245Voice != nil && content.Info.MimeType != "audio/webm; codecs=opus" && ffmpeg.Supported() {
+		if content.MSC3245Voice != nil && content.Info.MimeType != "audio/webm; codecs=opus" && content.Info.MimeType != "audio/mp4" && ffmpeg.Supported() {
 			data, err = ffmpeg.ConvertBytes(ctx, data, ".webm", []string{}, []string{"-c:a", "copy"}, content.Info.MimeType)
 			if err != nil {
 				log.Err(err).Msg("Failed to convert voice message")
