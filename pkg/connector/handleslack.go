@@ -349,6 +349,7 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		wrapped = s.wrapReadReceipt(meta, evt.Channel, evt.Timestamp)
 
 	case *slack.ChannelJoinedEvent:
+		s.invalidateChatInfoCache(evt.Channel.ID)
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel.ID, &evt.Channel, s.UserID, "")
 		meta.CreatePortal = true
 		wrapped = wrapMemberChange(meta, meta.Sender, event.MembershipJoin, "")
@@ -356,6 +357,7 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
 		wrapped = wrapMemberChange(meta, meta.Sender, event.MembershipLeave, event.MembershipJoin)
 	case *slack.GroupJoinedEvent:
+		s.invalidateChatInfoCache(evt.Channel.ID)
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel.ID, &evt.Channel, s.UserID, "")
 		meta.CreatePortal = true
 		wrapped = wrapMemberChange(meta, meta.Sender, event.MembershipJoin, "")
@@ -363,6 +365,9 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
 		wrapped = wrapMemberChange(meta, meta.Sender, event.MembershipLeave, event.MembershipJoin)
 	case *slack.MemberJoinedChannelEvent:
+		if evt.User == s.UserID {
+			s.invalidateChatInfoCache(evt.Channel)
+		}
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, evt.User, evt.EventTimestamp)
 		wrapped = wrapMemberChange(meta, meta.Sender, event.MembershipJoin, "")
 	case *slack.MemberLeftChannelEvent:
