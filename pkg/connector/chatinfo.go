@@ -326,6 +326,13 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 			event.StateTopic: topicLevel,
 		},
 	}
+	if canAtChannel := s.canAtChannel.Load(); canAtChannel != nil && roomType != database.RoomTypeDM && s.makePortalKey(info).Receiver != "" {
+		roomMentionLevel := 0
+		if !*canAtChannel {
+			roomMentionLevel = 100
+		}
+		members.PowerLevels.RoomMention = &roomMentionLevel
+	}
 	bumpMemberPL := func(slackUserID string, pl int) {
 		userID := slackid.MakeUserID(s.TeamID, slackUserID)
 		member, ok := members.MemberMap[userID]

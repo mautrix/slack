@@ -32,8 +32,10 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 	"go.mau.fi/util/exsync"
+	"go.mau.fi/util/ptr"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
+	"maunium.net/go/mautrix/bridgev2/simplevent"
 	"maunium.net/go/mautrix/bridgev2/status"
 	"maunium.net/go/mautrix/id"
 
@@ -154,6 +156,7 @@ type SlackClient struct {
 	userResyncQueue  chan *bridgev2.Ghost
 	initialConnect   time.Time
 	rtmHelloReceived atomic.Bool
+	canAtChannel     atomic.Pointer[bool]
 
 	fileCreatedListeners *exsync.Map[string, chan struct{}]
 
@@ -338,6 +341,17 @@ func (s *SlackClient) connect(ctx context.Context, bootCancel *context.CancelFun
 	s.initialConnect = time.Now()
 	s.rtmHelloReceived.Store(false)
 	s.BootResp = bootResp
+	if s.IsRealUser {
+		perms, err := s.Client.GetPermissionsContext(ctx, s.TeamID, slack.GetPermissionsParameters{
+			UserID:      s.UserID,
+			Permissions: []string{slack.PermissionCanAtChannel},
+		})
+		if err != nil {
+			zerolog.Ctx(ctx).Err(err).Msg("Failed to fetch @channel permission")
+		} else {
+			s.canAtChannel.Store(ptr.Ptr(slices.Contains(perms.Allowed, slack.PermissionCanAtChannel)))
+		}
+	}
 	if s.Main.Config.DMOnly {
 		for idx := range bootResp.IMs {
 			s.addDMChannel(&bootResp.IMs[idx].Channel)
@@ -687,21 +701,16 @@ func (s *SlackClient) syncChannels(ctx context.Context, channels []*slack.Channe
 			latestMessageID, hasCounts = latestMessageIDs[ch.ID]
 		}
 		// TODO fetch latest message from channel info when using bot account?
-		s.Main.br.QueueRemoteEvent(s.UserLogin, &SlackChatResync{
-			SlackEventMeta: &SlackEventMeta{
-				Type:         bridgev2.RemoteEventChatResync,
-				PortalKey:    portalKey,
-				CreatePortal: hasCounts || (!ch.IsIM && !ch.IsMpIM),
-				LogContext: func(c zerolog.Context) zerolog.Context {
-					return c.
-						Object("portal_key", portalKey).
-						Str("slack_latest_message_id", latestMessageID)
-				},
+		s.Main.br.QueueRemoteEvent(s.UserLogin, s.wrapChatResync(simplevent.EventMeta{
+			PortalKey:    portalKey,
+			CreatePortal: hasCounts || (!ch.IsIM && !ch.IsMpIM),
+			LogContext: func(c zerolog.Context) zerolog.Context {
+				return c.
+					Str("event_ts", "").
+					Object("portal_key", portalKey).
+					Str("slack_latest_message_id", latestMessageID)
 			},
-			Client:         s,
-			LatestMessage:  latestMessageID,
-			PreFetchedInfo: ch,
-		})
+		}, latestMessageID, ch, false))
 	}
 	for portalKey := range existingPortals {
 		s.queueCatchUpResync(portalKey, latestMessageIDs)
@@ -718,14 +727,12 @@ func (s *SlackClient) queueCatchUpResync(portalKey networkid.PortalKey, latestMe
 		// TODO delete portal if it's actually gone?
 		return
 	}
-	s.UserLogin.QueueRemoteEvent(&SlackChatResync{
-		SlackEventMeta: &SlackEventMeta{
-			Type:      bridgev2.RemoteEventChatResync,
-			PortalKey: portalKey,
+	s.UserLogin.QueueRemoteEvent(s.wrapChatResync(simplevent.EventMeta{
+		PortalKey: portalKey,
+		LogContext: func(c zerolog.Context) zerolog.Context {
+			return c.Str("event_ts", "")
 		},
-		Client:        s,
-		LatestMessage: latestMessageID,
-	})
+	}, latestMessageID, nil, false))
 }
 
 func (s *SlackClient) catchUpAfterReconnect(ctx context.Context) {

@@ -1,3 +1,38 @@
+# v26.11
+
+* Added support for custom group DM names.
+* Added support for bridging thread read receipts.
+* Added better formatting for rich text date elements from Slack.
+* Added minimal support for rendering action buttons from Slack messages
+  (clicking non-link buttons still requires using Slack).
+* Added notices for huddles ending.
+* Added support for handling thread roots being tombstoned (where the content is
+  deleted, but the message remains to allow using the thread).
+* Changed channel info bridging to use description as topic when topic is empty
+  (yes, Slack has both a channel topic and a channel description).
+* Changed channel mention handling to use DM names too.
+* Changed app unfurls to be bridged as link previews instead of the default
+  attachment handling.
+* Changed link preview handling to parse mrkdwn in preview descriptions.
+* Changed canvas bridging from Slack to send a link instead of a file.
+* Changed avatar bridging to use 512px thumbnails instead of the full-res
+  originals, which may be very large.
+* Fixed bridging messages that start out with nothing bridgeable and are later
+  edited to have content.
+* Fixed certain types of edits not being bridged properly.
+* Fixed room name/avatar changes being echoed when sent from Matrix.
+* Fixed reaction redactions from Matrix being marked as failed if Slack returns
+  a `no_reaction` error.
+* Fixed messages not being backfilled after a disconnection where Slack refuses
+  to resume sending events from the last received one.
+* Fixed some bot infos being refetched on every message as Slack always returns
+  `bot_not_found` for them.
+* Fixed emoji pruning failing on SQLite in workspaces with more than 32k custom
+  emojis.
+* Fixed some cases where conversion of slack permalinks from/to matrix.to links
+  didn't work correctly.
+* Fixed member names not being sorted correctly when generating group DM name.
+
 # v26.10
 
 * Added support for using direct media for normal attachments.
