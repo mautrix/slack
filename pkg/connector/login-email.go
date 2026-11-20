@@ -337,10 +337,11 @@ func slackEmailStep(instructions string) *bridgev2.LoginStep {
 		Instructions: instructions,
 		UserInputParams: &bridgev2.LoginUserInputParams{
 			Fields: []bridgev2.LoginInputDataField{{
-				Type:    bridgev2.LoginInputFieldTypeEmail,
-				ID:      loginFieldEmail,
-				Name:    "Email",
-				Pattern: `^[^@\s]+@[^@\s]+\.[^@\s]+$`,
+				Type:           bridgev2.LoginInputFieldTypeEmail,
+				ID:             loginFieldEmail,
+				Name:           "Email",
+				Pattern:        `^[^@\s]+@[^@\s]+\.[^@\s]+$`,
+				AutofillDomain: "slack.com",
 			}},
 		},
 	}
