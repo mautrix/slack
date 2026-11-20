@@ -45,7 +45,7 @@ var (
 func (s *SlackConnector) Init(bridge *bridgev2.Bridge) {
 	slack.DefaultUserAgent = mautrix.DefaultUserAgent
 	s.br = bridge
-	s.DB = slackdb.New(bridge.DB.Database, bridge.Log.With().Str("db_section", "slack").Logger())
+	s.DB = slackdb.New(bridge.ID, bridge.DB.Database, bridge.Log.With().Str("db_section", "slack").Logger())
 	s.MsgConv = msgconv.New(bridge, s.DB)
 	bridge.Config.PersonalFilteringSpaces = false
 }

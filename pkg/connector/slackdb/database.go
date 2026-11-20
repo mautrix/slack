@@ -22,11 +22,13 @@ import (
 
 	"github.com/rs/zerolog"
 	"go.mau.fi/util/dbutil"
+	"maunium.net/go/mautrix/bridgev2/networkid"
 )
 
 type SlackDB struct {
 	*dbutil.Database
-	Emoji *EmojiQuery
+	Emoji     *EmojiQuery
+	ReadState *ReadStateQuery
 }
 
 var table = dbutil.BuildUpgradeTable().WithFS(upgrades).Finish()
@@ -34,7 +36,7 @@ var table = dbutil.BuildUpgradeTable().WithFS(upgrades).Finish()
 //go:embed *.sql
 var upgrades embed.FS
 
-func New(db *dbutil.Database, log zerolog.Logger) *SlackDB {
+func New(bridgeID networkid.BridgeID, db *dbutil.Database, log zerolog.Logger) *SlackDB {
 	db = db.Child("slack_version", table, dbutil.ZeroLogger(log))
 	return &SlackDB{
 		Database: db,
@@ -42,5 +44,6 @@ func New(db *dbutil.Database, log zerolog.Logger) *SlackDB {
 			QueryHelper: dbutil.MakeQueryHelper(db, newEmoji),
 			locks:       make(map[string]*sync.Mutex),
 		},
+		ReadState: &ReadStateQuery{db: db, bridgeID: bridgeID},
 	}
 }
