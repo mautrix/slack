@@ -599,6 +599,7 @@ func (s *SlackClient) preHandleAssistantThreadReply(ctx context.Context, portal 
 		}
 		msg.Channel = evt.Channel
 		meta := simplevent.EventMeta{PortalKey: portal.PortalKey, Sender: s.makeEventSender(cmp.Or(msg.User, msg.BotID))}
+		//lint:ignore SA1019 -
 		portal.Internal().HandleRemoteMessage(ctx, s.UserLogin, s.wrapMessage(meta, (*slack.MessageEvent)(&msg)).(bridgev2.RemoteMessage))
 	}
 	return nil
