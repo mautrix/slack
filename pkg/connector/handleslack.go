@@ -17,6 +17,7 @@
 package connector
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"runtime/debug"
@@ -280,6 +281,8 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 			s.invalidateChatInfoCache(evt.Channel)
 			meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, "", evt.Timestamp)
 			return s.wrapChatResync(meta, "", nil, true), metaErr
+		case slack.MsgSubTypeAssistantAppThread:
+			return nil, nil
 		}
 		sender := evt.User
 		if sender == "" {
@@ -296,6 +299,9 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		}
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, sender, "")
 		meta.CreatePortal = true
+		if metaErr == nil && evt.ThreadTimestamp != "" && evt.ThreadTimestamp != evt.Timestamp && s.skipAssistantThreadReply(ctx, meta.PortalKey, evt) {
+			return nil, nil
+		}
 		meta = meta.WithMoreLogContext(func(c zerolog.Context) zerolog.Context {
 			c = c.
 				Str("message_ts", evt.Timestamp).
@@ -554,6 +560,42 @@ func (s *SlackClient) wrapMessage(meta simplevent.EventMeta, evt *slack.MessageE
 		}
 	}
 	return msg
+}
+
+func (s *SlackClient) skipAssistantThreadReply(ctx context.Context, portalKey networkid.PortalKey, evt *slack.MessageEvent) bool {
+	if !strings.HasPrefix(evt.Channel, "D") || getMessageEventType(&evt.Msg) != bridgev2.RemoteEventMessage {
+		return false
+	}
+	root, err := s.Main.br.DB.Message.GetFirstPartByID(ctx, portalKey.Receiver, slackid.MakeMessageID(s.TeamID, evt.Channel, evt.ThreadTimestamp))
+	if err != nil || root != nil {
+		return false
+	}
+	thread, err := s.Client.GetConversationRepliesContext(ctx, &slack.GetConversationRepliesParameters{
+		GetConversationHistoryParameters: slack.GetConversationHistoryParameters{ChannelID: evt.Channel},
+		Timestamp:                        evt.ThreadTimestamp,
+	})
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to fetch thread of message with unknown thread root")
+		return false
+	} else if len(thread.Messages) == 0 || thread.Messages[0].SubType != slack.MsgSubTypeAssistantAppThread {
+		return false
+	} else if evt.User != s.UserID && !slices.Contains(thread.Messages[0].ReplyUsers, s.UserID) {
+		return true
+	}
+	for _, msg := range thread.Messages {
+		if msg.Timestamp >= evt.Timestamp {
+			break
+		}
+		msg.Channel = evt.Channel
+		meta, err := s.makeEventMeta(ctx, evt.Channel, nil, cmp.Or(msg.User, msg.BotID), "")
+		if err != nil {
+			zerolog.Ctx(ctx).Err(err).Msg("Failed to make event meta for assistant thread message")
+			continue
+		}
+		meta.CreatePortal = true
+		s.UserLogin.Bridge.QueueRemoteEvent(s.UserLogin, s.wrapMessage(meta, (*slack.MessageEvent)(&msg)))
+	}
+	return false
 }
 
 func (s *SlackClient) convertMessage(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, evt *slack.MessageEvent) (*bridgev2.ConvertedMessage, error) {
