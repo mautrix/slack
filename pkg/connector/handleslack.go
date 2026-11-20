@@ -623,7 +623,8 @@ func getMessageEventType(msg *slack.Msg) bridgev2.RemoteEventType {
 	case slack.MsgSubTypeMessageReplied, slack.MsgSubTypeGroupJoin, slack.MsgSubTypeGroupLeave,
 		slack.MsgSubTypeChannelJoin, slack.MsgSubTypeChannelLeave:
 		return bridgev2.RemoteEventUnknown
-	case "", slack.MsgSubTypeMeMessage, slack.MsgSubTypeBotMessage, slack.MsgSubTypeThreadBroadcast, "huddle_thread":
+	case "", slack.MsgSubTypeMeMessage, slack.MsgSubTypeBotMessage, slack.MsgSubTypeThreadBroadcast, "huddle_thread",
+		slack.MsgSubTypeAssistantAppThread:
 		// Known types
 		return bridgev2.RemoteEventMessage
 	default:

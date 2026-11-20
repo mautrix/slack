@@ -238,6 +238,8 @@ func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, po
 		switch msg.SubType {
 		case slack.MsgSubTypeMeMessage:
 			textPart.Content.MsgType = event.MsgEmote
+		case slack.MsgSubTypeAssistantAppThread:
+			textPart.Content.MsgType = event.MsgNotice
 		case "huddle_thread":
 			textPart.Content.MsgType = event.MsgNotice
 			if msg.Room == nil || !msg.Room.HasEnded {
