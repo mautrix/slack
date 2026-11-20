@@ -330,6 +330,7 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 	case *slack.ChannelMarkedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
 		s.setLastReadCache(evt.Channel, evt.Timestamp)
+		meta.PostHandleFunc = s.saveBridgedLastRead(evt.Channel, evt.Timestamp)
 		wrapped = s.wrapReadReceipt(meta, evt.Channel, evt.Timestamp)
 	case *slack.ThreadMarkedEvent:
 		if evt.Subscription.LastRead == "" {
@@ -342,10 +343,12 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 	case *slack.IMMarkedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
 		s.setLastReadCache(evt.Channel, evt.Timestamp)
+		meta.PostHandleFunc = s.saveBridgedLastRead(evt.Channel, evt.Timestamp)
 		wrapped = s.wrapReadReceipt(meta, evt.Channel, evt.Timestamp)
 	case *slack.GroupMarkedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
 		s.setLastReadCache(evt.Channel, evt.Timestamp)
+		meta.PostHandleFunc = s.saveBridgedLastRead(evt.Channel, evt.Timestamp)
 		wrapped = s.wrapReadReceipt(meta, evt.Channel, evt.Timestamp)
 
 	case *slack.ChannelJoinedEvent:

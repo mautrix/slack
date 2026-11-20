@@ -711,13 +711,14 @@ func (s *SlackClient) syncChannels(ctx context.Context, channels []*slack.Channe
 					Str("slack_latest_message_id", latestMessageID)
 			},
 		}, latestMessageID, ch, false))
+		s.queueReadStateSync(ctx, portalKey, ch.ID)
 	}
 	for portalKey := range existingPortals {
-		s.queueCatchUpResync(portalKey, latestMessageIDs)
+		s.queueCatchUpResync(ctx, portalKey, latestMessageIDs)
 	}
 }
 
-func (s *SlackClient) queueCatchUpResync(portalKey networkid.PortalKey, latestMessageIDs map[string]string) {
+func (s *SlackClient) queueCatchUpResync(ctx context.Context, portalKey networkid.PortalKey, latestMessageIDs map[string]string) {
 	_, channelID := slackid.ParsePortalID(portalKey.ID)
 	if channelID == "" {
 		return
@@ -733,6 +734,44 @@ func (s *SlackClient) queueCatchUpResync(portalKey networkid.PortalKey, latestMe
 			return c.Str("event_ts", "")
 		},
 	}, latestMessageID, nil, false))
+	s.queueReadStateSync(ctx, portalKey, channelID)
+}
+
+// queueReadStateSync bridges Slack's last_read if it moved while the bridge wasn't connected,
+// since the *_marked events from that time are never delivered.
+func (s *SlackClient) queueReadStateSync(ctx context.Context, portalKey networkid.PortalKey, channelID string) {
+	lastRead := s.getLastReadCache(channelID)
+	if lastRead == "" || lastRead == "0000000000.000000" {
+		return
+	}
+	bridgedLastRead, err := s.Main.DB.ReadState.Get(ctx, s.UserLogin.ID, channelID)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Str("channel_id", channelID).Msg("Failed to get bridged read state")
+		return
+	} else if lastRead <= bridgedLastRead {
+		return
+	}
+	s.UserLogin.QueueRemoteEvent(s.wrapReadReceipt(simplevent.EventMeta{
+		PortalKey: portalKey,
+		Sender:    s.makeEventSender(s.UserID),
+		Timestamp: slackid.ParseSlackTimestamp(lastRead),
+		LogContext: func(c zerolog.Context) zerolog.Context {
+			return c.Str("event_ts", lastRead).Str("action", "read state sync")
+		},
+		PostHandleFunc: s.saveBridgedLastRead(channelID, lastRead),
+	}, channelID, lastRead))
+}
+
+func (s *SlackClient) saveBridgedLastRead(channelID, lastRead string) func(context.Context, *bridgev2.Portal) {
+	return func(ctx context.Context, portal *bridgev2.Portal) {
+		if portal.MXID == "" {
+			return
+		}
+		err := s.Main.DB.ReadState.Put(ctx, s.UserLogin.ID, channelID, lastRead)
+		if err != nil {
+			zerolog.Ctx(ctx).Err(err).Str("channel_id", channelID).Msg("Failed to save bridged read state")
+		}
+	}
 }
 
 func (s *SlackClient) catchUpAfterReconnect(ctx context.Context) {
@@ -749,7 +788,7 @@ func (s *SlackClient) catchUpAfterReconnect(ctx context.Context) {
 	}
 	log.Debug().Int("portal_count", len(userPortals)).Msg("Checking portals for messages missed during reconnect")
 	for _, up := range userPortals {
-		s.queueCatchUpResync(up.Portal, latestMessageIDs)
+		s.queueCatchUpResync(ctx, up.Portal, latestMessageIDs)
 	}
 }
 
