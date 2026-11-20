@@ -30,6 +30,7 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 	"go.mau.fi/util/exerrors"
+	"go.mau.fi/util/ptr"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
@@ -299,8 +300,11 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		}
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, sender, "")
 		meta.CreatePortal = true
-		if metaErr == nil && evt.ThreadTimestamp != "" && evt.ThreadTimestamp != evt.Timestamp && s.skipAssistantThreadReply(ctx, meta.PortalKey, evt) {
-			return nil, nil
+		if evt.ThreadTimestamp != "" && evt.ThreadTimestamp != evt.Timestamp && strings.HasPrefix(evt.Channel, "D") {
+			meta.CreatePortal = evt.User == s.UserID
+			meta.PreHandleWithResultFunc = func(ctx context.Context, portal *bridgev2.Portal) *bridgev2.EventHandlingResult {
+				return s.preHandleAssistantThreadReply(ctx, portal, evt)
+			}
 		}
 		meta = meta.WithMoreLogContext(func(c zerolog.Context) zerolog.Context {
 			c = c.
@@ -562,40 +566,42 @@ func (s *SlackClient) wrapMessage(meta simplevent.EventMeta, evt *slack.MessageE
 	return msg
 }
 
-func (s *SlackClient) skipAssistantThreadReply(ctx context.Context, portalKey networkid.PortalKey, evt *slack.MessageEvent) bool {
-	if !strings.HasPrefix(evt.Channel, "D") || getMessageEventType(&evt.Msg) != bridgev2.RemoteEventMessage {
-		return false
+func (s *SlackClient) preHandleAssistantThreadReply(ctx context.Context, portal *bridgev2.Portal, evt *slack.MessageEvent) *bridgev2.EventHandlingResult {
+	if getMessageEventType(&evt.Msg) != bridgev2.RemoteEventMessage {
+		return nil
 	}
-	root, err := s.Main.br.DB.Message.GetFirstPartByID(ctx, portalKey.Receiver, slackid.MakeMessageID(s.TeamID, evt.Channel, evt.ThreadTimestamp))
-	if err != nil || root != nil {
-		return false
+	log := zerolog.Ctx(ctx)
+	root, err := s.Main.br.DB.Message.GetFirstPartByID(ctx, portal.Receiver, slackid.MakeMessageID(s.TeamID, evt.Channel, evt.ThreadTimestamp))
+	if err != nil {
+		log.Err(err).Msg("Failed to get thread root message")
+		return nil
+	} else if root != nil {
+		return nil
 	}
 	thread, err := s.Client.GetConversationRepliesContext(ctx, &slack.GetConversationRepliesParameters{
 		GetConversationHistoryParameters: slack.GetConversationHistoryParameters{ChannelID: evt.Channel},
 		Timestamp:                        evt.ThreadTimestamp,
 	})
 	if err != nil {
-		zerolog.Ctx(ctx).Err(err).Msg("Failed to fetch thread of message with unknown thread root")
-		return false
+		log.Err(err).Msg("Failed to fetch thread of message with unknown thread root")
+		return nil
 	} else if len(thread.Messages) == 0 || thread.Messages[0].SubType != slack.MsgSubTypeAssistantAppThread {
-		return false
+		return nil
 	} else if evt.User != s.UserID && !slices.Contains(thread.Messages[0].ReplyUsers, s.UserID) {
-		return true
+		log.Debug().Msg("Ignoring message in assistant app thread the user hasn't posted in")
+		return ptr.Ptr(bridgev2.EventHandlingResultIgnored)
 	}
 	for _, msg := range thread.Messages {
 		if msg.Timestamp >= evt.Timestamp {
 			break
-		}
-		msg.Channel = evt.Channel
-		meta, err := s.makeEventMeta(ctx, evt.Channel, nil, cmp.Or(msg.User, msg.BotID), "")
-		if err != nil {
-			zerolog.Ctx(ctx).Err(err).Msg("Failed to make event meta for assistant thread message")
+		} else if getMessageEventType(&msg.Msg) != bridgev2.RemoteEventMessage {
 			continue
 		}
-		meta.CreatePortal = true
-		s.UserLogin.Bridge.QueueRemoteEvent(s.UserLogin, s.wrapMessage(meta, (*slack.MessageEvent)(&msg)))
+		msg.Channel = evt.Channel
+		meta := simplevent.EventMeta{PortalKey: portal.PortalKey, Sender: s.makeEventSender(cmp.Or(msg.User, msg.BotID))}
+		portal.Internal().HandleRemoteMessage(ctx, s.UserLogin, s.wrapMessage(meta, (*slack.MessageEvent)(&msg)).(bridgev2.RemoteMessage))
 	}
-	return false
+	return nil
 }
 
 func (s *SlackClient) convertMessage(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, evt *slack.MessageEvent) (*bridgev2.ConvertedMessage, error) {
