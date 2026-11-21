@@ -113,6 +113,8 @@ func (s *SlackClient) FetchMessages(ctx context.Context, params bridgev2.FetchMe
 			continue
 		} else if getMessageEventType(&msg.Msg) != bridgev2.RemoteEventMessage && msg.ReplyCount == 0 {
 			continue
+		} else if msg.SubType == slack.MsgSubTypeAssistantAppThread && !slices.Contains(msg.ReplyUsers, s.UserID) {
+			continue
 		}
 		convertedMessages = append(convertedMessages, s.wrapBackfillMessage(ctx, params.Portal, &msg.Msg, threadTS != ""))
 		if maxMsgID < msg.Timestamp {

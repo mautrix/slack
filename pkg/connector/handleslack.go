@@ -17,6 +17,7 @@
 package connector
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"runtime/debug"
@@ -29,6 +30,7 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 	"go.mau.fi/util/exerrors"
+	"go.mau.fi/util/ptr"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
@@ -106,6 +108,7 @@ func (s *SlackClient) HandleSlackEvent(ctx context.Context, rawEvt any) {
 			Msg("Received hello event from websocket (now really connected)")
 		s.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnected})
 		if reconnected && !evt.Resume {
+			s.unpostedAssistantThreads.Clear()
 			go s.catchUpAfterReconnect(ctx)
 		}
 	case *slack.InvalidAuthEvent:
@@ -280,6 +283,8 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 			s.invalidateChatInfoCache(evt.Channel)
 			meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, "", evt.Timestamp)
 			return s.wrapChatResync(meta, "", nil, true), metaErr
+		case slack.MsgSubTypeAssistantAppThread:
+			return nil, nil
 		}
 		sender := evt.User
 		if sender == "" {
@@ -296,6 +301,23 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		}
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, sender, "")
 		meta.CreatePortal = true
+		if evt.ThreadTimestamp != "" && evt.ThreadTimestamp != evt.Timestamp && strings.HasPrefix(evt.Channel, "D") {
+			if evt.User != s.UserID && metaErr == nil {
+				portal, err := s.Main.br.GetExistingPortalByKey(ctx, meta.PortalKey)
+				if err == nil && (portal == nil || portal.MXID == "") {
+					key := evt.Channel + "/" + evt.ThreadTimestamp
+					if s.unpostedAssistantThreads.Has(key) {
+						meta.CreatePortal = false
+					} else if thread, _ := s.getAssistantThread(ctx, evt.Channel, evt.ThreadTimestamp); thread != nil && !slices.Contains(thread[0].ReplyUsers, s.UserID) {
+						s.unpostedAssistantThreads.Add(key)
+						meta.CreatePortal = false
+					}
+				}
+			}
+			meta.PreHandleWithResultFunc = func(ctx context.Context, portal *bridgev2.Portal) *bridgev2.EventHandlingResult {
+				return s.preHandleAssistantThreadReply(ctx, portal, evt)
+			}
+		}
 		meta = meta.WithMoreLogContext(func(c zerolog.Context) zerolog.Context {
 			c = c.
 				Str("message_ts", evt.Timestamp).
@@ -554,6 +576,65 @@ func (s *SlackClient) wrapMessage(meta simplevent.EventMeta, evt *slack.MessageE
 		}
 	}
 	return msg
+}
+
+func (s *SlackClient) getAssistantThread(ctx context.Context, channelID, threadTS string) ([]slack.Message, error) {
+	key := channelID + "/" + threadTS
+	if s.nonAssistantThreads.Has(key) {
+		return nil, nil
+	}
+	thread, err := s.Client.GetConversationRepliesContext(ctx, &slack.GetConversationRepliesParameters{
+		GetConversationHistoryParameters: slack.GetConversationHistoryParameters{ChannelID: channelID},
+		Timestamp:                        threadTS,
+	})
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to fetch thread of message with unknown thread root")
+		return nil, err
+	} else if len(thread.Messages) == 0 || thread.Messages[0].SubType != slack.MsgSubTypeAssistantAppThread {
+		s.nonAssistantThreads.Add(key)
+		return nil, nil
+	}
+	return thread.Messages, nil
+}
+
+func (s *SlackClient) preHandleAssistantThreadReply(ctx context.Context, portal *bridgev2.Portal, evt *slack.MessageEvent) *bridgev2.EventHandlingResult {
+	if getMessageEventType(&evt.Msg) != bridgev2.RemoteEventMessage {
+		return nil
+	}
+	log := zerolog.Ctx(ctx)
+	root, err := s.Main.br.DB.Message.GetFirstPartByID(ctx, portal.Receiver, slackid.MakeMessageID(s.TeamID, evt.Channel, evt.ThreadTimestamp))
+	if err != nil {
+		log.Err(err).Msg("Failed to get thread root message")
+		return nil
+	} else if root != nil {
+		return nil
+	}
+	key := evt.Channel + "/" + evt.ThreadTimestamp
+	if evt.User != s.UserID && s.unpostedAssistantThreads.Has(key) {
+		log.Debug().Msg("Ignoring message in assistant app thread the user hasn't posted in")
+		return ptr.Ptr(bridgev2.EventHandlingResultIgnored)
+	}
+	thread, err := s.getAssistantThread(ctx, evt.Channel, evt.ThreadTimestamp)
+	if err != nil || thread == nil {
+		return nil
+	} else if evt.User != s.UserID && !slices.Contains(thread[0].ReplyUsers, s.UserID) {
+		s.unpostedAssistantThreads.Add(key)
+		log.Debug().Msg("Ignoring message in assistant app thread the user hasn't posted in")
+		return ptr.Ptr(bridgev2.EventHandlingResultIgnored)
+	}
+	s.unpostedAssistantThreads.Remove(key)
+	for _, msg := range thread {
+		if msg.Timestamp >= evt.Timestamp {
+			break
+		} else if getMessageEventType(&msg.Msg) != bridgev2.RemoteEventMessage {
+			continue
+		}
+		msg.Channel = evt.Channel
+		meta := simplevent.EventMeta{PortalKey: portal.PortalKey, Sender: s.makeEventSender(cmp.Or(msg.User, msg.BotID))}
+		//lint:ignore SA1019 -
+		portal.Internal().HandleRemoteMessage(ctx, s.UserLogin, s.wrapMessage(meta, (*slack.MessageEvent)(&msg)).(bridgev2.RemoteMessage))
+	}
+	return nil
 }
 
 func (s *SlackClient) convertMessage(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, evt *slack.MessageEvent) (*bridgev2.ConvertedMessage, error) {

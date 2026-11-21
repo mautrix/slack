@@ -90,6 +90,9 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 			UserID:       userID,
 			TeamID:       teamID,
 			dmChannelIDs: exsync.NewSet[string](),
+
+			nonAssistantThreads:      exsync.NewSet[string](),
+			unpostedAssistantThreads: exsync.NewSet[string](),
 		}
 	} else {
 		client := makeSlackClient(&login.Log, meta.Token, meta.CookieToken, meta.AppToken)
@@ -107,6 +110,9 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 			lastReadCache:          make(map[string]string),
 			userResyncQueue:        make(chan *bridgev2.Ghost, 16),
 			fileCreatedListeners:   exsync.NewMap[string, chan struct{}](),
+
+			nonAssistantThreads:      exsync.NewSet[string](),
+			unpostedAssistantThreads: exsync.NewSet[string](),
 		}
 		if sc.IsRealUser {
 			sc.RTM = client.NewRTM()
@@ -169,6 +175,9 @@ type SlackClient struct {
 	userGroupInfoCacheLock sync.Mutex
 	lastReadCache          map[string]string
 	lastReadCacheLock      sync.Mutex
+
+	nonAssistantThreads      *exsync.Set[string]
+	unpostedAssistantThreads *exsync.Set[string]
 }
 
 var (
