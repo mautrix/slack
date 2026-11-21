@@ -22,6 +22,8 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/rs/zerolog"
@@ -132,90 +134,130 @@ func (mc *MessageConverter) ToSlack(
 		}
 		return &ConvertedSlackMessage{SendReq: slack.MsgOptionCompose(options...)}, nil
 	case event.MsgAudio, event.MsgFile, event.MsgImage, event.MsgVideo:
-		data, err := mc.Bridge.Bot.DownloadMedia(ctx, content.URL, content.File)
-		if err != nil {
+		var convErr error
+		err = mc.Bridge.Bot.DownloadMediaToFile(ctx, content.URL, content.File, false, func(file *os.File) error {
+			conv, convErr = mc.fileToSlack(ctx, client, portal, content, threadRootID, isRealUser, file)
+			return convErr
+		})
+		if convErr != nil {
+			return nil, convErr
+		} else if err != nil {
 			log.Err(err).Msg("Failed to download Matrix attachment")
 			return nil, ErrMediaDownloadFailed
 		}
-
-		var filename, caption, captionHTML, subtype string
-		if content.FileName == "" || content.FileName == content.Body {
-			filename = content.Body
-		} else {
-			filename = content.FileName
-			caption = content.Body
-			captionHTML = content.FormattedBody
-		}
-		if content.MSC3245Voice != nil && content.Info.MimeType != "audio/webm; codecs=opus" && content.Info.MimeType != "audio/mp4" && ffmpeg.Supported() {
-			data, err = ffmpeg.ConvertBytes(ctx, data, ".webm", []string{}, []string{"-c:a", "copy"}, content.Info.MimeType)
-			if err != nil {
-				log.Err(err).Msg("Failed to convert voice message")
-				return nil, ErrMediaConvertFailed
-			}
-			// Slack web will upload a webm/opus audio file with a .m4a extension.
-			// Slack servers appear to then convert it to m4a with aac.
-			filename += ".m4a"
-			content.Info.MimeType = "audio/webm; codecs=opus"
-			subtype = "slack_audio"
-		} else if content.MSC3245Voice != nil && (content.Info.MimeType == "audio/webm; codecs=opus" || content.Info.MimeType == "audio/mp4") {
-			subtype = "slack_audio"
-			if !strings.HasSuffix(filename, ".m4a") {
-				filename += ".m4a"
-			}
-		}
-		_, channelID := slackid.ParsePortalID(portal.ID)
-		if !isRealUser {
-			fileUpload := &slack.UploadFileParameters{
-				Filename:        filename,
-				Reader:          bytes.NewReader(data),
-				FileSize:        len(data),
-				Channel:         channelID,
-				ThreadTimestamp: threadRootID,
-			}
-			// TODO support broadcast outside thread flag
-			if caption != "" {
-				fileUpload.InitialComment = caption
-			}
-			return &ConvertedSlackMessage{FileUpload: fileUpload}, nil
-		} else {
-			resp, err := client.GetFileUploadURL(ctx, slack.GetFileUploadURLParameters{
-				Filename: filename,
-				Length:   len(data),
-				SubType:  subtype,
-			})
-			if err != nil {
-				log.Err(err).Msg("Failed to get file upload URL")
-				return nil, ErrMediaUploadFailed
-			}
-			err = client.UploadToURLB(ctx, resp, content.Info.MimeType, data)
-			if err != nil {
-				log.Err(err).Msg("Failed to upload file")
-				return nil, ErrMediaUploadFailed
-			}
-			err = client.CompleteFileUpload(ctx, resp)
-			if err != nil {
-				log.Err(err).Msg("Failed to complete file upload")
-				return nil, ErrMediaUploadFailed
-			}
-			var block slack.Block
-			if captionHTML != "" {
-				block = mc.MatrixHTMLParser.Parse(ctx, content.FormattedBody, content.Mentions, portal)
-			} else if caption != "" {
-				block = slack.NewRichTextBlock("", slack.NewRichTextSection(slack.NewRichTextSectionTextElement(caption, nil)))
-			}
-			fileShare := &slack.ShareFileParams{
-				Files:     []string{resp.File},
-				Channel:   channelID,
-				ThreadTS:  threadRootID,
-				Broadcast: content.BeeperBroadcastOutsideThread,
-			}
-			if block != nil {
-				fileShare.Blocks = []slack.Block{block}
-			}
-			return &ConvertedSlackMessage{FileShare: fileShare}, nil
-		}
+		return conv, nil
 	default:
 		return nil, ErrUnknownMsgType
+	}
+}
+
+func (mc *MessageConverter) fileToSlack(
+	ctx context.Context,
+	client *slack.Client,
+	portal *bridgev2.Portal,
+	content *event.MessageEventContent,
+	threadRootID string,
+	isRealUser bool,
+	file *os.File,
+) (*ConvertedSlackMessage, error) {
+	log := zerolog.Ctx(ctx)
+	stat, err := file.Stat()
+	if err != nil {
+		log.Err(err).Msg("Failed to stat Matrix attachment")
+		return nil, ErrMediaDownloadFailed
+	}
+	var filename, caption, captionHTML, subtype string
+	if content.FileName == "" || content.FileName == content.Body {
+		filename = content.Body
+	} else {
+		filename = content.FileName
+		caption = content.Body
+		captionHTML = content.FormattedBody
+	}
+	var data []byte
+	var reader io.Reader = file
+	size := stat.Size()
+	if content.MSC3245Voice != nil && content.Info.MimeType != "audio/webm; codecs=opus" && content.Info.MimeType != "audio/mp4" && ffmpeg.Supported() {
+		data, err = io.ReadAll(file)
+		if err != nil {
+			log.Err(err).Msg("Failed to read Matrix attachment")
+			return nil, ErrMediaDownloadFailed
+		}
+		data, err = ffmpeg.ConvertBytes(ctx, data, ".webm", []string{}, []string{"-c:a", "copy"}, content.Info.MimeType)
+		if err != nil {
+			log.Err(err).Msg("Failed to convert voice message")
+			return nil, ErrMediaConvertFailed
+		}
+		// Slack web will upload a webm/opus audio file with a .m4a extension.
+		// Slack servers appear to then convert it to m4a with aac.
+		filename += ".m4a"
+		content.Info.MimeType = "audio/webm; codecs=opus"
+		subtype = "slack_audio"
+		reader = bytes.NewReader(data)
+		size = int64(len(data))
+	} else if content.MSC3245Voice != nil && (content.Info.MimeType == "audio/webm; codecs=opus" || content.Info.MimeType == "audio/mp4") {
+		subtype = "slack_audio"
+		if !strings.HasSuffix(filename, ".m4a") {
+			filename += ".m4a"
+		}
+	}
+	_, channelID := slackid.ParsePortalID(portal.ID)
+	if !isRealUser {
+		if data == nil {
+			data, err = io.ReadAll(file)
+			if err != nil {
+				log.Err(err).Msg("Failed to read Matrix attachment")
+				return nil, ErrMediaDownloadFailed
+			}
+		}
+		fileUpload := &slack.UploadFileParameters{
+			Filename:        filename,
+			Reader:          bytes.NewReader(data),
+			FileSize:        len(data),
+			Channel:         channelID,
+			ThreadTimestamp: threadRootID,
+		}
+		// TODO support broadcast outside thread flag
+		if caption != "" {
+			fileUpload.InitialComment = caption
+		}
+		return &ConvertedSlackMessage{FileUpload: fileUpload}, nil
+	} else {
+		resp, err := client.GetFileUploadURL(ctx, slack.GetFileUploadURLParameters{
+			Filename: filename,
+			Length:   int(size),
+			SubType:  subtype,
+		})
+		if err != nil {
+			log.Err(err).Msg("Failed to get file upload URL")
+			return nil, ErrMediaUploadFailed
+		}
+		err = client.UploadToURLReader(ctx, resp, content.Info.MimeType, reader, size)
+		if err != nil {
+			log.Err(err).Msg("Failed to upload file")
+			return nil, ErrMediaUploadFailed
+		}
+		err = client.CompleteFileUpload(ctx, resp)
+		if err != nil {
+			log.Err(err).Msg("Failed to complete file upload")
+			return nil, ErrMediaUploadFailed
+		}
+		var block slack.Block
+		if captionHTML != "" {
+			block = mc.MatrixHTMLParser.Parse(ctx, content.FormattedBody, content.Mentions, portal)
+		} else if caption != "" {
+			block = slack.NewRichTextBlock("", slack.NewRichTextSection(slack.NewRichTextSectionTextElement(caption, nil)))
+		}
+		fileShare := &slack.ShareFileParams{
+			Files:     []string{resp.File},
+			Channel:   channelID,
+			ThreadTS:  threadRootID,
+			Broadcast: content.BeeperBroadcastOutsideThread,
+		}
+		if block != nil {
+			fileShare.Blocks = []slack.Block{block}
+		}
+		return &ConvertedSlackMessage{FileShare: fileShare}, nil
 	}
 }
 
