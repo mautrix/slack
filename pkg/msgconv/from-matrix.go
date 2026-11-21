@@ -151,6 +151,8 @@ func (mc *MessageConverter) ToSlack(
 	}
 }
 
+const maxInMemoryFileSize = 100 * 1024 * 1024
+
 func (mc *MessageConverter) fileToSlack(
 	ctx context.Context,
 	client *slack.Client,
@@ -178,6 +180,9 @@ func (mc *MessageConverter) fileToSlack(
 	var reader io.Reader = file
 	size := stat.Size()
 	if content.MSC3245Voice != nil && content.Info.MimeType != "audio/webm; codecs=opus" && content.Info.MimeType != "audio/mp4" && ffmpeg.Supported() {
+		if size > maxInMemoryFileSize {
+			return nil, bridgev2.ErrMediaTooLarge
+		}
 		data, err = io.ReadAll(file)
 		if err != nil {
 			log.Err(err).Msg("Failed to read Matrix attachment")
@@ -204,6 +209,9 @@ func (mc *MessageConverter) fileToSlack(
 	_, channelID := slackid.ParsePortalID(portal.ID)
 	if !isRealUser {
 		if data == nil {
+			if size > maxInMemoryFileSize {
+				return nil, bridgev2.ErrMediaTooLarge
+			}
 			data, err = io.ReadAll(file)
 			if err != nil {
 				log.Err(err).Msg("Failed to read Matrix attachment")
