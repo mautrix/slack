@@ -1,0 +1,222 @@
+{
+	"namespace": "mautrix-slack",
+	"messages": [
+		{
+			"key": "mautrix-slack:login.field.app_token.description",
+			"english": "Slack app-level token (starts with `xapp-`)"
+		},
+		{
+			"key": "mautrix-slack:login.field.app_token.name",
+			"english": "App token"
+		},
+		{
+			"key": "mautrix-slack:login.field.bot_token.description",
+			"english": "Slack bot token for the workspace (starts with `xoxb-`)"
+		},
+		{
+			"key": "mautrix-slack:login.field.bot_token.name",
+			"english": "Bot token"
+		},
+		{
+			"key": "mautrix-slack:login.field.code.description",
+			"english": "Six-character code from Slack"
+		},
+		{
+			"key": "mautrix-slack:login.field.code.name",
+			"english": "Confirmation code"
+		},
+		{
+			"key": "mautrix-slack:login.field.email.name",
+			"english": "Email"
+		},
+		{
+			"key": "mautrix-slack:login.field.two_factor_code.description",
+			"english": "Six-digit code from your Slack authenticator or SMS"
+		},
+		{
+			"key": "mautrix-slack:login.field.two_factor_code.name",
+			"english": "Authentication code"
+		},
+		{
+			"key": "mautrix-slack:login.field.workspace.description",
+			"english": "Slack workspace to connect"
+		},
+		{
+			"key": "mautrix-slack:login.field.workspace.name",
+			"english": "Workspace"
+		},
+		{
+			"key": "mautrix-slack:login.flow.app.description",
+			"english": "Log in with a Slack app"
+		},
+		{
+			"key": "mautrix-slack:login.flow.app.name",
+			"english": "Slack app"
+		},
+		{
+			"key": "mautrix-slack:login.flow.email.description",
+			"english": "Sign in with your Slack email address"
+		},
+		{
+			"key": "mautrix-slack:login.flow.email.name",
+			"english": "Email"
+		},
+		{
+			"key": "mautrix-slack:login.flow.token.description",
+			"english": "Log in with an auth token (and a cookie, if the token is from a browser)"
+		},
+		{
+			"key": "mautrix-slack:login.flow.token.name",
+			"english": "Auth token \u0026 cookie"
+		},
+		{
+			"key": "mautrix-slack:login.step.auth_token.instructions",
+			"english": "Enter a JSON object with your auth token and cookie token, or a cURL command copied from browser devtools.\n\nFor example: `{\"auth_token\":\"xoxc-...\",\"cookie_token\":\"xoxd-...\"}`"
+		},
+		{
+			"key": "mautrix-slack:login.step.browser.instructions",
+			"english": "{workspace} doesn't support email sign-in. Sign in to it in the browser to continue.",
+			"params": [
+				"workspace"
+			]
+		},
+		{
+			"key": "mautrix-slack:login.step.browser.instructions.sso",
+			"english": "{workspace} uses single sign-on. Sign in with your organization's account in the browser to continue.",
+			"params": [
+				"workspace"
+			]
+		},
+		{
+			"key": "mautrix-slack:login.step.complete.instructions",
+			"english": "Successfully logged into {workspace} as {user}",
+			"params": [
+				"user",
+				"workspace"
+			],
+			"comment": "user is the Slack account's email address or username"
+		},
+		{
+			"key": "mautrix-slack:login.step.email.instructions",
+			"english": "Enter the email address associated with your Slack account."
+		},
+		{
+			"key": "mautrix-slack:login.step.email.instructions.captcha_required",
+			"english": "Slack requires a CAPTCHA for this sign-in. Complete the embedded challenge and try again."
+		},
+		{
+			"key": "mautrix-slack:login.step.email.instructions.code_expired",
+			"english": "That Slack confirmation code expired. Enter your email to request a new one."
+		},
+		{
+			"key": "mautrix-slack:login.step.email.instructions.email_rejected",
+			"english": "Slack rejected that email address. Check it and try again."
+		},
+		{
+			"key": "mautrix-slack:login.step.email.instructions.invalid_email",
+			"english": "Enter a valid Slack account email address."
+		},
+		{
+			"key": "mautrix-slack:login.step.email.instructions.no_workspaces",
+			"english": "Slack did not return any workspaces that support email sign-in for this account."
+		},
+		{
+			"key": "mautrix-slack:login.step.email.instructions.rate_limited",
+			"english": "Slack is rate limiting email sign-in. Wait a few minutes before trying again."
+		},
+		{
+			"key": "mautrix-slack:login.step.email.instructions.start_failed",
+			"english": "Slack could not start email sign-in. Try again later."
+		},
+		{
+			"key": "mautrix-slack:login.step.email.instructions.validation_failed",
+			"english": "Slack created a session, but the bridge could not validate it. Enter your email to try again."
+		},
+		{
+			"key": "mautrix-slack:login.step.email_captcha.instructions",
+			"english": "Slack requires a CAPTCHA before it can email the confirmation code. Complete the embedded challenge to continue."
+		},
+		{
+			"key": "mautrix-slack:login.step.email_captcha.instructions.no_solution",
+			"english": "The CAPTCHA did not return a solution. Complete a new embedded challenge to continue."
+		},
+		{
+			"key": "mautrix-slack:login.step.email_captcha.instructions.pending",
+			"english": "Complete the embedded CAPTCHA before continuing."
+		},
+		{
+			"key": "mautrix-slack:login.step.email_captcha.instructions.rate_limited",
+			"english": "Slack is rate limiting email sign-in. Wait a few minutes, then complete a new embedded challenge."
+		},
+		{
+			"key": "mautrix-slack:login.step.email_captcha.instructions.rejected",
+			"english": "Slack rejected or expired that CAPTCHA solution. Complete a new embedded challenge to continue."
+		},
+		{
+			"key": "mautrix-slack:login.step.email_code.instructions",
+			"english": "Slack emailed you a confirmation code. Enter the six characters from that email."
+		},
+		{
+			"key": "mautrix-slack:login.step.email_code.instructions.invalid_code",
+			"english": "Enter the six-character code Slack emailed you."
+		},
+		{
+			"key": "mautrix-slack:login.step.email_code.instructions.rate_limited",
+			"english": "Slack is rate limiting code checks. Wait before trying again."
+		},
+		{
+			"key": "mautrix-slack:login.step.email_code.instructions.rejected",
+			"english": "Slack rejected that confirmation code. Check the email and try again."
+		},
+		{
+			"key": "mautrix-slack:login.step.two_factor.instructions",
+			"english": "Enter the authentication code required by this Slack workspace."
+		},
+		{
+			"key": "mautrix-slack:login.step.two_factor.instructions.expired",
+			"english": "That two-factor session expired. Enter a new authentication code."
+		},
+		{
+			"key": "mautrix-slack:login.step.two_factor.instructions.failed",
+			"english": "Slack did not complete two-factor authentication. Check the code and try again."
+		},
+		{
+			"key": "mautrix-slack:login.step.two_factor.instructions.invalid_code",
+			"english": "Enter the six-digit code from your authenticator app or SMS."
+		},
+		{
+			"key": "mautrix-slack:login.step.two_factor.instructions.rate_limited",
+			"english": "Slack is rate limiting authentication-code checks. Wait before trying again."
+		},
+		{
+			"key": "mautrix-slack:login.step.two_factor.instructions.rejected",
+			"english": "Slack rejected that authentication code. Check the code and try again."
+		},
+		{
+			"key": "mautrix-slack:login.step.workspace.instructions",
+			"english": "Choose the Slack workspace to connect."
+		},
+		{
+			"key": "mautrix-slack:login.step.workspace.instructions.invalid",
+			"english": "Choose one of the Slack workspaces in the list."
+		},
+		{
+			"key": "mautrix-slack:login.step.workspace.instructions.sign_in_failed",
+			"english": "Could not sign in to {workspace}: {error}",
+			"params": [
+				"error",
+				"workspace"
+			],
+			"comment": "error is an English description of the failure"
+		},
+		{
+			"key": "mautrix-slack:login.step.workspace.instructions.two_factor_failed",
+			"english": "Could not start two-factor authentication for {workspace}: {error}",
+			"params": [
+				"error",
+				"workspace"
+			],
+			"comment": "error is an English description of the failure"
+		}
+	]
+}

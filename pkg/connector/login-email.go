@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog"
+	"go.mau.fi/util/l10n"
 	"maunium.net/go/mautrix/bridgev2"
 )
 
@@ -82,7 +83,7 @@ var _ bridgev2.LoginProcessUserInput = (*SlackEmailLogin)(nil)
 var _ bridgev2.LoginProcessCookies = (*SlackEmailLogin)(nil)
 
 func (s *SlackEmailLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) {
-	return slackEmailStep("Enter the email address associated with your Slack account."), nil
+	return slackEmailStep(msgStepEmailInstructions.Message()), nil
 }
 
 func (s *SlackEmailLogin) Cancel() {}
@@ -96,7 +97,7 @@ func (s *SlackEmailLogin) SubmitUserInput(ctx context.Context, input map[string]
 	case s.workspaces != nil:
 		return s.submitWorkspace(ctx, input)
 	case s.captcha != nil:
-		return slackCaptchaStep(s.captcha, "Complete the embedded CAPTCHA before continuing.")
+		return slackCaptchaStep(s.captcha, msgStepCaptchaPending.Message())
 	case s.email != "":
 		return s.submitCode(ctx, input)
 	default:
@@ -107,7 +108,7 @@ func (s *SlackEmailLogin) SubmitUserInput(ctx context.Context, input map[string]
 func (s *SlackEmailLogin) submitEmail(ctx context.Context, input map[string]string) (*bridgev2.LoginStep, error) {
 	email := strings.TrimSpace(input[loginFieldEmail])
 	if !validSlackLoginEmail(email) {
-		return slackEmailStep("Enter a valid Slack account email address."), nil
+		return slackEmailStep(msgStepEmailInvalid.Message()), nil
 	}
 	if s.API == nil {
 		return nil, errors.New("slack email login client is not initialized")
@@ -116,16 +117,16 @@ func (s *SlackEmailLogin) submitEmail(ctx context.Context, input map[string]stri
 	if err != nil {
 		var apiErr *slackLoginAPIError
 		if errors.As(err, &apiErr) {
-			return slackEmailStep(slackLoginErrorInstructions(apiErr)), nil
+			return slackEmailStep(slackLoginErrorInstructions(apiErr).Message()), nil
 		}
 		return nil, wrapSlackLoginError(err)
 	}
 	s.email = email
 	if captcha != nil {
 		s.captcha = captcha
-		return slackCaptchaStep(captcha, "Slack requires a CAPTCHA before it can email the confirmation code. Complete the embedded challenge to continue.")
+		return slackCaptchaStep(captcha, msgStepCaptchaInstructions.Message())
 	}
-	return slackEmailCodeStep("Slack emailed you a confirmation code. Enter the six characters from that email."), nil
+	return slackEmailCodeStep(msgStepEmailCodeInstructions.Message()), nil
 }
 
 func (s *SlackEmailLogin) SubmitCookies(ctx context.Context, cookies map[string]string) (*bridgev2.LoginStep, error) {
@@ -142,7 +143,7 @@ func (s *SlackEmailLogin) SubmitCookies(ctx context.Context, cookies map[string]
 	}
 	captchaResponse := strings.TrimSpace(cookies[loginFieldCaptchaToken])
 	if captchaResponse == "" {
-		return slackCaptchaStep(s.captcha, "The CAPTCHA did not return a solution. Complete a new embedded challenge to continue.")
+		return slackCaptchaStep(s.captcha, msgStepCaptchaNoSolution.Message())
 	}
 	if s.API == nil {
 		return nil, errors.New("slack email login client is not initialized")
@@ -153,43 +154,43 @@ func (s *SlackEmailLogin) SubmitCookies(ctx context.Context, cookies map[string]
 		if errors.As(err, &apiErr) {
 			switch apiErr.Code {
 			case "captcha_required", "captcha_failed", "invalid_captcha":
-				return slackCaptchaStep(s.captcha, "Slack rejected or expired that CAPTCHA solution. Complete a new embedded challenge to continue.")
+				return slackCaptchaStep(s.captcha, msgStepCaptchaRejected.Message())
 			case "ratelimited", "rate_limited", "code_request_limit_reached":
-				return slackCaptchaStep(s.captcha, "Slack is rate limiting email sign-in. Wait a few minutes, then complete a new embedded challenge.")
+				return slackCaptchaStep(s.captcha, msgStepCaptchaRateLimited.Message())
 			case "invalid_email", "email_invalid":
 				s.email = ""
 				s.captcha = nil
-				return slackEmailStep("Slack rejected that email address. Check it and try again."), nil
+				return slackEmailStep(msgStepEmailRejected.Message()), nil
 			}
 		}
 		return nil, wrapSlackLoginError(err)
 	}
 	s.captcha = nil
-	return slackEmailCodeStep("Slack emailed you a confirmation code. Enter the six characters from that email."), nil
+	return slackEmailCodeStep(msgStepEmailCodeInstructions.Message()), nil
 }
 
 func (s *SlackEmailLogin) submitCode(ctx context.Context, input map[string]string) (*bridgev2.LoginStep, error) {
 	code := normalizeSlackEmailCode(input[loginFieldEmailCode])
 	if !slackEmailCodePattern.MatchString(code) {
-		return slackEmailCodeStep("Enter the six-character code Slack emailed you."), nil
+		return slackEmailCodeStep(msgStepEmailCodeInvalid.Message()), nil
 	}
 	workspaces, err := s.API.ConfirmCode(ctx, s.email, strings.ReplaceAll(code, "-", ""))
 	if err != nil {
 		switch slackAPIErrorCode(err) {
 		case "invalid_code", "invalid_email_code", "code_already_used", "failed":
-			return slackEmailCodeStep("Slack rejected that confirmation code. Check the email and try again."), nil
+			return slackEmailCodeStep(msgStepEmailCodeRejected.Message()), nil
 		case "expired_code", "code_expired":
 			s.email = ""
 			s.captcha = nil
-			return slackEmailStep("That Slack confirmation code expired. Enter your email to request a new one."), nil
+			return slackEmailStep(msgStepEmailCodeExpired.Message()), nil
 		case "ratelimited", "rate_limited":
-			return slackEmailCodeStep("Slack is rate limiting code checks. Wait before trying again."), nil
+			return slackEmailCodeStep(msgStepEmailCodeRateLimited.Message()), nil
 		}
 		return nil, wrapSlackLoginError(err)
 	}
 	if len(workspaces) == 0 {
 		s.email = ""
-		return slackEmailStep("Slack did not return any workspaces that support email sign-in for this account."), nil
+		return slackEmailStep(msgStepEmailNoWorkspaces.Message()), nil
 	}
 	s.workspaces = make(map[string]slackLoginWorkspace, len(workspaces))
 	options := make([]string, 0, len(workspaces))
@@ -205,14 +206,14 @@ func (s *SlackEmailLogin) submitCode(ctx context.Context, input map[string]strin
 		return s.finishWorkspace(ctx, workspaces[0])
 	}
 	slices.Sort(options)
-	return slackWorkspaceStep(options, "Choose the Slack workspace to connect."), nil
+	return slackWorkspaceStep(options, msgStepWorkspaceInstructions.Message()), nil
 }
 
 func (s *SlackEmailLogin) submitWorkspace(ctx context.Context, input map[string]string) (*bridgev2.LoginStep, error) {
 	selection := strings.TrimSpace(input[loginFieldWorkspace])
 	workspace, ok := s.workspaces[selection]
 	if !ok {
-		return slackWorkspaceStep(slackWorkspaceOptions(s.workspaces), "Choose one of the Slack workspaces in the list."), nil
+		return slackWorkspaceStep(slackWorkspaceOptions(s.workspaces), msgStepWorkspaceInvalid.Message()), nil
 	}
 	return s.finishWorkspace(ctx, workspace)
 }
@@ -223,11 +224,11 @@ func (s *SlackEmailLogin) finishWorkspace(ctx context.Context, workspace slackLo
 		return slackBrowserStep(workspace), nil
 	}
 	if workspace.TwoFactorRequired {
-		return s.startTwoFactor(ctx, workspace, "Enter the authentication code required by this Slack workspace.")
+		return s.startTwoFactor(ctx, workspace, msgStepTwoFactorInstructions.Message())
 	}
 	token, cookieToken, err := s.API.LoginWorkspace(ctx, workspace)
 	if err != nil {
-		return slackWorkspaceStep(slackWorkspaceOptions(s.workspaces), fmt.Sprintf("Could not sign in to %s: %s", workspace.displayName(), safeSlackLoginError(err))), nil
+		return slackWorkspaceStep(slackWorkspaceOptions(s.workspaces), msgStepWorkspaceSignInFailed.Render(l10n.Params{"workspace": workspace.displayName(), "error": safeSlackLoginError(err)})), nil
 	}
 	return s.completeWorkspace(ctx, workspace, token, cookieToken)
 }
@@ -235,7 +236,7 @@ func (s *SlackEmailLogin) finishWorkspace(ctx context.Context, workspace slackLo
 func (s *SlackEmailLogin) startTwoFactor(
 	ctx context.Context,
 	workspace slackLoginWorkspace,
-	instructions string,
+	instructions l10n.Message,
 ) (*bridgev2.LoginStep, error) {
 	challenge, err := s.API.StartTwoFactor(ctx, workspace)
 	if err != nil {
@@ -253,7 +254,7 @@ func (s *SlackEmailLogin) startTwoFactor(
 		logEvent.Msg("Failed to start Slack two-factor authentication")
 		return slackWorkspaceStep(
 			slackWorkspaceOptions(s.workspaces),
-			fmt.Sprintf("Could not start two-factor authentication for %s: %s", workspace.displayName(), safeSlackLoginError(err)),
+			msgStepWorkspaceTwoFactorFailed.Render(l10n.Params{"workspace": workspace.displayName(), "error": safeSlackLoginError(err)}),
 		), nil
 	}
 	if challenge == nil {
@@ -270,7 +271,7 @@ func (s *SlackEmailLogin) submitTwoFactor(
 ) (*bridgev2.LoginStep, error) {
 	code := strings.TrimSpace(input[loginFieldTwoFactorCode])
 	if !slackTwoFactorPattern.MatchString(code) {
-		return slackTwoFactorStep("Enter the six-digit code from your authenticator app or SMS."), nil
+		return slackTwoFactorStep(msgStepTwoFactorInvalid.Message()), nil
 	}
 	if s.API == nil {
 		return nil, errors.New("slack email login client is not initialized")
@@ -280,18 +281,18 @@ func (s *SlackEmailLogin) submitTwoFactor(
 	if err != nil {
 		switch slackAPIErrorCode(err) {
 		case "ratelimited", "rate_limited":
-			return slackTwoFactorStep("Slack is rate limiting authentication-code checks. Wait before trying again."), nil
+			return slackTwoFactorStep(msgStepTwoFactorRateLimited.Message()), nil
 		case "two_factor_expired", "two_factor_state_expired":
 			s.twoFactor = nil
 			return s.startTwoFactor(
 				ctx,
 				challenge.Workspace,
-				"That two-factor session expired. Enter a new authentication code.",
+				msgStepTwoFactorExpired.Message(),
 			)
 		case "invalid_2fa_code", "invalid_two_factor_code", "invalid_pin":
-			return slackTwoFactorStep("Slack rejected that authentication code. Check the code and try again."), nil
+			return slackTwoFactorStep(msgStepTwoFactorRejected.Message()), nil
 		}
-		return slackTwoFactorStep("Slack did not complete two-factor authentication. Check the code and try again."), nil
+		return slackTwoFactorStep(msgStepTwoFactorFailed.Message()), nil
 	}
 	s.twoFactor = nil
 	return s.completeWorkspace(ctx, challenge.Workspace, token, cookieToken)
@@ -314,7 +315,7 @@ func (s *SlackEmailLogin) completeWorkspace(
 		s.twoFactor = nil
 		s.browser = nil
 		s.workspaces = nil
-		return slackEmailStep("Slack created a session, but the bridge could not validate it. Enter your email to try again."), nil
+		return slackEmailStep(msgStepEmailValidationFailed.Message()), nil
 	}
 	return step, nil
 }
@@ -330,7 +331,7 @@ func completeSlackEmailLogin(
 	})
 }
 
-func slackEmailStep(instructions string) *bridgev2.LoginStep {
+func slackEmailStep(instructions l10n.Message) *bridgev2.LoginStep {
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeUserInput,
 		StepID:       LoginStepIDEmail,
@@ -339,7 +340,7 @@ func slackEmailStep(instructions string) *bridgev2.LoginStep {
 			Fields: []bridgev2.LoginInputDataField{{
 				Type:           bridgev2.LoginInputFieldTypeEmail,
 				ID:             loginFieldEmail,
-				Name:           "Email",
+				Name:           msgFieldEmailName.Message(),
 				Pattern:        `^[^@\s]+@[^@\s]+\.[^@\s]+$`,
 				AutofillDomain: "slack.com",
 			}},
@@ -365,7 +366,7 @@ func slackCaptchaExtractionJS(captcha *slackLoginCaptcha) (string, error) {
 	return "(" + slackCaptchaExtractionFunction + ")(" + string(configJSON) + ")", nil
 }
 
-func slackCaptchaStep(captcha *slackLoginCaptcha, instructions string) (*bridgev2.LoginStep, error) {
+func slackCaptchaStep(captcha *slackLoginCaptcha, instructions l10n.Message) (*bridgev2.LoginStep, error) {
 	extractJS, err := slackCaptchaExtractionJS(captcha)
 	if err != nil {
 		return nil, err
@@ -389,7 +390,7 @@ func slackCaptchaStep(captcha *slackLoginCaptcha, instructions string) (*bridgev
 	}, nil
 }
 
-func slackEmailCodeStep(instructions string) *bridgev2.LoginStep {
+func slackEmailCodeStep(instructions l10n.Message) *bridgev2.LoginStep {
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeUserInput,
 		StepID:       LoginStepIDEmailCode,
@@ -398,15 +399,15 @@ func slackEmailCodeStep(instructions string) *bridgev2.LoginStep {
 			Fields: []bridgev2.LoginInputDataField{{
 				Type:        bridgev2.LoginInputFieldType2FACode,
 				ID:          loginFieldEmailCode,
-				Name:        "Confirmation code",
-				Description: "Six-character code from Slack",
+				Name:        msgFieldCodeName.Message(),
+				Description: msgFieldCodeDescription.Message(),
 				Pattern:     `^[a-zA-Z0-9]{3}-?[a-zA-Z0-9]{3}$`,
 			}},
 		},
 	}
 }
 
-func slackWorkspaceStep(options []string, instructions string) *bridgev2.LoginStep {
+func slackWorkspaceStep(options []string, instructions l10n.Message) *bridgev2.LoginStep {
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeUserInput,
 		StepID:       LoginStepIDWorkspace,
@@ -415,15 +416,15 @@ func slackWorkspaceStep(options []string, instructions string) *bridgev2.LoginSt
 			Fields: []bridgev2.LoginInputDataField{{
 				Type:        bridgev2.LoginInputFieldTypeSelect,
 				ID:          loginFieldWorkspace,
-				Name:        "Workspace",
-				Description: "Slack workspace to connect",
-				Options:     options,
+				Name:        msgFieldWorkspaceName.Message(),
+				Description: msgFieldWorkspaceDescription.Message(),
+				Options:     bridgev2.UnlocalizedOptions(options...),
 			}},
 		},
 	}
 }
 
-func slackTwoFactorStep(instructions string) *bridgev2.LoginStep {
+func slackTwoFactorStep(instructions l10n.Message) *bridgev2.LoginStep {
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeUserInput,
 		StepID:       LoginStepIDTwoFactor,
@@ -432,8 +433,8 @@ func slackTwoFactorStep(instructions string) *bridgev2.LoginStep {
 			Fields: []bridgev2.LoginInputDataField{{
 				Type:        bridgev2.LoginInputFieldType2FACode,
 				ID:          loginFieldTwoFactorCode,
-				Name:        "Authentication code",
-				Description: "Six-digit code from your Slack authenticator or SMS",
+				Name:        msgFieldTwoFactorName.Message(),
+				Description: msgFieldTwoFactorDescription.Message(),
 				Pattern:     slackLoginTwoFactorCodeRegex,
 			}},
 		},
@@ -441,9 +442,10 @@ func slackTwoFactorStep(instructions string) *bridgev2.LoginStep {
 }
 
 func slackBrowserStep(workspace slackLoginWorkspace) *bridgev2.LoginStep {
-	instructions := fmt.Sprintf("%s doesn't support email sign-in. Sign in to it in the browser to continue.", workspace.displayName())
+	params := l10n.Params{"workspace": workspace.displayName()}
+	instructions := msgStepBrowserInstructions.Render(params)
 	if workspace.SSORequired {
-		instructions = fmt.Sprintf("%s uses single sign-on. Sign in with your organization's account in the browser to continue.", workspace.displayName())
+		instructions = msgStepBrowserSSO.Render(params)
 	}
 	return &bridgev2.LoginStep{
 		Type:          bridgev2.LoginStepTypeCookies,
@@ -474,20 +476,20 @@ func normalizeSlackEmailCode(input string) string {
 func safeSlackLoginError(err error) string {
 	var apiErr *slackLoginAPIError
 	if errors.As(err, &apiErr) {
-		return slackLoginErrorInstructions(apiErr)
+		return slackLoginErrorInstructions(apiErr).Message().String()
 	}
 	return "Slack did not complete the workspace login"
 }
 
-func slackLoginErrorInstructions(err *slackLoginAPIError) string {
+func slackLoginErrorInstructions(err *slackLoginAPIError) *l10n.Template {
 	switch err.Code {
 	case "ratelimited", "rate_limited", "code_request_limit_reached":
-		return "Slack is rate limiting email sign-in. Wait a few minutes before trying again."
+		return msgStepEmailRateLimited
 	case "invalid_email", "email_invalid":
-		return "Slack rejected that email address. Check it and try again."
+		return msgStepEmailRejected
 	case "captcha_required", "captcha_failed":
-		return "Slack requires a CAPTCHA for this sign-in. Complete the embedded challenge and try again."
+		return msgStepEmailCaptchaRequired
 	default:
-		return "Slack could not start email sign-in. Try again later."
+		return msgStepEmailStartFailed
 	}
 }
