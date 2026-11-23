@@ -473,12 +473,12 @@ func normalizeSlackEmailCode(input string) string {
 	return strings.ToUpper(strings.TrimSpace(input))
 }
 
-func safeSlackLoginError(err error) string {
+func safeSlackLoginError(err error) l10n.Message {
 	var apiErr *slackLoginAPIError
 	if errors.As(err, &apiErr) {
-		return slackLoginErrorInstructions(apiErr).Message().String()
+		return slackLoginErrorInstructions(apiErr).Message()
 	}
-	return "Slack did not complete the workspace login"
+	return msgErrorWorkspaceLoginIncomplete.Message()
 }
 
 func slackLoginErrorInstructions(err *slackLoginAPIError) *l10n.Template {

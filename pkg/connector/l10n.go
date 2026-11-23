@@ -48,22 +48,23 @@ var (
 	msgStepWorkspaceInvalid      = L.Define("login.step.workspace.instructions.invalid", "Choose one of the Slack workspaces in the list.")
 	msgStepWorkspaceSignInFailed = L.Define(
 		"login.step.workspace.instructions.sign_in_failed", "Could not sign in to {workspace}: {error}",
-		l10n.WithComment("error is an English description of the failure"),
+		l10n.WithComment("error is a message describing the failure"),
 	)
 	msgStepWorkspaceTwoFactorFailed = L.Define(
 		"login.step.workspace.instructions.two_factor_failed", "Could not start two-factor authentication for {workspace}: {error}",
-		l10n.WithComment("error is an English description of the failure"),
+		l10n.WithComment("error is a message describing the failure"),
 	)
-	msgStepTwoFactorInstructions = L.Define("login.step.two_factor.instructions", "Enter the authentication code required by this Slack workspace.")
-	msgStepTwoFactorExpired      = L.Define("login.step.two_factor.instructions.expired", "That two-factor session expired. Enter a new authentication code.")
-	msgStepTwoFactorInvalid      = L.Define("login.step.two_factor.instructions.invalid_code", "Enter the six-digit code from your authenticator app or SMS.")
-	msgStepTwoFactorRateLimited  = L.Define("login.step.two_factor.instructions.rate_limited", "Slack is rate limiting authentication-code checks. Wait before trying again.")
-	msgStepTwoFactorRejected     = L.Define("login.step.two_factor.instructions.rejected", "Slack rejected that authentication code. Check the code and try again.")
-	msgStepTwoFactorFailed       = L.Define("login.step.two_factor.instructions.failed", "Slack did not complete two-factor authentication. Check the code and try again.")
-	msgStepBrowserInstructions   = L.Define("login.step.browser.instructions", "{workspace} doesn't support email sign-in. Sign in to it in the browser to continue.")
-	msgStepBrowserSSO            = L.Define("login.step.browser.instructions.sso", "{workspace} uses single sign-on. Sign in with your organization's account in the browser to continue.")
-	msgStepAuthTokenInstructions = L.Define("login.step.auth_token.instructions", "Enter a JSON object with your auth token and cookie token, or a cURL command copied from browser devtools.\n\nFor example: `{\"auth_token\":\"xoxc-...\",\"cookie_token\":\"xoxd-...\"}`")
-	msgStepCompleteInstructions  = L.Define(
+	msgErrorWorkspaceLoginIncomplete = L.Define("login.error.workspace_login_incomplete", "Slack did not complete the workspace login")
+	msgStepTwoFactorInstructions     = L.Define("login.step.two_factor.instructions", "Enter the authentication code required by this Slack workspace.")
+	msgStepTwoFactorExpired          = L.Define("login.step.two_factor.instructions.expired", "That two-factor session expired. Enter a new authentication code.")
+	msgStepTwoFactorInvalid          = L.Define("login.step.two_factor.instructions.invalid_code", "Enter the six-digit code from your authenticator app or SMS.")
+	msgStepTwoFactorRateLimited      = L.Define("login.step.two_factor.instructions.rate_limited", "Slack is rate limiting authentication-code checks. Wait before trying again.")
+	msgStepTwoFactorRejected         = L.Define("login.step.two_factor.instructions.rejected", "Slack rejected that authentication code. Check the code and try again.")
+	msgStepTwoFactorFailed           = L.Define("login.step.two_factor.instructions.failed", "Slack did not complete two-factor authentication. Check the code and try again.")
+	msgStepBrowserInstructions       = L.Define("login.step.browser.instructions", "{workspace} doesn't support email sign-in. Sign in to it in the browser to continue.")
+	msgStepBrowserSSO                = L.Define("login.step.browser.instructions.sso", "{workspace} uses single sign-on. Sign in with your organization's account in the browser to continue.")
+	msgStepAuthTokenInstructions     = L.Define("login.step.auth_token.instructions", "Enter a JSON object with your auth token and cookie token, or a cURL command copied from browser devtools.\n\nFor example: `{\"auth_token\":\"xoxc-...\",\"cookie_token\":\"xoxd-...\"}`")
+	msgStepCompleteInstructions      = L.Define(
 		"login.step.complete.instructions", "Successfully logged into {workspace} as {user}",
 		l10n.WithComment("user is the Slack account's email address or username"),
 	)
