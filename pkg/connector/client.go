@@ -767,7 +767,14 @@ func (s *SlackClient) saveBridgedLastRead(channelID, lastRead string) func(conte
 		if portal.MXID == "" {
 			return
 		}
-		err := s.Main.DB.ReadState.Put(ctx, s.UserLogin.ID, channelID, lastRead)
+		target, err := s.Main.br.DB.Message.GetLastNonFakePartAtOrBeforeTime(ctx, portal.PortalKey, slackid.ParseSlackTimestamp(lastRead))
+		if err != nil {
+			zerolog.Ctx(ctx).Err(err).Str("channel_id", channelID).Msg("Failed to check read receipt target")
+			return
+		} else if target == nil {
+			return
+		}
+		err = s.Main.DB.ReadState.Put(ctx, s.UserLogin.ID, channelID, lastRead)
 		if err != nil {
 			zerolog.Ctx(ctx).Err(err).Str("channel_id", channelID).Msg("Failed to save bridged read state")
 		}
