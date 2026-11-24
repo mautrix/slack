@@ -76,13 +76,23 @@ type SlackTokenLogin struct {
 var _ bridgev2.LoginProcessCookies = (*SlackTokenLogin)(nil)
 
 const ExtractSlackTokenJS = `
-new Promise(resolve => {
+(window.mautrixSlackTokenPromise ??= new Promise(resolve => {
+	const style = document.createElement("style")
+	style.textContent = ".c-google_login, .c-apple_login, .c-horizontal_content_rule { display: none !important; }"
+	document.head.append(style)
+	// Don't open workspaces in a new window
+	document.addEventListener("click", evt => {
+		const link = evt.target.closest?.(".p-workspaces_list__link")
+		if (link) {
+			link.target = ""
+		}
+	}, true)
 	let mautrixSlackTokenCheckInterval
 	let useSlackInBrowserClicked = false
 	function mautrixFindSlackToken() {
 		// Automatically click the "Use Slack in Browser" button
 		if (/\.slack\.com$/.test(window.location.host)) {
-			const link = document?.querySelector?.(".p-ssb_redirect__body")?.querySelector?.(".c-link")
+			const link = document.querySelector('[data-qa="ssb_redirect_open_in_browser"]')
 			if (link && !useSlackInBrowserClicked) {
 				location.href = link.getAttribute("href")
 				useSlackInBrowserClicked = true
@@ -96,7 +106,7 @@ new Promise(resolve => {
 		resolve({ auth_token })
 	}
 	mautrixSlackTokenCheckInterval = window.setInterval(mautrixFindSlackToken, 1000)
-})
+}))
 `
 
 func slackTokenCookiesParams(url string) *bridgev2.LoginCookiesParams {
