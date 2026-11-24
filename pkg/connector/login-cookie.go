@@ -79,7 +79,7 @@ const ExtractSlackTokenJS = `
 (window.mautrixSlackTokenPromise ??= new Promise(resolve => {
 	const style = document.createElement("style")
 	style.textContent = ".c-google_login, .c-apple_login, .c-horizontal_content_rule { display: none !important; }"
-	(document.head ?? document.documentElement).append(style)
+	document.documentElement.append(style)
 	// Don't open workspaces in a new window
 	document.addEventListener("click", evt => {
 		const link = evt.target.closest?.(".p-workspaces_list__link")
