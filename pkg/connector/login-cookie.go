@@ -19,6 +19,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -123,7 +124,7 @@ func slackTokenCookiesParams(url string) *bridgev2.LoginCookiesParams {
 				Name:         "d",
 				CookieDomain: "slack.com",
 			}},
-			Pattern: `^xoxd-[a-zA-Z0-9/+=]+$`,
+			Pattern: `^xoxd-[a-zA-Z0-9/+=%]+$`,
 		}},
 		ExtractJS: ExtractSlackTokenJS,
 	}
@@ -142,6 +143,9 @@ func (s *SlackTokenLogin) Cancel() {}
 
 func (s *SlackTokenLogin) SubmitCookies(ctx context.Context, input map[string]string) (*bridgev2.LoginStep, error) {
 	token, cookieToken := input["auth_token"], input["cookie_token"]
+	if unescaped, err := url.PathUnescape(cookieToken); err == nil {
+		cookieToken = unescaped
+	}
 	client := makeSlackClient(&s.User.Log, token, cookieToken, "")
 	if err := client.FetchVersionData(ctx); err != nil {
 		zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to fetch version data")
