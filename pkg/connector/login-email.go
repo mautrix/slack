@@ -376,8 +376,9 @@ func slackCaptchaStep(captcha *slackLoginCaptcha, instructions l10n.Message) (*b
 		StepID:       LoginStepIDEmailCaptcha,
 		Instructions: instructions,
 		CookiesParams: &bridgev2.LoginCookiesParams{
-			URL:       slackLoginCaptchaPageURL,
-			ExtractJS: extractJS,
+			URL:            slackLoginCaptchaPageURL,
+			UserAgentHints: []bridgev2.UserAgentHint{bridgev2.UserAgentHintDesktop},
+			ExtractJS:      extractJS,
 			Fields: []bridgev2.LoginCookieField{{
 				ID:       loginFieldCaptchaToken,
 				Required: true,

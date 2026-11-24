@@ -111,8 +111,9 @@ const ExtractSlackTokenJS = `
 
 func slackTokenCookiesParams(url string) *bridgev2.LoginCookiesParams {
 	return &bridgev2.LoginCookiesParams{
-		URL:       url,
-		UserAgent: "",
+		URL:            url,
+		UserAgent:      "",
+		UserAgentHints: []bridgev2.UserAgentHint{bridgev2.UserAgentHintDesktop},
 		Fields: []bridgev2.LoginCookieField{{
 			ID:       "auth_token",
 			Required: true,
