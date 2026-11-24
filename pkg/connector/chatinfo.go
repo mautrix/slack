@@ -539,7 +539,7 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 		// Slack's avatar hash for Gravatar-backed avatars doesn't change when the Gravatar image does
 		isGravatar := isGravatarURL(avatarURL)
 		if isGravatar {
-			avatarID = makeGravatarAvatarID(avatarID)
+			avatarID = makeGravatarAvatarID(cmp.Or(avatarID, avatarURL))
 		}
 		avatar = s.makeAvatar(avatarURL, avatarID)
 		// Optimization to avoid updating legacy avatars
