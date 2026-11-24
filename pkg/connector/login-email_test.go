@@ -141,7 +141,7 @@ func TestSlackEmailLoginStateMachine(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, LoginStepIDWorkspace, step.StepID)
 	require.Len(t, step.UserInputParams.Fields, 1)
-	assert.Equal(t, []string{"First (first.slack.com)", "Second (second.slack.com)"}, step.UserInputParams.Fields[0].Options)
+	assert.Equal(t, bridgev2.UnlocalizedOptions("First (first.slack.com)", "Second (second.slack.com)"), step.UserInputParams.Fields[0].Options)
 	assert.Equal(t, "ABC123", api.confirmedCode)
 
 	step, err = login.SubmitUserInput(context.Background(), map[string]string{loginFieldWorkspace: "First (first.slack.com)"})
@@ -195,7 +195,7 @@ func TestSlackEmailLoginCaptchaUsesEmbeddedWebviewAndKeepsNativeCodeStep(t *test
 	require.NotNil(t, step)
 	assert.Equal(t, bridgev2.LoginStepTypeCookies, step.Type)
 	assert.Equal(t, LoginStepIDEmailCaptcha, step.StepID)
-	assert.Contains(t, step.Instructions, "CAPTCHA")
+	assert.Contains(t, step.Instructions.String(), "CAPTCHA")
 	require.NotNil(t, step.CookiesParams)
 	assert.Equal(t, slackLoginCaptchaPageURL, step.CookiesParams.URL)
 	assert.Contains(t, step.CookiesParams.ExtractJS, `"siteKey":"site-key"`)
@@ -239,13 +239,13 @@ func TestSlackEmailLoginCaptchaBlankAndRejectedSolutionsRetryWebview(t *testing.
 	step, err := login.SubmitCookies(context.Background(), map[string]string{})
 	require.NoError(t, err)
 	require.Equal(t, LoginStepIDEmailCaptcha, step.StepID)
-	assert.Contains(t, step.Instructions, "did not return")
+	assert.Contains(t, step.Instructions.String(), "did not return")
 	assert.Equal(t, 0, api.submitCaptchaCallCount)
 
 	step, err = login.SubmitCookies(context.Background(), map[string]string{loginFieldCaptchaToken: "expired-solution"})
 	require.NoError(t, err)
 	require.Equal(t, LoginStepIDEmailCaptcha, step.StepID)
-	assert.Contains(t, step.Instructions, "rejected or expired")
+	assert.Contains(t, step.Instructions.String(), "rejected or expired")
 	assert.Equal(t, 1, api.submitCaptchaCallCount)
 	assert.NotNil(t, login.captcha)
 }
@@ -282,7 +282,7 @@ func TestSlackEmailLoginSingleWorkspaceFailureCanRetry(t *testing.T) {
 	step, err = login.SubmitUserInput(context.Background(), map[string]string{loginFieldEmailCode: "ABC123"})
 	require.NoError(t, err)
 	require.Equal(t, LoginStepIDWorkspace, step.StepID)
-	assert.Equal(t, []string{"Only (only.slack.com)"}, step.UserInputParams.Fields[0].Options)
+	assert.Equal(t, bridgev2.UnlocalizedOptions("Only (only.slack.com)"), step.UserInputParams.Fields[0].Options)
 
 	step, err = login.SubmitUserInput(context.Background(), map[string]string{loginFieldWorkspace: "Only (only.slack.com)"})
 	require.NoError(t, err)
@@ -313,7 +313,7 @@ func TestSlackEmailLoginCompletionFailureRestartsEmailFlow(t *testing.T) {
 	require.Equal(t, LoginStepIDEmail, step.StepID)
 	assert.Empty(t, login.email)
 	assert.Nil(t, login.workspaces)
-	assert.Contains(t, step.Instructions, "could not validate")
+	assert.Contains(t, step.Instructions.String(), "could not validate")
 }
 
 func TestSlackLoginAPIRequestCodeContract(t *testing.T) {

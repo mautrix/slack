@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"go.mau.fi/util/l10n"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 
@@ -34,16 +35,16 @@ const LoginStepIDComplete = "fi.mau.slack.login.complete"
 
 func (s *SlackConnector) GetLoginFlows() []bridgev2.LoginFlow {
 	return []bridgev2.LoginFlow{{
-		Name:        "Email",
-		Description: "Sign in with your Slack email address",
+		Name:        msgFlowEmailName.Message(),
+		Description: msgFlowEmailDescription.Message(),
 		ID:          LoginFlowIDEmail,
 	}, {
-		Name:        "Auth token & cookie",
-		Description: "Log in with an auth token (and a cookie, if the token is from a browser)",
+		Name:        msgFlowTokenName.Message(),
+		Description: msgFlowTokenDescription.Message(),
 		ID:          LoginFlowIDAuthToken,
 	}, {
-		Name:        "Slack app",
-		Description: "Log in with a Slack app",
+		Name:        msgFlowAppName.Message(),
+		Description: msgFlowAppDescription.Message(),
 		ID:          LoginFlowIDApp,
 	}}
 }
@@ -132,7 +133,7 @@ func (s *SlackTokenLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error
 	return &bridgev2.LoginStep{
 		Type:          bridgev2.LoginStepTypeCookies,
 		StepID:        LoginStepIDAuthToken,
-		Instructions:  "Enter a JSON object with your auth token and cookie token, or a cURL command copied from browser devtools.\n\nFor example: `{\"auth_token\":\"xoxc-...\",\"cookie_token\":\"xoxd-...\"}`",
+		Instructions:  msgStepAuthTokenInstructions.Message(),
 		CookiesParams: slackTokenCookiesParams("https://slack.com/signin"),
 	}, nil
 }
@@ -172,7 +173,7 @@ func (s *SlackTokenLogin) SubmitCookies(ctx context.Context, input map[string]st
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeComplete,
 		StepID:       LoginStepIDComplete,
-		Instructions: fmt.Sprintf("Successfully logged into %s as %s", info.Team.Name, info.Self.Profile.Email),
+		Instructions: msgStepCompleteInstructions.Render(l10n.Params{"workspace": info.Team.Name, "user": info.Self.Profile.Email}),
 		CompleteParams: &bridgev2.LoginCompleteParams{
 			UserLoginID: ul.ID,
 			UserLogin:   ul,

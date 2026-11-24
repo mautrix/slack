@@ -87,7 +87,7 @@ func TestSlackEmailLoginTwoFactorRetryReturnsNativeCode(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, bridgev2.LoginStepTypeUserInput, step.Type)
 	assert.Nil(t, step.CookiesParams)
-	assert.Contains(t, step.Instructions, "rejected")
+	assert.Contains(t, step.Instructions.String(), "rejected")
 	assert.Equal(t, 0, api.startTwoFactorCalls)
 	assert.Equal(t, 1, api.submitTwoFactorCalls)
 	require.NotNil(t, login.twoFactor)
@@ -106,7 +106,7 @@ func TestSlackEmailLoginTwoFactorRejectsMalformedCodeLocally(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, bridgev2.LoginStepTypeUserInput, step.Type)
-	assert.Contains(t, step.Instructions, "six-digit")
+	assert.Contains(t, step.Instructions.String(), "six-digit")
 	assert.Equal(t, 0, api.submitTwoFactorCalls)
 }
 

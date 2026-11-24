@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	"go.mau.fi/util/l10n"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 
@@ -43,14 +44,14 @@ func (s *SlackAppLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) 
 			Fields: []bridgev2.LoginInputDataField{{
 				Type:        bridgev2.LoginInputFieldTypeToken,
 				ID:          "bot_token",
-				Name:        "Bot token",
-				Description: "Slack bot token for the workspace (starts with `xoxb-`)",
+				Name:        msgFieldBotTokenName.Message(),
+				Description: msgFieldBotTokenDescription.Message(),
 				Pattern:     "^xoxb-.+$",
 			}, {
 				Type:        bridgev2.LoginInputFieldTypeToken,
 				ID:          "app_token",
-				Name:        "App token",
-				Description: "Slack app-level token (starts with `xapp-`)",
+				Name:        msgFieldAppTokenName.Message(),
+				Description: msgFieldAppTokenDescription.Message(),
 				Pattern:     "^xapp-.+$",
 			}},
 		},
@@ -85,7 +86,7 @@ func (s *SlackAppLogin) SubmitUserInput(ctx context.Context, input map[string]st
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeComplete,
 		StepID:       LoginStepIDComplete,
-		Instructions: fmt.Sprintf("Successfully logged into %s as %s", info.Team, info.User),
+		Instructions: msgStepCompleteInstructions.Render(l10n.Params{"workspace": info.Team, "user": info.User}),
 		CompleteParams: &bridgev2.LoginCompleteParams{
 			UserLoginID: ul.ID,
 			UserLogin:   ul,
