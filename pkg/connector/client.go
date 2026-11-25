@@ -51,6 +51,7 @@ func init() {
 		"slack-user-removed-from-team":      "You were removed from the Slack workspace",
 		"slack-account-inactive":            "Your Slack account has been deactivated",
 		"slack-team-disabled":               "The Slack workspace is no longer available",
+		"slack-not-an-enterprise":           "Slack no longer accepts this session, please log in again",
 		"slack-connection-error":            "Failed to connect to Slack, retrying",
 		"slack-id-mismatch":                 "Unexpected internal error: got different user ID",
 		"slack-rtm-disconnected":            "Disconnected from Slack",
@@ -223,6 +224,13 @@ func (s *SlackClient) handleConnectError(ctx context.Context, err error, attempt
 		s.disconnectUntilRestart("slack-team-disabled")
 	case "user_removed_from_team":
 		s.disconnectUntilRestart("slack-user-removed-from-team")
+	case "not_an_enterprise":
+		s.Disconnect()
+		s.UserLogin.BridgeState.Send(status.BridgeState{
+			StateEvent: status.StateBadCredentials,
+			Error:      "slack-not-an-enterprise",
+			Info:       map[string]any{"go_error": err.Error()},
+		})
 	case "", "ratelimited", "service_unavailable", "request_timeout":
 		s.sendConnectionErrorState(err)
 		return true
