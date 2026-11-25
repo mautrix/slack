@@ -47,12 +47,14 @@ func (s *SlackAppLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) 
 				Name:        msgFieldBotTokenName.Message(),
 				Description: msgFieldBotTokenDescription.Message(),
 				Pattern:     "^xoxb-.+$",
+				Placeholder: l10n.Unlocalized("xoxb-…"),
 			}, {
 				Type:        bridgev2.LoginInputFieldTypeToken,
 				ID:          "app_token",
 				Name:        msgFieldAppTokenName.Message(),
 				Description: msgFieldAppTokenDescription.Message(),
 				Pattern:     "^xapp-.+$",
+				Placeholder: l10n.Unlocalized("xapp-…"),
 			}},
 		},
 	}, nil
