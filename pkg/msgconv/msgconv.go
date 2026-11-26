@@ -51,6 +51,7 @@ type contextKey int
 const (
 	contextKeyPortal contextKey = iota
 	contextKeySource
+	contextKeyMessageFiles
 )
 
 type SlackClientProvider interface {

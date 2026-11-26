@@ -35,6 +35,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
 	"go.mau.fi/util/exhttp"
+	"go.mau.fi/util/exmaps"
 	"go.mau.fi/util/exmime"
 	"go.mau.fi/util/ffmpeg"
 	"go.mau.fi/util/ptr"
@@ -229,6 +230,7 @@ func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, po
 		}
 	}
 	var textPart *bridgev2.ConvertedMessagePart
+	ctx = context.WithValue(ctx, contextKeyMessageFiles, msg.Files)
 	if len(msg.Blocks.BlockSet) != 0 || len(msg.Attachments) != 0 {
 		textPart = mc.trySlackBlocksToMatrix(ctx, portal, intent, msg.Blocks, msg.Attachments)
 	} else if text != "" {
@@ -248,11 +250,17 @@ func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, po
 			}
 		}
 	}
+	renderedCanvases := make(exmaps.Set[string])
+	for _, block := range msg.Blocks.BlockSet {
+		if richText, ok := block.(*slack.RichTextBlock); ok {
+			collectCanvasElementIDs(richText.Elements, renderedCanvases)
+		}
+	}
 	for _, file := range msg.Files {
-		if file.Mode == "tombstone" || !isCanvas(&file) {
+		if renderedCanvases.Has(file.ID) || file.Mode == "tombstone" || !isCanvas(&file) {
 			continue
 		}
-		canvasHTML := mc.renderCanvasLink(ctx, client, &file)
+		canvasHTML := fmt.Sprintf("<p>%s</p>", mc.renderCanvasLink(ctx, client, &file))
 		if textPart == nil {
 			content := format.HTMLToContent(canvasHTML)
 			textPart = &bridgev2.ConvertedMessagePart{
@@ -267,6 +275,27 @@ func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, po
 		}
 	}
 	return textPart
+}
+
+func collectCanvasElementIDs(elements []slack.RichTextElement, into exmaps.Set[string]) {
+	for _, element := range elements {
+		var sectionElements []slack.RichTextSectionElement
+		switch typedElement := element.(type) {
+		case *slack.RichTextSection:
+			sectionElements = typedElement.Elements
+		case *slack.RichTextQuote:
+			sectionElements = typedElement.Elements
+		case *slack.RichTextPreformatted:
+			sectionElements = typedElement.Elements
+		case *slack.RichTextList:
+			collectCanvasElementIDs(typedElement.Elements, into)
+		}
+		for _, sectionElement := range sectionElements {
+			if canvas, ok := sectionElement.(*slack.RichTextSectionCanvasElement); ok {
+				into.Add(canvas.FileID)
+			}
+		}
+	}
 }
 
 func isCanvas(file *slack.File) bool {
@@ -286,9 +315,9 @@ func (mc *MessageConverter) renderCanvasLink(ctx context.Context, client *slack.
 	}
 	titleHTML := mc.mrkdwnToMatrixHtml(ctx, html.UnescapeString(cmp.Or(title, file.PrettyType, "Canvas")), &event.Mentions{})
 	if permalink == "" {
-		return fmt.Sprintf("<p><b>%s</b></p>", titleHTML)
+		return fmt.Sprintf("<b>%s</b>", titleHTML)
 	}
-	return fmt.Sprintf(`<p><b>%s</b><br><a href="%s">Open the canvas in Slack</a></p>`, titleHTML, html.EscapeString(permalink))
+	return fmt.Sprintf(`<b>%s</b><br><a href="%s">Open the canvas in Slack</a>`, titleHTML, html.EscapeString(permalink))
 }
 
 func (mc *MessageConverter) slackTextToMatrix(ctx context.Context, text string) *bridgev2.ConvertedMessagePart {
