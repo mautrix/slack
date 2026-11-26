@@ -619,7 +619,13 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string, lastUpda
 			var ok bool
 			info, ok = infos[userID]
 			if !ok {
-				return nil, nil
+				zerolog.Ctx(ctx).Debug().Str("user_id", userID).Msg("User not found, not retrying until next sync interval")
+				return &bridgev2.UserInfo{
+					ExtraUpdates: func(ctx context.Context, ghost *bridgev2.Ghost) bool {
+						ghost.Metadata.(*slackid.GhostMetadata).LastSync = jsontime.UnixNow()
+						return true
+					},
+				}, nil
 			}
 		}
 	} else {
