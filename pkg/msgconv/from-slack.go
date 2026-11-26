@@ -35,6 +35,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
 	"go.mau.fi/util/exhttp"
+	"go.mau.fi/util/exmaps"
 	"go.mau.fi/util/exmime"
 	"go.mau.fi/util/ffmpeg"
 	"go.mau.fi/util/ptr"
@@ -249,14 +250,14 @@ func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, po
 			}
 		}
 	}
-	renderedCanvases := make(map[string]struct{})
+	renderedCanvases := make(exmaps.Set[string])
 	for _, block := range msg.Blocks.BlockSet {
 		if richText, ok := block.(*slack.RichTextBlock); ok {
 			collectCanvasElementIDs(richText.Elements, renderedCanvases)
 		}
 	}
 	for _, file := range msg.Files {
-		if _, alreadyRendered := renderedCanvases[file.ID]; alreadyRendered || file.Mode == "tombstone" || !isCanvas(&file) {
+		if renderedCanvases.Has(file.ID) || file.Mode == "tombstone" || !isCanvas(&file) {
 			continue
 		}
 		canvasHTML := fmt.Sprintf("<p>%s</p>", mc.renderCanvasLink(ctx, client, &file))
@@ -276,7 +277,7 @@ func (mc *MessageConverter) makeTextPart(ctx context.Context, msg *slack.Msg, po
 	return textPart
 }
 
-func collectCanvasElementIDs(elements []slack.RichTextElement, into map[string]struct{}) {
+func collectCanvasElementIDs(elements []slack.RichTextElement, into exmaps.Set[string]) {
 	for _, element := range elements {
 		var sectionElements []slack.RichTextSectionElement
 		switch typedElement := element.(type) {
@@ -291,7 +292,7 @@ func collectCanvasElementIDs(elements []slack.RichTextElement, into map[string]s
 		}
 		for _, sectionElement := range sectionElements {
 			if canvas, ok := sectionElement.(*slack.RichTextSectionCanvasElement); ok {
-				into[canvas.FileID] = struct{}{}
+				into.Add(canvas.FileID)
 			}
 		}
 	}
