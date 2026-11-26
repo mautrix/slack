@@ -36,6 +36,10 @@ func (tugc *testUserGroupClient) GetChannelInfoForMention(context.Context, strin
 	return "", nil, nil
 }
 
+func (tugc *testUserGroupClient) GetUserInfoForMention(context.Context, *bridgev2.Ghost) (*bridgev2.UserInfo, error) {
+	return nil, nil
+}
+
 func (tugc *testUserGroupClient) GetUserGroupInfoForMention(_ context.Context, userGroupID string) (string, []string, error) {
 	tugc.requestedID = userGroupID
 	return tugc.handle, []string{}, nil

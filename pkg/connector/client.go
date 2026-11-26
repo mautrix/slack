@@ -32,6 +32,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 	"go.mau.fi/util/exsync"
+	"go.mau.fi/util/ptr"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/bridgev2/simplevent"
@@ -50,6 +51,7 @@ func init() {
 		"slack-user-removed-from-team":      "You were removed from the Slack workspace",
 		"slack-account-inactive":            "Your Slack account has been deactivated",
 		"slack-team-disabled":               "The Slack workspace is no longer available",
+		"slack-not-an-enterprise":           "Slack no longer accepts this session, please log in again",
 		"slack-connection-error":            "Failed to connect to Slack, retrying",
 		"slack-id-mismatch":                 "Unexpected internal error: got different user ID",
 		"slack-rtm-disconnected":            "Disconnected from Slack",
@@ -84,11 +86,12 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 	var sc *SlackClient
 	if meta.Token == "" {
 		sc = &SlackClient{
-			Main:         s,
-			UserLogin:    login,
-			UserID:       userID,
-			TeamID:       teamID,
-			dmChannelIDs: exsync.NewSet[string](),
+			Main:            s,
+			UserLogin:       login,
+			UserID:          userID,
+			TeamID:          teamID,
+			dmChannelIDs:    exsync.NewSet[string](),
+			starredChannels: exsync.NewSet[string](),
 		}
 	} else {
 		client := makeSlackClient(&login.Log, meta.Token, meta.CookieToken, meta.AppToken)
@@ -103,6 +106,7 @@ func (s *SlackConnector) LoadUserLogin(ctx context.Context, login *bridgev2.User
 			chatInfoCache:          make(map[string]chatInfoCacheEntry),
 			chatInfoFetchAttempted: make(map[string]bool),
 			dmChannelIDs:           exsync.NewSet[string](),
+			starredChannels:        exsync.NewSet[string](),
 			lastReadCache:          make(map[string]string),
 			userResyncQueue:        make(chan *bridgev2.Ghost, 16),
 			fileCreatedListeners:   exsync.NewMap[string, chan struct{}](),
@@ -155,6 +159,7 @@ type SlackClient struct {
 	userResyncQueue  chan *bridgev2.Ghost
 	initialConnect   time.Time
 	rtmHelloReceived atomic.Bool
+	canAtChannel     atomic.Pointer[bool]
 
 	fileCreatedListeners *exsync.Map[string, chan struct{}]
 
@@ -162,6 +167,7 @@ type SlackClient struct {
 	chatInfoFetchAttempted map[string]bool
 	chatInfoCacheLock      sync.Mutex
 	dmChannelIDs           *exsync.Set[string]
+	starredChannels        *exsync.Set[string]
 	userGroupInfoCache     map[string]*userGroupCacheEntry
 	userGroupInfoCacheTS   time.Time
 	userGroupInfoCacheLock sync.Mutex
@@ -221,6 +227,13 @@ func (s *SlackClient) handleConnectError(ctx context.Context, err error, attempt
 		s.disconnectUntilRestart("slack-team-disabled")
 	case "user_removed_from_team":
 		s.disconnectUntilRestart("slack-user-removed-from-team")
+	case "not_an_enterprise":
+		s.Disconnect()
+		s.UserLogin.BridgeState.Send(status.BridgeState{
+			StateEvent: status.StateBadCredentials,
+			Error:      "slack-not-an-enterprise",
+			Info:       map[string]any{"go_error": err.Error()},
+		})
 	case "", "ratelimited", "service_unavailable", "request_timeout":
 		s.sendConnectionErrorState(err)
 		return true
@@ -339,6 +352,18 @@ func (s *SlackClient) connect(ctx context.Context, bootCancel *context.CancelFun
 	s.initialConnect = time.Now()
 	s.rtmHelloReceived.Store(false)
 	s.BootResp = bootResp
+	s.starredChannels.ReplaceAll(exsync.NewSetWithItems(bootResp.Starred))
+	if s.IsRealUser {
+		perms, err := s.Client.GetPermissionsContext(ctx, s.TeamID, slack.GetPermissionsParameters{
+			UserID:      s.UserID,
+			Permissions: []string{slack.PermissionCanAtChannel},
+		})
+		if err != nil {
+			zerolog.Ctx(ctx).Err(err).Msg("Failed to fetch @channel permission")
+		} else {
+			s.canAtChannel.Store(ptr.Ptr(slices.Contains(perms.Allowed, slack.PermissionCanAtChannel)))
+		}
+	}
 	if s.Main.Config.DMOnly {
 		for idx := range bootResp.IMs {
 			s.addDMChannel(&bootResp.IMs[idx].Channel)

@@ -301,6 +301,12 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 	default:
 		return nil, fmt.Errorf("unrecognized channel type")
 	}
+	if s.starredChannels.Has(info.ID) {
+		if userLocal == nil {
+			userLocal = &bridgev2.UserLocalPortalInfo{}
+		}
+		userLocal.Tag = ptr.Ptr(event.RoomTagFavourite)
+	}
 	if s.Main.Config.WorkspaceAvatarInRooms && (roomType == database.RoomTypeDefault || roomType == database.RoomTypeGroupDM) {
 		avatar = &bridgev2.Avatar{
 			ID:     s.TeamPortal.AvatarID,
@@ -321,10 +327,23 @@ func (s *SlackClient) wrapChatInfo(ctx context.Context, info *slack.Channel, isN
 			topicLevel = 50
 		}
 	}
+	var eventsDefault int
+	if info.IsArchived && s.Main.br.Matrix.GetCapabilities().BatchSending {
+		eventsDefault = 100
+		topicLevel = 100
+	}
 	members.PowerLevels = &bridgev2.PowerLevelOverrides{
+		EventsDefault: &eventsDefault,
 		Events: map[event.Type]int{
 			event.StateTopic: topicLevel,
 		},
+	}
+	if canAtChannel := s.canAtChannel.Load(); canAtChannel != nil && roomType != database.RoomTypeDM && s.makePortalKey(info).Receiver != "" {
+		roomMentionLevel := 0
+		if !*canAtChannel {
+			roomMentionLevel = 100
+		}
+		members.PowerLevels.RoomMention = &roomMentionLevel
 	}
 	bumpMemberPL := func(slackUserID string, pl int) {
 		userID := slackid.MakeUserID(s.TeamID, slackUserID)
@@ -407,6 +426,17 @@ func (s *SlackClient) fetchChatInfo(ctx context.Context, channelID string, isNew
 		return nil, fmt.Errorf("request cancelled due to user not being in channel")
 	}
 	return s.wrapChatInfo(ctx, info, isNew)
+}
+
+func (s *SlackClient) resyncChatInfo(ctx context.Context, portal *bridgev2.Portal) {
+	_, channelID := slackid.ParsePortalID(portal.ID)
+	s.invalidateChatInfoCache(channelID)
+	info, err := s.GetChatInfo(ctx, portal)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to resync chat info")
+		return
+	}
+	portal.UpdateInfo(ctx, info, s.UserLogin, nil, time.Time{})
 }
 
 func (s *SlackClient) getTeamInfo() *bridgev2.ChatInfo {
@@ -612,7 +642,13 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string, lastUpda
 			var ok bool
 			info, ok = infos[userID]
 			if !ok {
-				return nil, nil
+				zerolog.Ctx(ctx).Debug().Str("user_id", userID).Msg("User not found, not retrying until next sync interval")
+				return &bridgev2.UserInfo{
+					ExtraUpdates: func(ctx context.Context, ghost *bridgev2.Ghost) bool {
+						ghost.Metadata.(*slackid.GhostMetadata).LastSync = jsontime.UnixNow()
+						return true
+					},
+				}, nil
 			}
 		}
 	} else {
@@ -627,6 +663,14 @@ func (s *SlackClient) fetchUserInfo(ctx context.Context, userID string, lastUpda
 const MinGhostSyncInterval = 4 * time.Hour
 
 func (s *SlackClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*bridgev2.UserInfo, error) {
+	return s.getUserInfo(ctx, ghost, true)
+}
+
+func (s *SlackClient) GetUserInfoForMention(ctx context.Context, ghost *bridgev2.Ghost) (*bridgev2.UserInfo, error) {
+	return s.getUserInfo(ctx, ghost, false)
+}
+
+func (s *SlackClient) getUserInfo(ctx context.Context, ghost *bridgev2.Ghost, allowQueue bool) (*bridgev2.UserInfo, error) {
 	if ghost.ID == "" {
 		return nil, nil
 	}
@@ -642,7 +686,7 @@ func (s *SlackClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (*
 	}
 	// Don't batch-queue B-prefix bot IDs: GetUsersCacheContext is a users-only API
 	// that silently ignores them, so they must go through fetchUserInfo → GetBotInfoContext.
-	if s.IsRealUser && userID[0] != 'B' && (ghost.Name != "" || time.Since(s.initialConnect) < 1*time.Minute) {
+	if allowQueue && s.IsRealUser && userID[0] != 'B' && (ghost.Name != "" || time.Since(s.initialConnect) < 1*time.Minute) {
 		s.userResyncQueue <- ghost
 		return nil, nil
 	}

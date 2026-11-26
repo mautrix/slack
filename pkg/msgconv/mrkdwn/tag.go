@@ -17,6 +17,7 @@
 package mrkdwn
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"html"
@@ -200,7 +201,7 @@ func (r *slackTagHTMLRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegist
 
 func UserMentionToHTML(out io.Writer, userID string, mxid id.UserID, name string) {
 	if mxid != "" {
-		_, _ = fmt.Fprintf(out, `<a href="%s">%s</a>`, mxid.URI().MatrixToURL(), html.EscapeString(name))
+		_, _ = fmt.Fprintf(out, `<a href="%s">%s</a>`, mxid.URI().MatrixToURL(), html.EscapeString(cmp.Or(name, userID)))
 	} else {
 		_, _ = fmt.Fprintf(out, "&lt;@%s&gt;", userID)
 	}
@@ -258,7 +259,7 @@ func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source [
 	}
 	switch node := n.(type) {
 	case *astSlackUserMention:
-		UserMentionToHTML(w, node.userID, node.mxid, node.name)
+		UserMentionToHTML(w, node.userID, node.mxid, cmp.Or(node.name, node.label))
 		return
 	case *astSlackChannelMention:
 		RoomMentionToHTML(w, node.channelID, node.mxid, node.alias, node.name, node.serverName)
@@ -281,7 +282,7 @@ func (r *slackTagHTMLRenderer) renderSlackTag(w goldmarkUtil.BufWriter, source [
 			DateToHTML(w, time.Unix(timestamp, 0), parts[2], link)
 			return
 		case "channel", "everyone", "here":
-			// do @room mentions?
+			_, _ = w.WriteString("@" + parts[0])
 			return
 		case "subteam":
 			if len(parts) > 1 {
