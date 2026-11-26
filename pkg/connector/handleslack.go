@@ -156,7 +156,8 @@ func (s *SlackClient) HandleSlackEvent(ctx context.Context, rawEvt any) {
 	case *slack.FileSharedEvent, *slack.FilePublicEvent, *slack.FilePrivateEvent,
 		*slack.FileChangeEvent, *slack.FileDeletedEvent,
 		*slack.DesktopNotificationEvent, *slack.ReconnectUrlEvent, *slack.LatencyReport,
-		*slack.SHRoomJoinEvent, *slack.SHRoomLeaveEvent, *slack.SHRoomUpdateEvent, *slack.UserHuddleChangedEvent:
+		*slack.SHRoomJoinEvent, *slack.SHRoomLeaveEvent, *slack.SHRoomUpdateEvent, *slack.UserHuddleChangedEvent,
+		*slack.ChannelArchiveEvent, *slack.ChannelUnarchiveEvent, *slack.GroupArchiveEvent, *slack.GroupUnarchiveEvent:
 		// ignored intentionally, these are duplicates or do not contain useful information
 	case *slack.UserChangeEvent:
 		go s.handleUserChange(ctx, &evt.User)
@@ -527,6 +528,12 @@ func (s *SlackClient) wrapMessage(meta simplevent.EventMeta, evt *slack.MessageE
 		meta.Timestamp = slackid.ParseSlackTimestamp(evt.Timestamp)
 	}
 	meta.StreamOrder = meta.Timestamp.UnixMicro()
+	switch evt.SubType {
+	case slack.MsgSubTypeChannelUnarchive, slack.MsgSubTypeGroupUnarchive:
+		meta.PreHandleFunc = s.resyncChatInfo
+	case slack.MsgSubTypeChannelArchive, slack.MsgSubTypeGroupArchive:
+		meta.PostHandleFunc = s.resyncChatInfo
+	}
 	if isTombstoneChange(evt) {
 		// The tombstone is sent as Slackbot, but it replaces the original author's message.
 		meta.Sender = bridgev2.EventSender{ForceEditOrigSender: true}
