@@ -330,8 +330,7 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 
 	case *slack.ChannelMarkedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
-		s.setLastReadCache(evt.Channel, evt.Timestamp)
-		wrapped = s.wrapReadReceipt(meta, evt.Channel, evt.Timestamp)
+		wrapped = s.wrapMarked(meta, evt.Channel, evt.Timestamp)
 	case *slack.ThreadMarkedEvent:
 		if evt.Subscription.LastRead == "" {
 			return nil, nil
@@ -342,12 +341,10 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		wrapped = wrappedReceipt
 	case *slack.IMMarkedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
-		s.setLastReadCache(evt.Channel, evt.Timestamp)
-		wrapped = s.wrapReadReceipt(meta, evt.Channel, evt.Timestamp)
+		wrapped = s.wrapMarked(meta, evt.Channel, evt.Timestamp)
 	case *slack.GroupMarkedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
-		s.setLastReadCache(evt.Channel, evt.Timestamp)
-		wrapped = s.wrapReadReceipt(meta, evt.Channel, evt.Timestamp)
+		wrapped = s.wrapMarked(meta, evt.Channel, evt.Timestamp)
 
 	case *slack.ChannelJoinedEvent:
 		s.invalidateChatInfoCache(evt.Channel.ID)
@@ -491,6 +488,16 @@ func (s *SlackClient) wrapReadReceipt(meta simplevent.EventMeta, channelID, time
 		ReadUpTo:            meta.Timestamp,
 		ReadUpToStreamOrder: meta.StreamOrder,
 	}
+}
+
+func (s *SlackClient) wrapMarked(meta simplevent.EventMeta, channelID, ts string) bridgev2.RemoteEvent {
+	if prevLastRead := s.setLastReadCache(channelID, ts); ts < prevLastRead {
+		return &simplevent.MarkUnread{
+			EventMeta: meta.WithType(bridgev2.RemoteEventMarkUnread),
+			Unread:    true,
+		}
+	}
+	return s.wrapReadReceipt(meta, channelID, ts)
 }
 
 func wrapStarChange(meta simplevent.EventMeta, starred bool) *simplevent.ChatInfoChange {
