@@ -126,7 +126,7 @@ func (s *SlackClient) HandleSlackEvent(ctx context.Context, rawEvt any) {
 		*slack.ChannelMarkedEvent, *slack.IMMarkedEvent, *slack.GroupMarkedEvent, *slack.ThreadMarkedEvent,
 		*slack.ChannelJoinedEvent, *slack.ChannelLeftEvent, *slack.GroupJoinedEvent, *slack.GroupLeftEvent,
 		*slack.MemberJoinedChannelEvent, *slack.MemberLeftChannelEvent,
-		*slack.ChannelUpdateEvent:
+		*slack.ChannelUpdateEvent, *slack.StarAddedEvent, *slack.StarRemovedEvent:
 		wrapped, err := s.wrapEvent(ctx, evt)
 		if err != nil {
 			log.Err(err).Msg("Failed to wrap Slack event")
@@ -156,7 +156,8 @@ func (s *SlackClient) HandleSlackEvent(ctx context.Context, rawEvt any) {
 	case *slack.FileSharedEvent, *slack.FilePublicEvent, *slack.FilePrivateEvent,
 		*slack.FileChangeEvent, *slack.FileDeletedEvent,
 		*slack.DesktopNotificationEvent, *slack.ReconnectUrlEvent, *slack.LatencyReport,
-		*slack.SHRoomJoinEvent, *slack.SHRoomLeaveEvent, *slack.SHRoomUpdateEvent, *slack.UserHuddleChangedEvent:
+		*slack.SHRoomJoinEvent, *slack.SHRoomLeaveEvent, *slack.SHRoomUpdateEvent, *slack.UserHuddleChangedEvent,
+		*slack.ChannelArchiveEvent, *slack.ChannelUnarchiveEvent, *slack.GroupArchiveEvent, *slack.GroupUnarchiveEvent:
 		// ignored intentionally, these are duplicates or do not contain useful information
 	case *slack.UserChangeEvent:
 		go s.handleUserChange(ctx, &evt.User)
@@ -329,8 +330,7 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 
 	case *slack.ChannelMarkedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
-		s.setLastReadCache(evt.Channel, evt.Timestamp)
-		wrapped = s.wrapReadReceipt(meta, evt.Channel, evt.Timestamp)
+		wrapped = s.wrapMarked(meta, evt.Channel, evt.Timestamp)
 	case *slack.ThreadMarkedEvent:
 		if evt.Subscription.LastRead == "" {
 			return nil, nil
@@ -341,12 +341,10 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		wrapped = wrappedReceipt
 	case *slack.IMMarkedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
-		s.setLastReadCache(evt.Channel, evt.Timestamp)
-		wrapped = s.wrapReadReceipt(meta, evt.Channel, evt.Timestamp)
+		wrapped = s.wrapMarked(meta, evt.Channel, evt.Timestamp)
 	case *slack.GroupMarkedEvent:
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, s.UserID, evt.Timestamp)
-		s.setLastReadCache(evt.Channel, evt.Timestamp)
-		wrapped = s.wrapReadReceipt(meta, evt.Channel, evt.Timestamp)
+		wrapped = s.wrapMarked(meta, evt.Channel, evt.Timestamp)
 
 	case *slack.ChannelJoinedEvent:
 		s.invalidateChatInfoCache(evt.Channel.ID)
@@ -378,8 +376,30 @@ func (s *SlackClient) wrapEvent(ctx context.Context, rawEvt any) (bridgev2.Remot
 		s.invalidateChatInfoCache(evt.Channel)
 		meta, metaErr = s.makeEventMeta(ctx, evt.Channel, nil, "", evt.Timestamp)
 		wrapped = s.wrapChatResync(meta, "", nil, true)
+
+	case *slack.StarAddedEvent:
+		if !isConversationStarItem(evt.Item) || !s.starredChannels.Add(evt.Item.Channel) {
+			return nil, nil
+		}
+		meta, metaErr = s.makeEventMeta(ctx, evt.Item.Channel, nil, "", evt.EventTimestamp)
+		wrapped = wrapStarChange(meta, true)
+	case *slack.StarRemovedEvent:
+		if !isConversationStarItem(evt.Item) || !s.starredChannels.Pop(evt.Item.Channel) {
+			return nil, nil
+		}
+		meta, metaErr = s.makeEventMeta(ctx, evt.Item.Channel, nil, "", evt.EventTimestamp)
+		wrapped = wrapStarChange(meta, false)
 	}
 	return wrapped, metaErr
+}
+
+func isConversationStarItem(item slack.StarredItem) bool {
+	switch item.Type {
+	case slack.TYPE_CHANNEL, slack.TYPE_IM, slack.TYPE_GROUP:
+		return true
+	default:
+		return false
+	}
 }
 
 func slackEventChannelID(rawEvt any) string {
@@ -412,6 +432,10 @@ func slackEventChannelID(rawEvt any) string {
 		return evt.Channel
 	case *slack.ChannelUpdateEvent:
 		return evt.Channel
+	case *slack.StarAddedEvent:
+		return evt.Item.Channel
+	case *slack.StarRemovedEvent:
+		return evt.Item.Channel
 	default:
 		return ""
 	}
@@ -463,6 +487,33 @@ func (s *SlackClient) wrapReadReceipt(meta simplevent.EventMeta, channelID, time
 		LastTarget:          target,
 		ReadUpTo:            meta.Timestamp,
 		ReadUpToStreamOrder: meta.StreamOrder,
+	}
+}
+
+func (s *SlackClient) wrapMarked(meta simplevent.EventMeta, channelID, ts string) bridgev2.RemoteEvent {
+	if prevLastRead := s.setLastReadCache(channelID, ts); ts < prevLastRead {
+		return &simplevent.MarkUnread{
+			EventMeta: meta.WithType(bridgev2.RemoteEventMarkUnread),
+			Unread:    true,
+		}
+	}
+	return s.wrapReadReceipt(meta, channelID, ts)
+}
+
+func wrapStarChange(meta simplevent.EventMeta, starred bool) *simplevent.ChatInfoChange {
+	var tag event.RoomTag
+	if starred {
+		tag = event.RoomTagFavourite
+	}
+	return &simplevent.ChatInfoChange{
+		EventMeta: meta.WithType(bridgev2.RemoteEventChatInfoChange),
+		ChatInfoChange: &bridgev2.ChatInfoChange{
+			ChatInfo: &bridgev2.ChatInfo{
+				UserLocal: &bridgev2.UserLocalPortalInfo{
+					Tag: &tag,
+				},
+			},
+		},
 	}
 }
 
@@ -527,6 +578,12 @@ func (s *SlackClient) wrapMessage(meta simplevent.EventMeta, evt *slack.MessageE
 		meta.Timestamp = slackid.ParseSlackTimestamp(evt.Timestamp)
 	}
 	meta.StreamOrder = meta.Timestamp.UnixMicro()
+	switch evt.SubType {
+	case slack.MsgSubTypeChannelUnarchive, slack.MsgSubTypeGroupUnarchive:
+		meta.PreHandleFunc = s.resyncChatInfo
+	case slack.MsgSubTypeChannelArchive, slack.MsgSubTypeGroupArchive:
+		meta.PostHandleFunc = s.resyncChatInfo
+	}
 	if isTombstoneChange(evt) {
 		// The tombstone is sent as Slackbot, but it replaces the original author's message.
 		meta.Sender = bridgev2.EventSender{ForceEditOrigSender: true}
