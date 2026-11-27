@@ -24,6 +24,7 @@ import (
 	"image"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/rs/zerolog"
@@ -52,6 +53,14 @@ type ConvertedSlackMessage struct {
 	SendReq    slack.MsgOption
 	FileUpload *slack.UploadFileParameters
 	FileShare  *slack.ShareFileParams
+
+	// FallbackSendReq is SendReq with the native tables rendered as code blocks. It is only
+	// set when SendReq has table blocks, to retry the message if Slack rejects them.
+	FallbackSendReq slack.MsgOption
+}
+
+func isTableBlock(block slack.Block) bool {
+	return block.BlockType() == slack.MBTTable
 }
 
 func (mc *MessageConverter) ToSlack(
@@ -101,13 +110,17 @@ func (mc *MessageConverter) ToSlack(
 	switch content.MsgType {
 	case event.MsgText, event.MsgEmote, event.MsgNotice:
 		options := make([]slack.MsgOption, 0, 4)
-		var block slack.Block
+		var blocks []slack.Block
+		var fallbackBlock slack.Block
 		if content.Format == event.FormatHTML {
-			block = mc.MatrixHTMLParser.Parse(ctx, content.FormattedBody, content.Mentions, portal)
+			blocks = mc.MatrixHTMLParser.ParseBlocks(ctx, content.FormattedBody, content.Mentions, portal)
+			if slices.ContainsFunc(blocks, isTableBlock) {
+				// The same message with the tables as code blocks, in case Slack rejects the tables.
+				fallbackBlock = mc.MatrixHTMLParser.Parse(ctx, content.FormattedBody, content.Mentions, portal)
+			}
 		} else {
-			block = mc.MatrixHTMLParser.ParseText(ctx, content.Body, content.Mentions, portal)
+			blocks = []slack.Block{mc.MatrixHTMLParser.ParseText(ctx, content.Body, content.Mentions, portal)}
 		}
-		options = append(options, slack.MsgOptionBlocks(block))
 		if editTargetID != "" {
 			options = append(options, slack.MsgOptionUpdate(editTargetID))
 		} else if threadRootID != "" {
@@ -132,7 +145,12 @@ func (mc *MessageConverter) ToSlack(
 				}
 			}
 		}
-		return &ConvertedSlackMessage{SendReq: slack.MsgOptionCompose(options...)}, nil
+		converted := &ConvertedSlackMessage{SendReq: slack.MsgOptionCompose(append([]slack.MsgOption{slack.MsgOptionBlocks(blocks...)}, options...)...)}
+		if fallbackBlock != nil {
+			converted.SendReq = slack.MsgOptionCompose(converted.SendReq, slack.MsgOptionText(content.Body, true))
+			converted.FallbackSendReq = slack.MsgOptionCompose(append([]slack.MsgOption{slack.MsgOptionBlocks(fallbackBlock)}, options...)...)
+		}
+		return converted, nil
 	case event.MsgAudio, event.MsgFile, event.MsgImage, event.MsgVideo:
 		var convErr error
 		err = mc.Bridge.Bot.DownloadMediaToFile(ctx, content.URL, content.File, false, func(file *os.File) error {
