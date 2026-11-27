@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/slack-go/slack"
@@ -92,6 +93,7 @@ func (s *SlackClient) ListImagePacks(ctx context.Context) ([]*event.ImagePackMet
 
 func (s *SlackClient) handleEmojiChange(ctx context.Context, evt *slack.EmojiChangedEvent) {
 	defer s.Main.DB.Emoji.WithLock(s.TeamID)()
+	s.missingEmojisReset = time.Time{}
 	log := zerolog.Ctx(ctx)
 	log.UpdateContext(func(c zerolog.Context) zerolog.Context {
 		return c.Str("subtype", evt.SubType)
@@ -219,17 +221,41 @@ func (s *SlackConnector) reuploadEmoji(ctx context.Context, intent bridgev2.Matr
 	return resp, nil
 }
 
-func (s *SlackClient) ResyncEmojisDueToNotFound(ctx context.Context) bool {
+const missingEmojiRetryInterval = 1 * time.Hour
+
+func (s *SlackClient) fetchMissingEmoji(ctx context.Context, shortcode string) bool {
 	lock := s.Main.DB.Emoji.GetLock(s.TeamID)
 	if !lock.TryLock() {
 		return false
 	}
 	defer lock.Unlock()
-	_, err := s.syncEmojis(ctx, false)
-	if err != nil {
+	if time.Since(s.missingEmojisReset) >= missingEmojiRetryInterval {
+		s.missingEmojis = make(map[string]struct{})
+		s.missingEmojisReset = time.Now()
+	} else if _, isMissing := s.missingEmojis[shortcode]; isMissing {
+		return false
+	}
+	if s.IsRealUser {
+		resp, err := s.Client.GetEmojisCacheContext(ctx, s.TeamID, slack.GetCachedEmojisParameters{
+			UpdatedIDs: map[string]int64{shortcode: 0},
+		})
+		if err != nil {
+			zerolog.Ctx(ctx).Err(err).Str("shortcode", shortcode).Msg("Failed to fetch info of unknown emoji")
+			return false
+		}
+		zerolog.Ctx(ctx).Debug().
+			Str("shortcode", shortcode).
+			Int("result_count", len(resp.Results)).
+			Strs("failed_ids", resp.FailedIDs).
+			Msg("Fetched info of unknown emoji")
+		for _, info := range resp.Results {
+			s.addEmoji(ctx, info.Name, info.Value)
+		}
+	} else if _, err := s.syncEmojis(ctx, false); err != nil {
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to sync emojis after emoji wasn't found")
 		return false
 	}
+	s.missingEmojis[shortcode] = struct{}{}
 	return true
 }
 
@@ -362,7 +388,7 @@ func (s *SlackClient) tryGetEmoji(ctx context.Context, shortcode string, ensureU
 
 func (s *SlackClient) GetEmoji(ctx context.Context, shortcode string) (string, bool) {
 	emojiVal, isImage, found := s.tryGetEmoji(ctx, shortcode, true, true)
-	if !found && s.ResyncEmojisDueToNotFound(ctx) {
+	if !found && s.fetchMissingEmoji(ctx, shortcode) {
 		emojiVal, isImage, _ = s.tryGetEmoji(ctx, shortcode, true, true)
 	}
 	if emojiVal == "" {
