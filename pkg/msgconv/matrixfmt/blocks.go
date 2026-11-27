@@ -370,7 +370,7 @@ const SlackApprovedTLDs = "com|net|org|edu|gov|info|biz|int|dev|" +
 	"vn|vu|wf|ws|ye|yt|za|zm|zw"
 const URLWithProtocolPattern = `https?://[^\s/_*]+(?:/\S*)?`
 const URLWithoutProtocolPattern = `[^\s/_*:]+\.(?:` + SlackApprovedTLDs + `)(?:/\S*)?`
-const RoomPattern = `@room`
+const RoomPattern = `@(?:room|here|channel|everyone)`
 
 var URLOrRoomRegex = regexp.MustCompile(fmt.Sprintf("%s|%s|%s", URLWithProtocolPattern, URLWithoutProtocolPattern, RoomPattern))
 var URLRegex = regexp.MustCompile(fmt.Sprintf("%s|%s", URLWithProtocolPattern, URLWithoutProtocolPattern))
@@ -404,6 +404,8 @@ func (parser *HTMLParser) textToElements(text string, ctx Context) []slack.RichT
 		}
 		if part == "@room" {
 			elems = append(elems, slack.NewRichTextSectionBroadcastElement(slack.RichTextBroadcastRangeChannel))
+		} else if part == "@here" || part == "@channel" || part == "@everyone" {
+			elems = append(elems, slack.NewRichTextSectionBroadcastElement(slack.RichTextBroadcastRange(part[1:])))
 		} else if parsedMatrix, _ := id.ParseMatrixURIOrMatrixToURL(part); parsedMatrix != nil && parsedMatrix.Sigil1 == '!' && parsedMatrix.Sigil2 == '$' {
 			elems = append(elems, parser.textToElement(part, ctx.WithLink(part)))
 		} else if strings.HasPrefix(part, "http://") || strings.HasPrefix(part, "https://") {

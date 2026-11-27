@@ -37,14 +37,16 @@ import (
 )
 
 var (
-	_ bridgev2.EditHandlingNetworkAPI        = (*SlackClient)(nil)
-	_ bridgev2.RedactionHandlingNetworkAPI   = (*SlackClient)(nil)
-	_ bridgev2.ReactionHandlingNetworkAPI    = (*SlackClient)(nil)
-	_ bridgev2.ReadReceiptHandlingNetworkAPI = (*SlackClient)(nil)
-	_ bridgev2.TypingHandlingNetworkAPI      = (*SlackClient)(nil)
-	_ bridgev2.RoomNameHandlingNetworkAPI    = (*SlackClient)(nil)
-	_ bridgev2.RoomTopicHandlingNetworkAPI   = (*SlackClient)(nil)
-	_ bridgev2.MembershipHandlingNetworkAPI  = (*SlackClient)(nil)
+	_ bridgev2.EditHandlingNetworkAPI         = (*SlackClient)(nil)
+	_ bridgev2.RedactionHandlingNetworkAPI    = (*SlackClient)(nil)
+	_ bridgev2.ReactionHandlingNetworkAPI     = (*SlackClient)(nil)
+	_ bridgev2.ReadReceiptHandlingNetworkAPI  = (*SlackClient)(nil)
+	_ bridgev2.TypingHandlingNetworkAPI       = (*SlackClient)(nil)
+	_ bridgev2.MarkedUnreadHandlingNetworkAPI = (*SlackClient)(nil)
+	_ bridgev2.TagHandlingNetworkAPI          = (*SlackClient)(nil)
+	_ bridgev2.RoomNameHandlingNetworkAPI     = (*SlackClient)(nil)
+	_ bridgev2.RoomTopicHandlingNetworkAPI    = (*SlackClient)(nil)
+	_ bridgev2.MembershipHandlingNetworkAPI   = (*SlackClient)(nil)
 )
 
 func (s *SlackClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.MatrixMessage) (*bridgev2.MatrixMessageResponse, error) {
@@ -396,6 +398,8 @@ func (s *SlackClient) HandleMatrixReadReceipt(ctx context.Context, msg *bridgev2
 		}
 		if threadTS != "" {
 			return wrapSlackMatrixError(s.Client.MarkThreadContext(ctx, channelID, threadTS, messageTS))
+		} else if messageTS <= s.getLastReadCache(channelID) {
+			return nil
 		}
 		return wrapSlackMatrixError(s.Client.MarkConversationContext(ctx, channelID, messageTS))
 	}
@@ -414,10 +418,86 @@ func (s *SlackClient) HandleMatrixReadReceipt(ctx context.Context, msg *bridgev2
 		}
 		if threadTS != "" {
 			return wrapSlackMatrixError(s.Client.MarkThreadContext(ctx, channelID, threadTS, messageTS))
+		} else if messageTS <= s.getLastReadCache(channelID) {
+			return nil
 		}
 		return wrapSlackMatrixError(s.Client.MarkConversationContext(ctx, channelID, messageTS))
 	}
 	return nil
+}
+
+func (s *SlackClient) HandleRoomTag(ctx context.Context, msg *bridgev2.MatrixRoomTag) error {
+	if s.Client == nil {
+		return bridgev2.ErrNotLoggedIn
+	} else if !s.IsRealUser {
+		return nil
+	}
+	_, channelID := slackid.ParsePortalID(msg.Portal.ID)
+	if channelID == "" {
+		return errors.New("invalid channel ID")
+	}
+	_, favourite := msg.Content.Tags[event.RoomTagFavourite]
+	if msg.PrevContent != nil {
+		if _, wasFavourite := msg.PrevContent.Tags[event.RoomTagFavourite]; wasFavourite == favourite {
+			return nil
+		}
+	}
+	if favourite {
+		if !s.starredChannels.Add(channelID) {
+			return nil
+		} else if err := s.Client.AddStarContext(ctx, channelID, slack.ItemRef{}); err != nil {
+			s.starredChannels.Remove(channelID)
+			return wrapSlackMatrixError(err)
+		}
+	} else {
+		if !s.starredChannels.Pop(channelID) {
+			return nil
+		} else if err := s.Client.RemoveStarContext(ctx, channelID, slack.ItemRef{}); err != nil {
+			s.starredChannels.Add(channelID)
+			return wrapSlackMatrixError(err)
+		}
+	}
+	return nil
+}
+
+func (s *SlackClient) HandleMarkedUnread(ctx context.Context, msg *bridgev2.MatrixMarkedUnread) error {
+	if s.Client == nil {
+		return bridgev2.ErrNotLoggedIn
+	} else if !s.IsRealUser {
+		return nil
+	}
+	_, channelID := slackid.ParsePortalID(msg.Portal.ID)
+	if channelID == "" {
+		return errors.New("invalid channel ID")
+	}
+	lastRead := s.getLastReadCache(channelID)
+	if !msg.Content.Unread {
+		lastMessage, err := s.UserLogin.Bridge.DB.Message.GetLastPartAtOrBeforeTime(ctx, msg.Portal.PortalKey, time.Now())
+		if err != nil {
+			return err
+		} else if lastMessage == nil {
+			return nil
+		}
+		_, _, messageTS, ok := slackid.ParseMessageID(lastMessage.ID)
+		if !ok || messageTS <= lastRead {
+			return nil
+		}
+		return wrapSlackMatrixError(s.Client.MarkConversationContext(ctx, channelID, messageTS))
+	}
+	resp, err := s.Client.GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
+		ChannelID: channelID,
+		Limit:     2,
+	})
+	if err != nil {
+		return wrapSlackMatrixError(err)
+	} else if len(resp.Messages) == 0 || (lastRead != "" && lastRead < resp.Messages[0].Timestamp) {
+		return nil
+	}
+	markTS := "0"
+	if len(resp.Messages) > 1 {
+		markTS = resp.Messages[1].Timestamp
+	}
+	return wrapSlackMatrixError(s.Client.MarkConversationContext(ctx, channelID, markTS))
 }
 
 func (s *SlackClient) HandleMatrixTyping(ctx context.Context, msg *bridgev2.MatrixTyping) error {

@@ -351,7 +351,7 @@ func (mc *MessageConverter) renderRichTextSectionElements(
 			closingTags(&htmlText, e.Style)
 		case *slack.RichTextSectionBroadcastElement:
 			mentions.Room = true
-			htmlText.WriteString("@room")
+			htmlText.WriteString("@" + html.EscapeString(string(e.Range)))
 		case *slack.RichTextSectionEmojiElement:
 			openingTags(&htmlText, e.Style)
 			if e.Unicode != "" {
@@ -376,6 +376,17 @@ func (mc *MessageConverter) renderRichTextSectionElements(
 			mrkdwn.DateToHTML(&htmlText, e.Timestamp.Time(), e.Format, ptr.Val(e.URL))
 		case *slack.RichTextSectionMessageMentionElement:
 			htmlText.WriteString(mc.renderMessageMention(ctx, e))
+		case *slack.RichTextSectionCanvasElement:
+			file := &slack.File{ID: e.FileID}
+			msgFiles, _ := ctx.Value(contextKeyMessageFiles).([]slack.File)
+			for i := range msgFiles {
+				if msgFiles[i].ID == e.FileID {
+					file = &msgFiles[i]
+					break
+				}
+			}
+			client := ctx.Value(contextKeySource).(*bridgev2.UserLogin).Client.(SlackClientProvider).GetClient()
+			htmlText.WriteString(mc.renderCanvasLink(ctx, client, file))
 		case *slack.RichTextSectionAttachmentMentionElement:
 			linkText := e.Text
 			if linkText == "" {
@@ -431,14 +442,17 @@ func (mc *MessageConverter) renderSlackBlock(ctx context.Context, block slack.Bl
 		for _, element := range b.ContextElements.Elements {
 			if mrkdwnElem, ok := element.(*slack.TextBlockObject); ok {
 				htmlText.WriteString(fmt.Sprintf("<sup>%s</sup>", mc.mrkdwnToMatrixHtml(ctx, mrkdwnElem.Text, mentions)))
-			} else {
+			} else if _, isImage := element.(*slack.ImageBlockElement); !isImage {
 				zerolog.Ctx(ctx).Debug().
 					Type("element_type", element).
-					Type("element_type_name", element.MixedElementType()).
+					Str("element_type_name", string(element.MixedElementType())).
 					Msg("Unsupported Slack block element")
 				htmlText.WriteString("<i>Slack message contains unsupported elements.</i>")
 				unsupported = true
 			}
+		}
+		if htmlText.Len() == 0 && len(b.ContextElements.Elements) > 0 {
+			return "<i>Slack message contains unsupported elements.</i>", true
 		}
 		return htmlText.String(), unsupported
 	case *slack.ActionBlock:

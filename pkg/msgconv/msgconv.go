@@ -51,6 +51,7 @@ type contextKey int
 const (
 	contextKeyPortal contextKey = iota
 	contextKeySource
+	contextKeyMessageFiles
 )
 
 type SlackClientProvider interface {
@@ -58,6 +59,7 @@ type SlackClientProvider interface {
 	GetEmoji(context.Context, string) (string, bool)
 	GetChannelInfoForMention(context.Context, string) (string, *bridgev2.Portal, error)
 	GetUserGroupInfoForMention(context.Context, string) (string, []string, error)
+	GetUserInfoForMention(context.Context, *bridgev2.Ghost) (*bridgev2.UserInfo, error)
 }
 
 func (mc *MessageConverter) GetMentionedUserInfo(ctx context.Context, userID string) (mxid id.UserID, name string) {
@@ -68,7 +70,12 @@ func (mc *MessageConverter) GetMentionedUserInfo(ctx context.Context, userID str
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to get mentioned ghost")
 	} else if ghost != nil {
 		if ghost.Name == "" {
-			ghost.UpdateInfoIfNecessary(ctx, source, bridgev2.RemoteEventUnknown)
+			info, err := source.Client.(SlackClientProvider).GetUserInfoForMention(ctx, ghost)
+			if err != nil {
+				zerolog.Ctx(ctx).Err(err).Str("user_id", userID).Msg("Failed to get info of mentioned user")
+			} else if info != nil {
+				ghost.UpdateInfo(ctx, info)
+			}
 		}
 		name = ghost.Name
 		mxid = ghost.Intent.GetMXID()
