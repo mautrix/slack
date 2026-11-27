@@ -176,19 +176,9 @@ func (mc *MessageConverter) fileToSlack(
 		caption = content.Body
 		captionHTML = content.FormattedBody
 	}
-	var data []byte
-	var reader io.Reader = file
 	size := stat.Size()
 	if content.MSC3245Voice != nil && content.Info.MimeType != "audio/webm; codecs=opus" && content.Info.MimeType != "audio/mp4" && ffmpeg.Supported() {
-		if size > maxInMemoryFileSize {
-			return nil, bridgev2.ErrMediaTooLarge
-		}
-		data, err = io.ReadAll(file)
-		if err != nil {
-			log.Err(err).Msg("Failed to read Matrix attachment")
-			return nil, ErrMediaDownloadFailed
-		}
-		data, err = ffmpeg.ConvertBytes(ctx, data, ".webm", []string{}, []string{"-c:a", "copy"}, content.Info.MimeType)
+		replFile, err := ffmpeg.ConvertPath(ctx, file.Name(), ".webm", []string{}, []string{"-c:a", "copy"}, true)
 		if err != nil {
 			log.Err(err).Msg("Failed to convert voice message")
 			return nil, ErrMediaConvertFailed
@@ -198,8 +188,21 @@ func (mc *MessageConverter) fileToSlack(
 		filename += ".m4a"
 		content.Info.MimeType = "audio/webm; codecs=opus"
 		subtype = "slack_audio"
-		reader = bytes.NewReader(data)
-		size = int64(len(data))
+		file, err = os.Open(replFile)
+		if err != nil {
+			log.Err(err).Msg("Failed to open converted voice message")
+			return nil, ErrMediaConvertFailed
+		}
+		defer func() {
+			_ = file.Close()
+			_ = os.Remove(replFile)
+		}()
+		info, err := file.Stat()
+		if err != nil {
+			log.Err(err).Msg("Failed to stat converted voice message")
+			return nil, ErrMediaConvertFailed
+		}
+		size = info.Size()
 	} else if content.MSC3245Voice != nil && (content.Info.MimeType == "audio/webm; codecs=opus" || content.Info.MimeType == "audio/mp4") {
 		subtype = "slack_audio"
 		if !strings.HasSuffix(filename, ".m4a") {
@@ -208,15 +211,13 @@ func (mc *MessageConverter) fileToSlack(
 	}
 	_, channelID := slackid.ParsePortalID(portal.ID)
 	if !isRealUser {
-		if data == nil {
-			if size > maxInMemoryFileSize {
-				return nil, bridgev2.ErrMediaTooLarge
-			}
-			data, err = io.ReadAll(file)
-			if err != nil {
-				log.Err(err).Msg("Failed to read Matrix attachment")
-				return nil, ErrMediaDownloadFailed
-			}
+		if size > maxInMemoryFileSize {
+			return nil, bridgev2.ErrMediaTooLarge
+		}
+		data, err := io.ReadAll(file)
+		if err != nil {
+			log.Err(err).Msg("Failed to read Matrix attachment")
+			return nil, ErrMediaDownloadFailed
 		}
 		fileUpload := &slack.UploadFileParameters{
 			Filename:        filename,
@@ -240,7 +241,7 @@ func (mc *MessageConverter) fileToSlack(
 			log.Err(err).Msg("Failed to get file upload URL")
 			return nil, ErrMediaUploadFailed
 		}
-		err = client.UploadToURLReader(ctx, resp, content.Info.MimeType, reader, size)
+		err = client.UploadToURLReader(ctx, resp, content.Info.MimeType, file, size)
 		if err != nil {
 			log.Err(err).Msg("Failed to upload file")
 			return nil, ErrMediaUploadFailed
