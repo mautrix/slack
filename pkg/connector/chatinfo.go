@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -488,6 +489,31 @@ func (s *SlackClient) GetChatInfo(ctx context.Context, portal *bridgev2.Portal) 
 	}
 }
 
+const gravatarAvatarIDPrefix = "gravatar:"
+
+var legacyGravatarAvatarID = regexp.MustCompile(`^(T[A-Z0-9]+-)?g[0-9a-z]+$`)
+
+func isGravatarURL(avatarURL string) bool {
+	parsed, err := url.Parse(avatarURL)
+	return err == nil && (parsed.Hostname() == "gravatar.com" || strings.HasSuffix(parsed.Hostname(), ".gravatar.com"))
+}
+
+func gravatarBucket() string {
+	return time.Now().UTC().Format(time.DateOnly)
+}
+
+func makeGravatarAvatarID(slackAvatarID string) string {
+	return gravatarAvatarIDPrefix + slackAvatarID + ":" + gravatarBucket()
+}
+
+func gravatarRecheckDue(avatarID networkid.AvatarID) bool {
+	id := string(avatarID)
+	if strings.HasPrefix(id, gravatarAvatarIDPrefix) {
+		return !strings.HasSuffix(id, ":"+gravatarBucket())
+	}
+	return legacyGravatarAvatarID.MatchString(id) || isGravatarURL(id)
+}
+
 func (s *SlackClient) makeAvatar(avatarURL, slackAvatarHash string) *bridgev2.Avatar {
 	avatarID := networkid.AvatarID(slackAvatarHash)
 	if avatarID == "" {
@@ -533,10 +559,15 @@ func (s *SlackClient) wrapUserInfo(userID string, info *slack.User, botInfo *sla
 		if teamID != s.TeamID && avatarID != "" {
 			avatarID = teamID + "-" + avatarID
 		}
+		// Slack's avatar hash for Gravatar-backed avatars doesn't change when the Gravatar image does
+		isGravatar := isGravatarURL(avatarURL)
+		if isGravatar {
+			avatarID = makeGravatarAvatarID(cmp.Or(avatarID, avatarURL))
+		}
 		avatar = s.makeAvatar(avatarURL, avatarID)
 		// Optimization to avoid updating legacy avatars
 		oldAvatarID := string(ghost.AvatarID)
-		if strings.HasPrefix(oldAvatarID, "https://") && (oldAvatarID == avatarURL || strings.Contains(oldAvatarID, info.Profile.AvatarHash)) {
+		if !isGravatar && strings.HasPrefix(oldAvatarID, "https://") && (oldAvatarID == avatarURL || strings.Contains(oldAvatarID, info.Profile.AvatarHash)) {
 			extraUpdateAvatarID = avatar.ID
 			avatar = nil
 		}
@@ -581,6 +612,9 @@ func (s *SlackClient) syncManyUsers(ctx context.Context, ghosts map[string]*brid
 		meta := ghost.Metadata.(*slackid.GhostMetadata)
 		_, userID := slackid.ParseUserID(ghost.ID)
 		params.UpdatedIDs[userID] = meta.SlackUpdatedTS
+		if gravatarRecheckDue(ghost.AvatarID) {
+			params.UpdatedIDs[userID] = 0
+		}
 	}
 	zerolog.Ctx(ctx).Debug().Any("request_map", params.UpdatedIDs).Msg("Requesting user info")
 	infos, err := s.Client.GetUsersCacheContext(ctx, s.TeamID, params)
